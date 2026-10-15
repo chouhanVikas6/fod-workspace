@@ -3,6 +3,7 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Config {
     /// DATABASE_URL — Postgres `zoid_client` DB (Prisma-created schema).

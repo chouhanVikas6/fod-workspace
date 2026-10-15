@@ -66,6 +66,8 @@ export default defineConfig(({ mode }) => ({
       'react-icons/md',
       'react-icons/pi',
       'react-icons/rx',
+      'vite-plugin-node-polyfills/shims/process',
+      'vite-plugin-node-polyfills/shims/buffer',
     ],
   },
   // Base is '/' in dev server to avoid path resolution errors, and './' in production builds for Tauri webview.

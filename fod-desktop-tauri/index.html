@@ -7,6 +7,19 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // WebKitGTK on Linux occasionally drops initial HTTP connections if Vite is still warming up.
+      // Auto-reload once if the entrypoint script fails to load.
+      window.addEventListener('error', function (e) {
+        if (e.target && e.target.tagName === 'SCRIPT' && !window.__reloading) {
+          window.__reloading = true;
+          console.warn('[Zoid Desktop] Script failed to load during startup, reloading...');
+          setTimeout(function () {
+            window.location.reload();
+          }, 300);
+        }
+      }, true);
+    </script>
     <script type="module" src="/src/renderer.tsx"></script>
   </body>
 </html>
