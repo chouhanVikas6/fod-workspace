@@ -354,10 +354,10 @@ pub fn run() {
             app.manage(supervisor.clone());
 
             // DevTools available in debug builds (matches the old Electron dev UX).
-            #[cfg(debug_assertions)]
-            if let Some(window) = app.get_webview_window("main") {
-                window.open_devtools();
-            }
+            // #[cfg(debug_assertions)]
+            // if let Some(window) = app.get_webview_window("main") {
+            //     window.open_devtools();
+            // }
 
             start_supervision(app.handle().clone(), supervisor);
             Ok(())

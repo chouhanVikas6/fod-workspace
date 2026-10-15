@@ -1,4 +1,4 @@
-use proto_defination::common::PaginationMeta;
+use proto_defination::common::{FodGroupStatus as ProtoGroupStatus, PaginationMeta};
 use proto_defination::fod_group::fod_group_service_server::FodGroupService;
 use proto_defination::fod_group::{
     FodGroupEntity, FodGroupListResponse, GroupCountRequest, GroupCountResponse,
@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
+use zoid_db::models::FodGroupStatus as DbGroupStatus;
 use zoid_db::Db;
 
 pub struct AtcFodGroupServiceImpl {
@@ -98,13 +99,48 @@ impl FodGroupService for AtcFodGroupServiceImpl {
         let mut results = Vec::with_capacity(req.resolutions.len());
 
         for res in req.resolutions {
-            let group = self
+            let group_opt = self
                 .db
                 .get_fod_group(res.mission_id, res.group_id)
                 .await
-                .ok()
-                .flatten()
-                .map(|g| g.to_proto());
+                .map_err(|e| Status::internal(e.to_string()))?;
+
+            let current_group = match group_opt {
+                Some(g) => g,
+                None => {
+                    results.push(ResolutionResult {
+                        command_id: res.command_id,
+                        outcome: "NOT_FOUND".to_string(),
+                        group: None,
+                        pending: false,
+                    });
+                    continue;
+                }
+            };
+
+            let desired_proto = ProtoGroupStatus::try_from(res.desired_status)
+                .unwrap_or(ProtoGroupStatus::GroupStatusUnspecified);
+            let desired_db = DbGroupStatus::from(desired_proto);
+
+            // Optimistically update status in ATC replica DB so all connected clients see it
+            let updated = self
+                .db
+                .update_fod_group_status(
+                    res.mission_id,
+                    res.group_id,
+                    desired_db,
+                    current_group.version,
+                )
+                .await
+                .map_err(|e| Status::internal(e.to_string()))?;
+
+            let proto_g = if let Some(g) = updated {
+                let proto = g.to_proto();
+                let _ = self.group_tx.send(proto.clone());
+                proto
+            } else {
+                current_group.to_proto()
+            };
 
             let cmd = Command {
                 command_id: res.command_id.clone(),
@@ -122,9 +158,9 @@ impl FodGroupService for AtcFodGroupServiceImpl {
 
             results.push(ResolutionResult {
                 command_id: res.command_id,
-                outcome: "FORWARDED_TO_PRIMARY".to_string(),
-                group,
-                pending: true,
+                outcome: "APPLIED".to_string(),
+                group: Some(proto_g),
+                pending: false,
             });
         }
 
