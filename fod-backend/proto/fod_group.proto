@@ -1,0 +1,70 @@
+syntax = "proto3";
+package zoid.fod_group;
+
+import "common.proto";
+
+service FodGroupService {
+    rpc ListGroups (ListGroupsRequest) returns (FodGroupListResponse);
+    rpc GetGroupCount (GroupCountRequest) returns (GroupCountResponse);
+    rpc ResolveGroups (ResolveGroupsRequest) returns (ResolveGroupsResponse);
+    rpc StreamGroups (StreamGroupsRequest) returns (stream FodGroupEntity);
+}
+
+message FodGroupEntity {
+    int64 id = 1;
+    int64 group_id = 2;
+    int64 mission_id = 3;
+    zoid.common.FodGroupStatus status = 4;
+    optional string biggest_fod = 5;
+    optional double biggest_fod_size = 6;
+    int64 version = 7;
+    int64 created_at = 8;
+    int64 updated_at = 9;
+    optional string pending_command_id = 10;
+}
+
+message ListGroupsRequest {
+    int64 mission_id = 1;
+    zoid.common.PaginationRequest pagination = 2;
+}
+
+message FodGroupListResponse {
+    repeated FodGroupEntity groups = 1;
+    zoid.common.PaginationMeta pagination = 2;
+}
+
+message GroupCountRequest {
+    int64 mission_id = 1;
+}
+
+message GroupCountResponse {
+    int64 mission_id = 1;
+    int64 count = 2;
+}
+
+message GroupResolution {
+    string command_id = 1;
+    int64 mission_id = 2;
+    int64 group_id = 3;
+    zoid.common.FodGroupStatus desired_status = 4;
+    int64 base_version = 5;
+}
+
+message ResolveGroupsRequest {
+    repeated GroupResolution resolutions = 1;
+}
+
+message ResolutionResult {
+    string command_id = 1;
+    string outcome = 2;
+    FodGroupEntity group = 3;
+    bool pending = 4;
+}
+
+message ResolveGroupsResponse {
+    repeated ResolutionResult results = 1;
+}
+
+message StreamGroupsRequest {
+    int64 mission_id = 1;
+}

@@ -1,0 +1,92 @@
+syntax = "proto3";
+package zoid.ingest;
+
+service IngestService {
+    rpc StreamDetections (stream DetectionBatch) returns (stream IngestAck);
+    rpc StreamTelemetry (stream TelemetryFrame) returns (TelemetrySummary);
+}
+
+message DetectionBatch {
+    string producer_id = 1;
+    uint64 batch_seq = 2;
+    repeated Detection detections = 3;
+}
+
+message Detection {
+    string uid = 1;
+    string cam_id = 2;
+    double lat = 3;
+    double lon = 4;
+    double sd = 5;
+    double confidence = 6;
+    string class_name = 7;
+    double velocity = 8;
+    double size = 9;
+    int64 captured_at_ms = 10;
+    bytes crop_jpeg = 11;
+    string sysid = 12;
+}
+
+enum IngestStatus {
+    INGEST_STATUS_UNSPECIFIED = 0;
+    COMMITTED = 1;
+    NO_ACTIVE_MISSION = 2;
+    REJECTED_INVALID = 3;
+}
+
+message IngestAck {
+    uint64 batch_seq = 1;
+    uint32 accepted = 2;
+    uint32 duplicates = 3;
+    uint32 rejected = 4;
+    IngestStatus status = 5;
+}
+
+message TelemetryFrame {
+    int64 sampled_at_ms = 1;
+    oneof kind {
+        CarData car = 2;
+        CameraHealthBatch cameras = 3;
+        PcHealth pc = 4;
+    }
+}
+
+message CarData {
+    GpsFix primary = 1;
+    GpsFix secondary = 2;
+    double velocity = 3;
+}
+
+message GpsFix {
+    string fix = 1;
+    double sd = 2;
+    double lat = 3;
+    double lon = 4;
+    double heading = 5;
+}
+
+message CameraHealthBatch {
+    repeated CameraHealth cameras = 1;
+}
+
+message CameraHealth {
+    string cam_id = 1;
+    bool connected = 2;
+    double intr_fps = 3;
+    bool paused = 4;
+    double vg_fps = 5;
+    double ms_fps = 6;
+    int64 timestamp = 7;
+}
+
+message PcHealth {
+    string node = 1;
+    double cpu_pct = 2;
+    double mem_pct = 3;
+    double disk_pct = 4;
+    double temp_c = 5;
+}
+
+message TelemetrySummary {
+    uint64 frames_received = 1;
+}

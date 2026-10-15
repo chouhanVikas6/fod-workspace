@@ -1,0 +1,30 @@
+[package]
+name = "fod-desktop"
+version = "1.0.0"
+description = "Zoid FOD Desktop — Tauri v2 shell (supervises the fod-backend Rust sidecar)"
+authors = ["Zoid"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# Standalone crate on purpose: NOT part of any cargo workspace, and its target/
+# dir is independent of backend-rs/. Do not add a [workspace] table here.
+
+[lib]
+name = "fod_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

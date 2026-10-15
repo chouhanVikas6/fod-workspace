@@ -1,0 +1,8 @@
+# Rust build output (standalone target dir — independent of backend-rs/)
+/target/
+
+# Tauri-generated schemas/metadata
+/gen/
+
+# Sidecar binaries dropped in for local prod-bundle testing (per-triple naming)
+/binaries/

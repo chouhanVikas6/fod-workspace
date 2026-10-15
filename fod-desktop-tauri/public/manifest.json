@@ -1,0 +1,32 @@
+{
+    "name": "ZOID FOD",
+    "short_name": "ZOID-FOD",
+    "icons": [
+      {
+        "src": "/manifest-icon/icon144.png",
+        "sizes": "144x144",
+        "type": "image/png"
+      },
+      {
+        "src": "/vercel.svg",
+        "sizes": "/manifest-icon/icon192.png",
+        "type": "image/svg",
+        "purpose": "any maskable"
+      },
+      {
+        "src": "/vercel.svg",
+        "sizes": "384x384",
+        "type": "image/svg"
+      },
+      {
+        "src": "/vercel.svg",
+        "sizes": "/manifest-icon/icon512.png",
+        "type": "image/svg"
+      }
+    ],
+    "theme_color": "#FFFFFF",
+    "background_color": "#FFFFFF",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "portrait"
+  }

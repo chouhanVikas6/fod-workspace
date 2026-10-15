@@ -1,0 +1,35 @@
+syntax = "proto3";
+package zoid.cleared_fod;
+
+import "common.proto";
+
+service ClearedFodService {
+    rpc FindClearedFod (FindClearedFodRequest) returns (ClearedFodEntity);
+}
+
+message RecordClearedFodRequest {
+    string id = 1;
+    int64 mission_id = 2;
+    int64 group_id = 3;
+    zoid.common.ClearedFodStatus status = 4;
+    zoid.common.LatLon location = 5;
+    repeated string before_image_sha256 = 6;
+    repeated string after_image_sha256 = 7;
+}
+
+message ClearedFodEntity {
+    string id = 1;
+    int64 mission_id = 2;
+    int64 group_id = 3;
+    zoid.common.ClearedFodStatus status = 4;
+    repeated string before_image_sha256 = 5;
+    repeated string after_image_sha256 = 6;
+    zoid.common.LatLon location = 7;
+    int64 created_at = 8;
+    optional string created_by = 9;
+}
+
+message FindClearedFodRequest {
+    int64 mission_id = 1;
+    int64 group_id = 2;
+}

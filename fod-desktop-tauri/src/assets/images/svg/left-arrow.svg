@@ -1,0 +1,11 @@
+<svg height="800px" width="800px" version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" 
+     viewBox="0 0 512 512" xml:space="preserve">
+  <circle style="fill:#017ED7;" cx="256" cy="256" r="256"/>
+  <path style="fill:#017ED7;" d="M117.201,256l98.573,1.724l185.465-21.549L177.381,12.319
+      C105.758,35.411,47.926,89.188,19.373,158.173L117.201,256z"/>
+  <!-- Reversed Arrow Polygon -->
+  <polygon style="fill:#FFFFFF;" points="211.673,350.472 239.711,322.434 193.102,275.825 401.239,275.825 401.239,236.175 
+      193.102,236.175 239.711,189.566 211.673,161.528 117.201,256 "/>
+  <polygon style="fill:#FFFFFF;" points="401.239,236.175 193.102,236.175 239.711,189.566 211.673,161.528 117.201,256 401.239,256 
+      "/>
+</svg>

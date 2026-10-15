@@ -1,0 +1,72 @@
+syntax = "proto3";
+package zoid.mission;
+
+import "common.proto";
+
+service MissionService {
+    rpc ListMissions (ListMissionsRequest) returns (ListMissionsResponse);
+    rpc ListMissionsWithStats (ListMissionsWithStatsRequest) returns (MissionStatsResponse);
+    rpc GetActiveMission (GetActiveMissionRequest) returns (ActiveMissionResponse);
+    rpc RetrieveMissionData (RetrieveMissionRequest) returns (RetrieveMissionResponse);
+    rpc UpdateMission (UpdateMissionRequest) returns (MissionDetail);
+}
+
+message MissionDetail {
+    int64 id = 1;
+    zoid.common.MissionStatus status = 2;
+    int64 timer = 3;
+    zoid.common.MissionScanStatus scan_status = 4;
+    optional int32 speed = 5;
+    optional int32 pass = 6;
+    int64 created_at = 7;
+    int64 updated_at = 8;
+    optional string created_by = 9;
+    optional string updated_by = 10;
+}
+
+message ListMissionsRequest {
+    zoid.common.PaginationRequest pagination = 1;
+}
+
+message ListMissionsResponse {
+    repeated MissionDetail missions = 1;
+    zoid.common.PaginationMeta pagination = 2;
+}
+
+message ListMissionsWithStatsRequest {}
+
+message MissionWithStats {
+    MissionDetail mission = 1;
+    int64 total_fod_groups = 2;
+    int64 total_fods = 3;
+    int64 cleared_count = 4;
+}
+
+message MissionStatsResponse {
+    repeated MissionWithStats stats = 1;
+}
+
+message GetActiveMissionRequest {}
+
+message ActiveMissionResponse {
+    optional MissionDetail active_mission = 1;
+}
+
+message RetrieveMissionRequest {
+    int64 mission_id = 1;
+}
+
+message RetrieveMissionResponse {
+    MissionDetail mission = 1;
+    int64 total_fod_groups = 2;
+    int64 total_fods = 3;
+}
+
+message UpdateMissionRequest {
+    int64 mission_id = 1;
+    optional zoid.common.MissionStatus status = 2;
+    optional zoid.common.MissionScanStatus scan_status = 3;
+    optional int64 timer = 4;
+    optional int32 speed = 5;
+    optional int32 pass = 6;
+}

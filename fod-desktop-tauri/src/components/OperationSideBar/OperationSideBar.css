@@ -1,0 +1,134 @@
+.operation_sidebar{
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    border-right: 1px solid;
+}
+.mission-info {
+    height: 25%;
+    /* height:50%; */
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.progress-number{
+    word-break: break-word;
+  font-family: 'SF_Pro_Display', 'Roboto_Condensed';
+  font-weight: bold;
+  font-size: 2.3rem;
+}
+
+.mission-info > div {
+  margin: 0 0 8.5px 0;
+}
+
+.mission-number {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: fit-content;
+  box-sizing: border-box;
+}
+
+#mission-header{
+  font-family: 'SF Pro Text',sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 0.8rem;
+  line-height: 1rem;
+  text-align: right;
+  color: #7f7f88;
+}
+
+#mission-number-val{
+  font-family: 'SF Pro Text', sans-serif;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 2rem;
+  line-height: 2.8rem;
+  text-align: center;
+  color: #0EB451;
+  font-feature-settings: 'tnum' on 'lnum' on;
+}
+.progress-bar {
+  background-color: #7f7f88;
+  margin: 0 16.5px 17px 7px;
+  width: 30px;
+  height: 1px;
+}
+
+.progress-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: fit-content;
+  box-sizing: border-box;
+}
+
+.progress-label {
+  margin: 0 1px 4px 7.8px;
+  font-size: 10px;
+  color: #7f7f88;
+}
+
+.progress-value {
+  margin: 0 2.8px 0 0;
+  font-size: 36px;
+  font-weight: bold;
+  display: flex;
+    align-items: center;
+    color: #cec8c8;
+}
+.percentage{
+    font-size: small;
+}
+.time-left,
+.time-elapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: fit-content;
+  box-sizing: border-box;
+}
+
+.time-left > span,
+.time-elapsed > span {
+  margin: 0 0 0 4.1px;
+  font-size: 10px;
+  color: #7f7f88;
+}
+
+.time-left-value,
+.time-elapsed-value {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: fit-content;
+  box-sizing: border-box;
+  color: #017ed7;
+}
+
+.time-left-number,
+.time-elapsed-number {
+  margin: 0 2.8px 0 0;
+  font-size: 36px;
+  font-weight: bold;
+ 
+}
+
+.time-left-value{
+  color: #cec8c8;
+}
+
+.time-left-unit,
+.time-elapsed-unit {
+  margin: 0 6.7px 0 6.7px;
+  font-size: 12px;
+  /* color: #017ed7; */
+}

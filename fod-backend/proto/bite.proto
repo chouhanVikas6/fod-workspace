@@ -1,0 +1,59 @@
+syntax = "proto3";
+package zoid.bite;
+
+service BiteService {
+    rpc GetBiteState (GetBiteStateRequest) returns (BiteState);
+    rpc GetHistoricalData (GetHistoricalDataRequest) returns (HistoricalBiteResponse);
+    rpc StreamBiteHealth (BiteStreamSubscription) returns (stream BiteState);
+}
+
+message GpsSensorData {
+    string fix = 1; // "RTK", "GPS", "NO_GPS"
+    double sd = 2;
+    double lat = 3;
+    double lon = 4;
+    double heading = 5;
+    double velocity = 6;
+}
+
+message CameraBiteEntry {
+    string cam_id = 1;
+    bool camera_connection = 2;
+    double intr_fps = 3;
+    bool pause = 4;
+    double vg_fps = 5;
+    double ms_fps = 6;
+    int64 timestamp = 7;
+}
+
+message PcHealthMetrics {
+    double cpu_usage_percent = 1;
+    double memory_usage_percent = 2;
+    double disk_usage_percent = 3;
+    double temperature_c = 4;
+}
+
+message BiteState {
+    int64 timestamp = 1;
+    GpsSensorData primary_gps = 2;
+    GpsSensorData secondary_gps = 3;
+    repeated CameraBiteEntry cameras = 4;
+    map<string, PcHealthMetrics> pc_nodes = 5;
+    int32 ping_latency_ms = 6;
+    bool connected = 7;
+    repeated string available_devices = 8;
+}
+
+message GetBiteStateRequest {}
+
+message GetHistoricalDataRequest {
+    int32 limit = 1;
+}
+
+message HistoricalBiteResponse {
+    repeated BiteState history = 1;
+}
+
+message BiteStreamSubscription {
+    int32 interval_ms = 1;
+}

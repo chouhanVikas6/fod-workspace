@@ -1,0 +1,94 @@
+syntax = "proto3";
+package zoid.mission_control;
+
+import "common.proto";
+
+service MissionControlService {
+    rpc StartMission (StartMissionRequest) returns (MissionControlResponse);
+    rpc JoinMission (JoinMissionRequest) returns (ActiveMissionStateResponse);
+    rpc RestartMission (RestartMissionRequest) returns (MissionControlResponse);
+    rpc GetScanStatus (GetScanStatusRequest) returns (ScanStatusResponse);
+    rpc ToggleScanStatus (ToggleScanRequest) returns (ScanStatusResponse);
+    rpc TerminateMission (TerminateMissionRequest) returns (TerminateResponse);
+    rpc StreamMissionEvents (MissionSubscriptionRequest) returns (stream MissionEvent);
+}
+
+message StartMissionRequest {
+    optional int32 speed = 1; // 5 to 45 km/h
+    optional int32 pass = 2;  // 1 to 3 passes
+}
+
+message JoinMissionRequest {
+    int64 mission_id = 1;
+}
+
+message RestartMissionRequest {
+    int64 mission_id = 1;
+}
+
+message GetScanStatusRequest {}
+
+message ToggleScanRequest {
+    bool resume = 1;
+    repeated string cam_list = 2;
+}
+
+message TerminateMissionRequest {
+    int64 mission_id = 1;
+}
+
+message MissionSubscriptionRequest {
+    int64 mission_id = 1;
+}
+
+message MissionControlResponse {
+    int64 mission_id = 1;
+    zoid.common.MissionStatus status = 2;
+    zoid.common.MissionScanStatus scan_status = 3;
+    int64 timer_seconds = 4;
+    int64 created_at = 5;
+}
+
+message ActiveMissionStateResponse {
+    int64 mission_id = 1;
+    zoid.common.MissionStatus status = 2;
+    zoid.common.MissionScanStatus scan_status = 3;
+    int64 start_time = 4;
+    int64 duration_ms = 5;
+    int64 fod_group_count = 6;
+}
+
+message ScanStatusResponse {
+    zoid.common.MissionScanStatus scan_status = 1;
+}
+
+message TerminateResponse {
+    int64 mission_id = 1;
+    bool success = 2;
+    string message = 3;
+}
+
+message MissionEvent {
+    int64 mission_id = 1;
+    int64 timestamp = 2;
+    oneof event {
+        int64 duration_tick_ms = 3;
+        zoid.common.MissionStatus status_changed = 4;
+        zoid.common.MissionScanStatus scan_changed = 5;
+        GroupAppeared group_appeared = 6;
+        CameraCommand camera_command = 7;
+        string raw_command = 8;
+    }
+}
+
+message CameraCommand {
+    string command = 1;
+    repeated string cam_ids = 2;
+}
+
+message GroupAppeared {
+    int64 group_id = 1;
+    double lat = 2;
+    double lon = 3;
+    double size = 4;
+}

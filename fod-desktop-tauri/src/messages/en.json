@@ -1,0 +1,19 @@
+{
+    "common": {
+        "hello": "Hello",
+        "welcome": "Welcome",
+        "username":"Username",
+        "password":"Password",
+        "sign-in":"Sign In",
+        "ask-admin-register":"Ask admin for account register.",
+        "or":"or",
+        "load-mission":"Load Mission",
+        "new-mission":"New Mission",
+        "mission-number":"Mission Number",
+        "fod-detected":"Fod Detected",
+        "fod-cleared":"Fod Cleared",
+        "false-fods":"False Fod's",
+        "start-mission":"Start Mission",
+        "restart-mission":"Restart Mission"
+      }
+}

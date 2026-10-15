@@ -1,0 +1,28 @@
+syntax = "proto3";
+package zoid.image;
+
+service ImageService {
+    rpc DownloadImage (ImageDownloadRequest) returns (stream ImageChunk);
+    rpc UploadImage (UploadImageRequest) returns (UploadImageResponse);
+}
+
+message ImageDownloadRequest {
+    string sha256 = 1;
+    bool thumbnail = 2;
+}
+
+message ImageChunk {
+    bytes data = 1;
+    int64 total_size = 2;
+    string mime_type = 3;
+}
+
+message UploadImageRequest {
+    int64 mission_id = 1;
+    bytes jpeg = 2;
+}
+
+message UploadImageResponse {
+    string sha256 = 1;
+    int64 size = 2;
+}

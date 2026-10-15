@@ -1,0 +1,16 @@
+[package]
+name = "grpc-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+tonic = { workspace = true }
+tonic-web = { workspace = true }
+tonic-health = { workspace = true }
+tonic-reflection = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+tower-http = { workspace = true }
+zoid-core = { workspace = true }
+proto-defination = { workspace = true }

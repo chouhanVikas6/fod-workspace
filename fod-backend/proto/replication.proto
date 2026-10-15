@@ -1,0 +1,137 @@
+syntax = "proto3";
+package zoid.replication;
+
+import "common.proto";
+import "mission.proto";
+import "fod_group.proto";
+import "fod.proto";
+import "cleared_fod.proto";
+
+service ReplicationService {
+    rpc Session (stream ReplicaMessage) returns (stream PrimaryMessage);
+    rpc MissionDigest (MissionDigestRequest) returns (MissionDigestResponse);
+    rpc SnapshotMission (SnapshotRequest) returns (stream ChangeBatch);
+}
+
+enum NodeRole {
+    NODE_ROLE_UNSPECIFIED = 0;
+    ATC = 1;
+    DESKTOP = 2;
+}
+
+message ReplicaMessage {
+    oneof msg {
+        Hello hello = 1;
+        Ack ack = 2;
+        Command command = 3;
+        Ping ping = 4;
+    }
+}
+
+message PrimaryMessage {
+    oneof msg {
+        Welcome welcome = 1;
+        ChangeBatch batch = 2;
+        CommandResult result = 3;
+        ResyncRequired resync = 4;
+        Pong pong = 5;
+    }
+}
+
+message Hello {
+    string node_id = 1;
+    NodeRole role = 2;
+    uint32 protocol_version = 3;
+    int64 cursor = 4;
+}
+
+message Welcome {
+    string primary_node_id = 1;
+    uint32 protocol_version = 2;
+    int64 head_seq = 3;
+    int64 oldest_retained_seq = 4;
+}
+
+message ChangeBatch {
+    int64 from_seq = 1;
+    int64 to_seq = 2;
+    repeated Change changes = 3;
+}
+
+message Change {
+    int64 seq = 1;
+    oneof entity {
+        zoid.mission.MissionDetail mission = 2;
+        zoid.fod_group.FodGroupEntity group = 3;
+        zoid.fod.FodEntity fod = 4;
+        zoid.cleared_fod.ClearedFodEntity cleared = 5;
+        Tombstone deleted = 6;
+    }
+}
+
+message Tombstone {
+    uint32 entity = 1;
+    string entity_key = 2;
+}
+
+message Ack {
+    int64 cursor = 1;
+}
+
+message Command {
+    string command_id = 1;
+    int64 mission_id = 2;
+    int64 group_id = 3;
+    zoid.common.FodGroupStatus desired_status = 4;
+    int64 base_version = 5;
+    string operator_id = 6;
+    string origin_node = 7;
+    int64 issued_at_ms = 8;
+    optional zoid.cleared_fod.RecordClearedFodRequest cleared = 9;
+}
+
+enum CommandOutcome {
+    OUTCOME_UNSPECIFIED = 0;
+    APPLIED = 1;
+    NO_OP = 2;
+    REJECTED_STALE = 3;
+    REJECTED_CLEARED = 4;
+    REJECTED_INVALID = 5;
+}
+
+message CommandResult {
+    string command_id = 1;
+    CommandOutcome outcome = 2;
+    zoid.fod_group.FodGroupEntity group = 3;
+    string detail = 4;
+}
+
+message ResyncRequired {
+    repeated int64 mission_ids = 1;
+    string reason = 2;
+}
+
+message Ping {
+    int64 t = 1;
+}
+
+message Pong {
+    int64 t = 1;
+    int64 head_seq = 2;
+}
+
+message MissionDigestRequest {
+    int64 mission_id = 1;
+}
+
+message MissionDigestResponse {
+    int64 mission_id = 1;
+    int64 group_count = 2;
+    int64 fod_count = 3;
+    bytes digest = 4;
+    int64 as_of_seq = 5;
+}
+
+message SnapshotRequest {
+    int64 mission_id = 1;
+}

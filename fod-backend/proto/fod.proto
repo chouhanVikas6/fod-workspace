@@ -1,0 +1,45 @@
+syntax = "proto3";
+package zoid.fod;
+
+import "common.proto";
+
+service FodService {
+    rpc GetFodsByGroup (GetFodsByGroupRequest) returns (GetFodsResponse);
+    rpc GetBiggestFodPerGroup (GetBiggestFodRequest) returns (GetFodsResponse);
+    rpc GetFod (GetFodRequest) returns (FodEntity);
+}
+
+message FodEntity {
+    string id = 1; // UUID
+    int64 mission_id = 2;
+    int64 group_id = 3;
+    string sysid = 4;
+    zoid.common.LatLon location = 5;
+    double confidence = 6;
+    string class_name = 7;
+    double velocity = 8;
+    double size = 9;
+    int64 timestamp = 10;
+    string image_sha256 = 11;
+    int64 image_size = 12;
+    bool frame_missing = 13;
+    int64 created_at = 14;
+}
+
+message GetFodsByGroupRequest {
+    int64 mission_id = 1;
+    int64 group_id = 2;
+    repeated string excluded_ids = 3;
+}
+
+message GetBiggestFodRequest {
+    int64 mission_id = 1;
+}
+
+message GetFodRequest {
+    string id = 1;
+}
+
+message GetFodsResponse {
+    repeated FodEntity fods = 1;
+}

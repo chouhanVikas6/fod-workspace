@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/car",
+    "apps/atc",
+    "crates/proto-defination",
+    "crates/grpc-core",
+    "crates/zoid-core",
+    "crates/zoid-tracker",
+    "crates/zoid-storage",
+    "crates/zoid-bite",
+    "crates/zoid-db",
+    "crates/zoid-replication",
+]
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["full"] }
+tonic = { version = "0.12", features = ["gzip", "zstd"] }
+tonic-web = "0.12"
+tonic-build = "0.12"
+tonic-health = "0.12"
+tonic-reflection = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+tower-http = { version = "0.6", features = ["cors"] }
+futures = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-stream = "0.3"
+
+# Internal workspace dependencies
+proto-defination = { path = "crates/proto-defination" }
+grpc-core = { path = "crates/grpc-core" }
+zoid-core = { path = "crates/zoid-core" }
+zoid-tracker = { path = "crates/zoid-tracker" }
+zoid-storage = { path = "crates/zoid-storage" }
+zoid-bite = { path = "crates/zoid-bite" }
+zoid-db = { path = "crates/zoid-db" }
+zoid-replication = { path = "crates/zoid-replication" }

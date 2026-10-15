@@ -1,0 +1,37 @@
+# Rust build artifacts
+target/
+**/target/
+Cargo.lock.log
+
+# Node dependencies and build artifacts
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+
+# Environment and sensitive files
+.env
+*.env
+**/.env*
+!**/.env.example
+
+# OS & IDE metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Large media assets, sample images, and runtime data
+**/public/satellite/
+satellite/
+**/fod-images/
+fod-images/
+**/sample_images/
+sample_images/
+**/data/
+data/
+**/frames/
+frames/

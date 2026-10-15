@@ -1,0 +1,19 @@
+{
+    "common": {
+        "hello": "नमस्ते",
+        "welcome": "स्वागत है",
+        "username": "उपयोगकर्ता नाम",
+        "password": "पासवर्ड",
+        "sign-in": "साइन इन करें",
+        "ask-admin-register": "खाता पंजीकरण के लिए व्यवस्थापक से पूछें।",
+        "or": "या",
+        "load-mission": "मिशन लोड करें",
+        "new-mission": "नया मिशन",
+        "start-mission": "मिशन शुरू करें",
+        "restart-mission": "मिशन पुनः आरंभ करें",
+        "mission-number": "मिशन संख्या",
+        "fod-detected": "एफओडी पाया गया",
+        "fod-cleared": "एफओडी हटाया गया",
+        "false-fods": "गलत एफओडी"
+    }
+}
