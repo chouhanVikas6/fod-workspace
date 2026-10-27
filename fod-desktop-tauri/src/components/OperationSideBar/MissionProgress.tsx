@@ -65,26 +65,33 @@ const MissionProgress = () => {
     return () => clearInterval(interval);
   }, [missionNumber]);
   return (
-    <div className="mission-info">
-      <div className="flex flex-col items-center box-border">
-        <span id="mission-header" className="font-sans font-normal text-xs leading-tight text-right text-gray-600">Alerts</span>
-        <span id={`mission-number-val`} className={`font-sans font-bold text-2xl leading-tight tracking-tight text-center ${groupCount==fods.length?'text-green-500':'text-yellow-400'} `}>{count}</span>
+    <div className="w-full px-1 py-3 flex flex-col items-center space-y-3.5 border-t border-slate-200/80">
+      <div className="flex flex-col items-center w-full">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Alerts</span>
+        <span className={`font-mono font-bold text-lg leading-tight mt-0.5 ${groupCount === fods.length ? 'text-emerald-600' : 'text-amber-500'}`}>
+          {count}
+        </span>
       </div>
       
-      <div className="flex flex-col items-center box-border">
-        <span id="mission-header" className="font-sans font-normal text-xs leading-tight text-right text-gray-600">Mission</span>
-        <span id="mission-number-val" className="font-sans font-bold text-2xl leading-tight tracking-tight text-center text-green-500">{missionNumber ? missionNumber : 'NA'}</span>
+      <div className="flex flex-col items-center w-full px-1">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Mission</span>
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700 truncate max-w-full" title={missionNumber ? String(missionNumber) : 'NA'}>
+          {missionNumber ? missionNumber : 'NA'}
+        </span>
       </div>
 
-      <div className="flex flex-col items-center box-border">
-        <span id="mission-header" className="font-sans font-normal text-xs leading-tight text-right text-gray-600">Duration</span>
-        <span id="mission-number-val" className="font-sans font-bold text-2xl leading-tight tracking-tight text-center text-green-500">{elapsed != null ? formatElapsed(elapsed) : 'NA'}</span>
+      <div className="flex flex-col items-center w-full">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Duration</span>
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700">
+          {elapsed != null ? formatElapsed(elapsed) : 'NA'}
+        </span>
       </div>
 
-      <div className="flex flex-col items-center box-border">
-        <span id="mission-header" className="font-sans font-normal text-xs leading-tight text-right text-gray-600">WayPoint</span>
-        {/* No waypoint source for free-run missions -> show "--" per spec. */}
-        <span id="mission-number-val" className="font-sans font-bold text-2xl leading-tight tracking-tight text-center text-green-500">{waypoint ?? "--"}</span>
+      <div className="flex flex-col items-center w-full">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">WayPoint</span>
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-500">
+          {waypoint ?? "--"}
+        </span>
       </div>
     </div>
   );

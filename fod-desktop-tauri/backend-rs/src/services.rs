@@ -174,7 +174,7 @@ fn proto_scan_status_str(status: i32) -> &'static str {
     }
 }
 
-fn proto_group_status_str(status: i32) -> &'static str {
+pub(crate) fn proto_group_status_str(status: i32) -> &'static str {
     match proto_defination::common::FodGroupStatus::try_from(status) {
         Ok(proto_defination::common::FodGroupStatus::New) => "NEW",
         Ok(proto_defination::common::FodGroupStatus::Accepted) => "ACCEPTED",
@@ -262,6 +262,45 @@ fn proto_fod_entity_to_json(f: &proto_defination::fod::FodEntity) -> Value {
         "frameMissing": f.frame_missing,
         "createdAt": proto_ms_to_iso(f.created_at),
     })
+}
+
+async fn connect_channel_with_fallback(primary: &str, secondary: &str) -> Option<tonic::transport::Channel> {
+    if let Ok(endpoint) = tonic::transport::Endpoint::from_shared(primary.to_string()) {
+        if let Ok(ch) = endpoint.connect_timeout(Duration::from_millis(600)).timeout(Duration::from_secs(5)).connect().await {
+            return Some(ch);
+        }
+    }
+    if let Ok(endpoint) = tonic::transport::Endpoint::from_shared(secondary.to_string()) {
+        if let Ok(ch) = endpoint.connect_timeout(Duration::from_millis(600)).timeout(Duration::from_secs(5)).connect().await {
+            return Some(ch);
+        }
+    }
+    None
+}
+
+async fn connect_mission_control_client(state: &AppState) -> Option<proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient<tonic::transport::Channel>> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::new(ch))
+}
+
+async fn connect_mission_client(state: &AppState) -> Option<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(proto_defination::mission::mission_service_client::MissionServiceClient::new(ch))
+}
+
+async fn connect_fod_group_client(state: &AppState) -> Option<proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient<tonic::transport::Channel>> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::new(ch))
+}
+
+async fn connect_fod_client(state: &AppState) -> Option<proto_defination::fod::fod_service_client::FodServiceClient<tonic::transport::Channel>> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(proto_defination::fod::fod_service_client::FodServiceClient::new(ch))
+}
+
+async fn connect_image_client(state: &AppState) -> Option<proto_defination::image::image_service_client::ImageServiceClient<tonic::transport::Channel>> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(proto_defination::image::image_service_client::ImageServiceClient::new(ch))
 }
 
 pub async fn call_car_grpc(
@@ -556,15 +595,34 @@ pub async fn call_car_grpc(
             .or_else(|| endpoint.strip_prefix("/api/fod-group/all/").and_then(|s| s.parse::<i64>().ok()))
             .unwrap_or(1);
         let mut client = proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::connect(car_url).await.ok()?;
-        let res = client.list_groups(tonic::Request::new(
-            proto_defination::fod_group::ListGroupsRequest {
-                mission_id,
-                pagination: Some(proto_defination::common::PaginationRequest { page: 1, limit: 200 }),
-            },
-        )).await.ok()?.into_inner();
-        let groups: Vec<Value> = res.groups.iter().map(proto_fod_group_to_json).collect();
+        let mut all_groups = Vec::new();
+        let mut page = 1;
+        loop {
+            let res = match client.list_groups(tonic::Request::new(
+                proto_defination::fod_group::ListGroupsRequest {
+                    mission_id,
+                    pagination: Some(proto_defination::common::PaginationRequest { page, limit: 200 }),
+                },
+            )).await {
+                Ok(r) => r.into_inner(),
+                Err(e) => {
+                    tracing::warn!("list_groups page {page} failed: {e}");
+                    break;
+                }
+            };
+
+            let total_pages = res.pagination.as_ref().map(|p| p.total_pages).unwrap_or(1);
+            let len = res.groups.len();
+            for g in res.groups {
+                all_groups.push(proto_fod_group_to_json(&g));
+            }
+            if page >= total_pages || len == 0 || page >= 200 {
+                break;
+            }
+            page += 1;
+        }
         return Some(json!({
-            "fodGroups": groups,
+            "fodGroups": all_groups,
             "statusCode": 200,
             "status": 200,
         }));
@@ -731,7 +789,7 @@ pub async fn fetch_image_from_car(
 
 
 /// Port of `apiToMain`: queries Car backend via gRPC when applicable,
-/// with HTTP fallback for non-gRPC endpoints.
+/// with fallback to ATC backend and HTTP for non-gRPC endpoints.
 pub async fn api_to_main(
     state: &AppState,
     method: reqwest::Method,
@@ -743,28 +801,30 @@ pub async fn api_to_main(
         return Some(grpc_val);
     }
 
-    let url = crate::upstream::car_url(state, endpoint);
-    let mut req = state
-        .http
-        .request(method, &url)
-        .timeout(Duration::from_millis(timeout_ms.unwrap_or(10_000)));
-    if let Some(body) = data {
-        req = req.json(&body);
-    }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("Main server failed, falling back to local handlers: {endpoint} {e}");
-            return None;
+    let urls = [
+        crate::upstream::car_url(state, endpoint),
+        crate::upstream::atc_url(state, endpoint),
+    ];
+
+    for url in urls {
+        let mut req = state
+            .http
+            .request(method.clone(), &url)
+            .timeout(Duration::from_millis(timeout_ms.unwrap_or(2_000)));
+        if let Some(ref body) = data {
+            req = req.json(body);
         }
-    };
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    if !status.is_success() {
-        tracing::error!("Main server failed with status: {}", status.as_u16());
-        return None;
+        if let Ok(resp) = req.send().await {
+            let status = resp.status();
+            if status.is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Some(serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text)));
+            }
+        }
     }
-    Some(serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text)))
+
+    tracing::warn!("Upstream server failed, falling back to local handlers: {endpoint}");
+    None
 }
 
 // ---------------------------------------------------------------------------

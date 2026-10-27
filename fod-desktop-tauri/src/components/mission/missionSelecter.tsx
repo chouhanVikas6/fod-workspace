@@ -86,31 +86,65 @@ const MissionSelector = () => {
     if (loading) return <CircleLoader />;
     return (
         <>
-            <div className=" top-0 left-0 h-full w-full flex justify-center items-center gap-4 z-[100] bg-[#FCFCFC] p-4">
-                <div className="h-full w-1/4 flex flex-col gap-3">
-                    <MissionType activeMission={activeMission} selectedMission={selectedMission} startTemplateView={startTemplateView}  missionTemplateView={missionTemplateView}/>
-                    <div className="flex items-center justify-between px-1 shrink-0">
-                        <span className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Missions</span>
-                        <button onClick={fetchMission} title="Refresh missions" className="p-1 rounded hover:bg-gray-200 active:scale-90 transition-transform">
-                            <Image src={refreshIcon} width={20} height={20} alt="Refresh" />
+            <div className="h-full w-full flex items-center gap-4 bg-slate-100/70 p-4 overflow-hidden select-none">
+                <div className="h-full w-[28%] min-w-[280px] max-w-[340px] flex flex-col gap-3">
+                    <MissionType activeMission={activeMission} selectedMission={selectedMission} startTemplateView={startTemplateView} missionTemplateView={missionTemplateView} />
+                    <div className="flex items-center justify-between px-2 shrink-0">
+                        <div className="flex items-center space-x-2">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Missions</span>
+                            <span className="px-2 py-0.5 rounded-full bg-slate-200/80 font-bold text-[11px] text-slate-600 font-mono">
+                                {missions.length}
+                            </span>
+                        </div>
+                        <button
+                            onClick={fetchMission}
+                            title="Refresh missions"
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200/70 active:scale-90 transition-all focus:outline-none"
+                        >
+                            <Image src={refreshIcon} width={18} height={18} alt="Refresh" />
                         </button>
                     </div>
                     <PastMission {...{ missions, setMission, selectedMission }} />
                 </div>
-                <div className="relative h-full w-3/4 bg-[#F5F5F5] border border-[#dfd4d4] rounded-lg overflow-hidden flex items-center justify-around" >
+                <div className="relative h-full flex-1 bg-white border border-slate-200/90 rounded-2xl shadow-sm overflow-hidden flex items-center justify-center">
                     {
                         currentScreen == 'MissionTemplate' ?
                             <MissionTemplate {...{ stopTemplateView }} /> :
                             currentScreen == 'MissionExplore' ?
-                                <MissionExplore {...{ stopTemplateView,selectedMission }} /> :
-                                <div className="flex flex-col items-center gap-4">
-                                    <div className="flex space-x-5 scale-150">
-                                        <ZoidLogoSvgr /><span className="text-[50px] my-auto">ZOID</span>
+                                <MissionExplore {...{ stopTemplateView, selectedMission }} /> :
+                                <div className="flex flex-col items-center justify-center text-center p-8 max-w-md space-y-6">
+                                    <div className="relative flex items-center justify-center">
+                                        <div className="absolute w-28 h-28 bg-blue-500/10 rounded-full blur-2xl" />
+                                        <div className="relative flex items-center space-x-3 scale-125">
+                                            <ZoidLogoSvgr />
+                                            <span className="text-3xl font-black text-slate-900 tracking-wider font-sans">ZOID</span>
+                                        </div>
                                     </div>
-                                    <p className="text-gray-400 text-sm">Select a mission from the list to explore it, or start a new one</p>
+                                    <div className="space-y-1.5">
+                                        <h2 className="text-lg font-bold text-slate-800 tracking-tight">Mission Operations Center</h2>
+                                        <p className="text-slate-500 text-xs leading-relaxed max-w-xs mx-auto">
+                                            Select a past mission from the sidebar to review FOD detections and telemetry, or start a new scanning operation.
+                                        </p>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2.5 w-full pt-2">
+                                        <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col items-center text-center space-y-1">
+                                            <span className="text-lg">🎯</span>
+                                            <span className="text-[11px] font-bold text-slate-700">AI Detection</span>
+                                            <span className="text-[9px] text-slate-400">Real-time FODs</span>
+                                        </div>
+                                        <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col items-center text-center space-y-1">
+                                            <span className="text-lg">🛰️</span>
+                                            <span className="text-[11px] font-bold text-slate-700">Centimeter RTK</span>
+                                            <span className="text-[9px] text-slate-400">High Precision</span>
+                                        </div>
+                                        <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col items-center text-center space-y-1">
+                                            <span className="text-lg">📸</span>
+                                            <span className="text-[11px] font-bold text-slate-700">Multi-Camera</span>
+                                            <span className="text-[9px] text-slate-400">26 Cam BITE</span>
+                                        </div>
+                                    </div>
                                 </div>
                     }
-                    {/* <Image src={ZoidLogoSvgr} alt="" layout="fill" fetchPriority="low" /> */}
                 </div>
             </div>
         </>

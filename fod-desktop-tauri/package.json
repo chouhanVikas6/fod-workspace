@@ -6,7 +6,7 @@
   "scripts": {
     "dev:renderer": "vite --host 127.0.0.1 --port 5174 --strictPort",
     "build:renderer": "vite build",
-    "build:backend": "cargo build --release --manifest-path backend-rs/Cargo.toml",
+    "build:backend": "cargo build --release --manifest-path backend-rs/Cargo.toml && cp backend-rs/target/release/fod-backend src-tauri/binaries/fod-backend-x86_64-unknown-linux-gnu",
     "dev:backend": "cargo run --manifest-path backend-rs/Cargo.toml",
     "typecheck": "tsc --noEmit",
     "tauri": "cross-env WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 GDK_BACKEND=x11 tauri",

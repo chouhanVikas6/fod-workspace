@@ -63,6 +63,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Background telemetry subscriber (Car backend gRPC BiteService).
     realtime::car_telemetry::spawn(state.clone());
+    // Background FOD group subscriber (Car backend gRPC StreamGroups).
+    realtime::group_stream::spawn(state.clone());
     // Coexistence gate: the Electron app runs these same schedulers against the
     // same DB — only ONE owner may run the dirty-push loop at a time. Set
     // FOD_DISABLE_SCHEDULERS=1 when running side-by-side with the old app.

@@ -127,9 +127,9 @@ impl SimulatorEngine {
                     }
                 }
 
-                let hz = cfg.throughput_hz.clamp(0.1, 100.0);
+                let hz = cfg.throughput_hz.clamp(0.1, 200.0);
                 let batch_size = cfg.batch_size.clamp(1, 50);
-                let interval_ms = (1000.0 / hz).max(10.0) as u64;
+                let interval_micros = ((1_000_000.0 / hz) as u64).max(500);
 
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
                 let car_pos = geo_engine.get_position_at_time(elapsed_secs);
@@ -176,13 +176,18 @@ impl SimulatorEngine {
                                 (-1.0, -1.0)
                             } else {
                                 let forward_jitter = rng.gen_range(-1.0..=4.0);
-                                GeoEngine::offset_coordinate(
+                                let (cand_lat, cand_lon) = GeoEngine::offset_coordinate(
                                     car_pos.lat,
                                     car_pos.lon,
                                     car_pos.heading_deg,
                                     cam.lateral_offset_m,
                                     forward_jitter,
-                                )
+                                );
+                                if geo_engine.is_inside_boundary(cand_lat, cand_lon) {
+                                    (cand_lat, cand_lon)
+                                } else {
+                                    geo_engine.clamp_to_boundary(cand_lat, cand_lon, car_pos.lat, car_pos.lon)
+                                }
                             };
 
                             let sample_idx = total_sent_counter.load(Ordering::Relaxed) as usize;
@@ -350,7 +355,7 @@ impl SimulatorEngine {
                     let _ = app.emit("simulator-telemetry", telemetry_ui);
                 }
 
-                tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                tokio::time::sleep(Duration::from_micros(interval_micros)).await;
             }
         });
 
@@ -400,6 +405,8 @@ impl SimulatorEngine {
             "Streaming".to_string()
         };
 
+        let car_pos = GeoEngine::new(&loc).get_position_at_time(0.0);
+
         let telemetry_ui = SimulatorTelemetry {
             running,
             paused,
@@ -408,9 +415,9 @@ impl SimulatorEngine {
             total_rejected: rej,
             total_duplicate: dup,
             current_hz: hz,
-            current_lat: (loc.min_lat + loc.max_lat) / 2.0,
-            current_lon: (loc.min_lon + loc.max_lon) / 2.0,
-            current_heading: 180.0,
+            current_lat: car_pos.lat,
+            current_lon: car_pos.lon,
+            current_heading: car_pos.heading_deg,
             current_speed_kmh: loc.vehicle_speed_kmh,
             active_camera_count: active_count,
             last_status,
@@ -557,11 +564,13 @@ impl SimulatorEngine {
                 let cam = active_cams.choose(&mut rng).unwrap();
                 let (crop_jpeg, _) = self.image_feeder.get_sample_frame(i as usize, false);
 
+                let (burst_lat, burst_lon) = geo_engine.random_point_in_boundary(&mut rng);
+
                 detections.push(Detection {
                     uid: Uuid::new_v4().to_string(),
                     cam_id: cam.cam_id.clone(),
-                    lat: car_pos.lat + rng.gen_range(-0.0001..=0.0001),
-                    lon: car_pos.lon + rng.gen_range(-0.0001..=0.0001),
+                    lat: burst_lat,
+                    lon: burst_lon,
                     sd: 0.01,
                     confidence: rng.gen_range(0.85..=0.99),
                     class_name: "Metallic".to_string(),

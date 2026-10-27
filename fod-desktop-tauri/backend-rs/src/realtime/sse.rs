@@ -15,7 +15,7 @@
 //! implicit hop-by-hop under HTTP/1.1).
 //! DB polling behaviour is kept as-is — parity first, no redesign.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::{Duration, Instant};
 
@@ -254,15 +254,18 @@ fg."groupId" AS "idssssss"
 FROM "FodGroup" fg
 LEFT JOIN "Fod" f ON fg."biggestFodId" = f."id"
 WHERE fg."missionId" = $1
-AND (fg."updatedAt" AT TIME ZONE 'UTC') > $2::timestamptz
+AND (
+    (fg."updatedAt" AT TIME ZONE 'UTC') > $2::timestamptz
+    OR ((fg."updatedAt" AT TIME ZONE 'UTC') = $2::timestamptz AND fg."groupId" > $3)
+)
 ORDER BY fg."updatedAt" ASC, fg."groupId" ASC
+LIMIT 500
 "#;
 
 
 struct RetriveState {
     last_updated_at: String,
-    sent_group_ids: HashSet<i64>,
-    last_processed_timestamp: String,
+    last_group_id: i64,
     last_activity: Instant,
     data_has_been_sent: bool,
     polling_stopped: bool,
@@ -276,13 +279,22 @@ pub async fn retrive_data(
     // error path, exactly like the NaN bind did in Prisma.
     let mission_id = query.get("id").and_then(|s| parse_int_js(s));
     tracing::info!(?mission_id, "SSE retrive-data connection opened");
+
+    if let Some(mid) = mission_id {
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
+                tracing::warn!("sync_fod on SSE connect for mission {mid} failed: {e}");
+            }
+        });
+    }
+
     let (tx, rx) = mpsc::channel::<Event>(32);
 
     tokio::spawn(async move {
         let mut st = RetriveState {
             last_updated_at: "1970-01-01T00:00:00.000Z".to_string(),
-            sent_group_ids: HashSet::new(),
-            last_processed_timestamp: String::new(),
+            last_group_id: 0,
             last_activity: Instant::now(),
             data_has_been_sent: false,
             polling_stopped: false,
@@ -326,7 +338,7 @@ async fn send_data(
     mission_id: Option<i64>,
     st: &mut RetriveState,
 ) -> bool {
-    let rows = match query_rows(state, mission_id, &st.last_updated_at).await {
+    let rows = match query_rows(state, mission_id, &st.last_updated_at, st.last_group_id).await {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!(error = %e, "SSE Error");
@@ -353,53 +365,19 @@ async fn send_data(
     st.last_activity = Instant::now();
     st.data_has_been_sent = true;
 
-    // Filter out records already sent for the current timestamp.
-    let filtered: Vec<Value> = rows
-        .into_iter()
-        .filter(|r| {
-            let same_ts = r.get("updatedAt").and_then(Value::as_str)
-                == Some(st.last_processed_timestamp.as_str());
-            let already_sent = r
-                .get("idssssss")
-                .and_then(Value::as_i64)
-                .is_some_and(|g| st.sent_group_ids.contains(&g));
-            !(same_ts && already_sent)
-        })
-        .collect();
-
-    if filtered.is_empty() {
-        return true;
-    }
-
-    let max_updated_at = filtered
-        .last()
-        .and_then(|r| r.get("updatedAt").and_then(Value::as_str))
-        .map(str::to_string);
-
-    // New timestamp → advance the cursor and reset the sent-id set.
-    if let Some(max) = max_updated_at
-        && max != st.last_processed_timestamp
-    {
-        st.last_processed_timestamp = max.clone();
-        st.last_updated_at = max;
-        st.sent_group_ids.clear();
-    }
-
-    for r in &filtered {
-        // Node: `if (record.idssssss && record.updatedAt === lastProcessed…)`
-        // — 0 is falsy and skipped.
-        if let Some(g) = r.get("idssssss").and_then(Value::as_i64)
-            && g != 0
-            && r.get("updatedAt").and_then(Value::as_str)
-                == Some(st.last_processed_timestamp.as_str())
-        {
-            st.sent_group_ids.insert(g);
+    // Advance cursor to the last row in this batch
+    if let Some(last) = rows.last() {
+        if let Some(ts) = last.get("updatedAt").and_then(Value::as_str) {
+            st.last_updated_at = ts.to_string();
+        }
+        if let Some(gid) = last.get("idssssss").and_then(Value::as_i64) {
+            st.last_group_id = gid;
         }
     }
 
     let evt = Event::default()
         .event("update")
-        .data(serde_json::to_string(&filtered).unwrap_or_else(|_| "[]".into()));
+        .data(serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()));
     tx.send(evt).await.is_ok()
 }
 
@@ -407,11 +385,13 @@ async fn query_rows(
     state: &AppState,
     mission_id: Option<i64>,
     last_updated_at: &str,
+    last_group_id: i64,
 ) -> anyhow::Result<Vec<Value>> {
     let mission_id = mission_id.ok_or_else(|| anyhow::anyhow!("invalid mission id (NaN)"))?;
     let rows = sqlx::query(RETRIVE_SQL)
         .bind(mission_id)
         .bind(last_updated_at)
+        .bind(last_group_id)
         .fetch_all(&state.db)
         .await?;
 

@@ -49,24 +49,58 @@ export function isWithinBoundary(point, boundaryPoints) {
     return isWithinX && isWithinY;
 }
 
-export function mapArea(boundaryPoints, lateralDistance, offset) {
-    const cartesianBoundaryPoints = boundaryPoints.map(p => latLonToCartesian(p.lat, p.lon));
+export type PathDirection = 'LENGTHWISE' | 'CROSSWISE' | 'OPTIMAL';
+
+export function mapArea(
+    boundaryPoints: Array<{ lat: number; lon: number }>,
+    lateralDistance: number,
+    offset: number = 0,
+    direction: PathDirection = 'OPTIMAL',
+    reverse: boolean = false
+) {
+    if (!boundaryPoints || boundaryPoints.length < 4) return [];
+    const cartesianBoundaryPoints = boundaryPoints.slice(0, 4).map(p => latLonToCartesian(p.lat, p.lon));
     const [p1, p2, p3, p4] = cartesianBoundaryPoints;
 
-    const points_1 = pointsOnLine(p1, p4, lateralDistance, offset);
-    const points_2 = pointsOnLine(p2, p3, lateralDistance, offset);
+    const lenPair1 = (distance(p1, p2) + distance(p4, p3)) / 2;
+    const lenPair2 = (distance(p1, p4) + distance(p2, p3)) / 2;
 
-    const width = Math.min(distance(p2, p3), distance(p1, p4));
-    // const height = distance(p1, p2);
+    // For LENGTHWISE / OPTIMAL: sweeps run parallel to the longer pair of edges
+    // For CROSSWISE: sweeps run parallel to the shorter pair of edges
+    const wantParallelToPair2 = direction === 'CROSSWISE' ? (lenPair2 < lenPair1) : (lenPair2 >= lenPair1);
 
-    const numSweeps = Math.ceil(width / lateralDistance);
+    let startSideA: Array<{ x: number; y: number }>;
+    let startSideB: Array<{ x: number; y: number }>;
+    let stepWidth: number;
 
-    const linesCoordinatesData = [];
+    if (wantParallelToPair2) {
+        startSideA = pointsOnLine(p1, p2, lateralDistance, offset);
+        startSideB = pointsOnLine(p4, p3, lateralDistance, offset);
+        stepWidth = lenPair1;
+    } else {
+        startSideA = pointsOnLine(p1, p4, lateralDistance, offset);
+        startSideB = pointsOnLine(p2, p3, lateralDistance, offset);
+        stepWidth = lenPair2;
+    }
+
+    if (reverse) {
+        startSideA.reverse();
+        startSideB.reverse();
+    }
+
+    const numSweeps = Math.min(
+        Math.ceil(stepWidth / lateralDistance),
+        startSideA.length,
+        startSideB.length
+    );
+
+    const linesCoordinatesData: number[][][] = [];
 
     for (let i = 0; i < numSweeps; i++) {
-        const point1 = cartesianToLatLon(points_1[i].x, points_1[i].y);
-        const point2 = cartesianToLatLon(points_2[i].x, points_2[i].y);
-        if (i % 2 == 0) {
+        if (!startSideA[i] || !startSideB[i]) continue;
+        const point1 = cartesianToLatLon(startSideA[i].x, startSideA[i].y);
+        const point2 = cartesianToLatLon(startSideB[i].x, startSideB[i].y);
+        if (i % 2 === 0) {
             linesCoordinatesData.push([
                 [point1.lon, point1.lat],
                 [point2.lon, point2.lat]

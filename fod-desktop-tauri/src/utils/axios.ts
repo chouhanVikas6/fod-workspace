@@ -33,6 +33,14 @@ export default function axiosClient(config: any): Promise<any> {
   try {
     config = config || {};
     const headers: Record<string, string> = { ...(config.headers || {}) };
+    if (!headers['Authorization'] && !headers['authorization']) {
+      try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('TOKEN_KEY') : null;
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      } catch {}
+    }
     // Method names uppercased: fetch() only auto-normalises the handful of
     // standard verbs, and the sidecar route table branches on exact-case
     // req.method, so normalise explicitly rather than relying on that.

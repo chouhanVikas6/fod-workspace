@@ -275,20 +275,18 @@ background-color: #EA5454;;
 
 .tool-tip {
 position: absolute;
-top: calc(100% + 20px); /* Position below the main part */
+top: calc(100% + 14px); /* Position below the main part */
 left: -10px;
 width:calc(100% + 72px);
 /* transform: translateX(-50%); */
-padding: 5px;
+padding: 10px 12px;
 background-color: #fff;
-/* padding: 5px 10px; */
-border-radius: 5px;
+border: 1px solid rgba(226, 232, 240, 0.9);
+border-radius: 12px;
 font-size: 14px;
 white-space: nowrap;
-z-index: 4;
-box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Add shadow */
-
-/* overflow-y: auto; */
+z-index: 100;
+box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 }
 
 .vehicle{

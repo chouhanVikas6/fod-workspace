@@ -3,6 +3,7 @@
 //! consumer, the car-backend /client listener, and the SSE endpoints.
 
 pub mod car_telemetry;
+pub mod group_stream;
 pub mod socketio;
 pub mod sse;
 

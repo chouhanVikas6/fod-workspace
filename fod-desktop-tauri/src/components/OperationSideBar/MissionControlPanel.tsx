@@ -106,10 +106,24 @@ const MissionControlPanel = ({ tab, setTab }) => {
         {isPauseLoading && <BarLoader />}
         {isPause ? <Image src={PauseButton} alt='' width={40} height={40} /> : <Image src={ResumeButton} alt='' width={40} height={40} />}
       </button>
-      <Image className="active:scale-95" src={Terminate} alt='' width={40} height={40}
-        onClick={() => mission.isActive && dispatch(terminateMission)}
-      />
-      <Image className="active:scale-95" src={ExitMissionIcon} alt='' width={55} height={40}
+      {mission.isActive && (
+        <Image
+          className="active:scale-95 cursor-pointer"
+          src={Terminate}
+          alt="Stop Mission"
+          title="Stop Mission"
+          width={40}
+          height={40}
+          onClick={() => dispatch(terminateMission)}
+        />
+      )}
+      <Image
+        className="active:scale-95 cursor-pointer"
+        src={ExitMissionIcon}
+        alt="Exit Mission"
+        title="Exit Mission"
+        width={55}
+        height={40}
         onClick={() => dispatch(exitMission)}
       />
       <Image src={Line} alt='' width={40} height={40} />

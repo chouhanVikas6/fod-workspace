@@ -281,17 +281,29 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
         }
     }
 
-    // Latest mission by createdAt (fallback 1), then reconcile its fod-groups.
-    let latest: Option<i64> =
-        sqlx::query_scalar(r#"SELECT "id" FROM "Mission" ORDER BY "createdAt" DESC LIMIT 1"#)
+    // Active mission if any, otherwise latest mission by createdAt (fallback 1)
+    let active_id: Option<i64> = sqlx::query_scalar(
+        r#"SELECT "id" FROM "Mission" WHERE "status" = 'ACTIVE' ORDER BY "createdAt" DESC LIMIT 1"#,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let mission_id = match active_id {
+        Some(id) => id,
+        None => {
+            let latest: Option<i64> = sqlx::query_scalar(
+                r#"SELECT "id" FROM "Mission" ORDER BY "createdAt" DESC LIMIT 1"#,
+            )
             .fetch_optional(&state.db)
             .await?;
-    let mission_id = latest.unwrap_or(1);
+            latest.unwrap_or(1)
+        }
+    };
     sync_fod(state, mission_id).await?;
     Ok(())
 }
 
-async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
+pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
     let groups = sqlx::query_as::<_, FodGroup>(r#"SELECT * FROM "FodGroup" WHERE "missionId" = $1"#)
         .bind(mission_id)
         .fetch_all(&state.db)
@@ -337,63 +349,39 @@ async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         let biggest_fod = g.get("biggestFod").and_then(Value::as_str);
         let biggest_fod_size = g.get("biggestFodSize").and_then(Value::as_f64).map(|s| s as i32);
 
-        let existing: Option<(String, Option<bool>)> = sqlx::query_as(
-            r#"SELECT "status"::text, "dirty" FROM "FodGroup" WHERE "groupId" = $1 AND "missionId" = $2"#,
+        let id = uuid::Uuid::new_v4().to_string();
+        let st = new_status.unwrap_or("NEW");
+        let created = g.get("createdAt").and_then(Value::as_str);
+        let updated_at = g.get("updatedAt").and_then(Value::as_str);
+
+        if let Err(e) = sqlx::query(
+            r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","biggestFodId","biggestFodSize","createdAt","updatedAt")
+               VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6, COALESCE($7::timestamp, now()), COALESCE($8::timestamp, now()))
+               ON CONFLICT ("groupId","missionId") DO UPDATE SET
+                   "status" = CASE WHEN "FodGroup"."dirty" = true THEN "FodGroup"."status" ELSE EXCLUDED."status" END,
+                   "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
+                   "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
+                   "updatedAt" = CASE
+                       WHEN "FodGroup"."dirty" = true THEN "FodGroup"."updatedAt"
+                       WHEN "FodGroup"."status" != EXCLUDED."status"
+                         OR "FodGroup"."biggestFodId" IS DISTINCT FROM EXCLUDED."biggestFodId"
+                         OR "FodGroup"."biggestFodSize" IS DISTINCT FROM EXCLUDED."biggestFodSize"
+                       THEN now()
+                       ELSE "FodGroup"."updatedAt"
+                   END"#,
         )
+        .bind(id)
         .bind(gid)
         .bind(mission_id)
-        .fetch_optional(&state.db)
-        .await?;
-
-        match existing {
-            Some((cur, dirty)) => {
-                if dirty == Some(true) {
-                    continue;
-                }
-                let status_to_set = new_status.unwrap_or(&cur);
-                sqlx::query(
-                    r#"UPDATE "FodGroup"
-                       SET "status" = $1::"FodGroupStatus",
-                           "biggestFodId" = COALESCE($2, "biggestFodId"),
-                           "biggestFodSize" = COALESCE($3, "biggestFodSize"),
-                           "dirty" = false,
-                           "updatedAt" = now()
-                       WHERE "groupId" = $4 AND "missionId" = $5"#,
-                )
-                .bind(status_to_set)
-                .bind(biggest_fod)
-                .bind(biggest_fod_size)
-                .bind(gid)
-                .bind(mission_id)
-                .execute(&state.db)
-                .await?;
-            }
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                let st = new_status.unwrap_or("NEW");
-                let created = g.get("createdAt").and_then(Value::as_str);
-                let updated_at = g.get("updatedAt").and_then(Value::as_str);
-                sqlx::query(
-                    r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","biggestFodId","biggestFodSize","createdAt","updatedAt")
-                       VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6, COALESCE($7::timestamp, now()), COALESCE($8::timestamp, now()))
-                       ON CONFLICT ("groupId","missionId") DO UPDATE SET
-                           "status" = EXCLUDED."status",
-                           "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
-                           "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
-                           "dirty" = false,
-                           "updatedAt" = now()"#,
-                )
-                .bind(id)
-                .bind(gid)
-                .bind(mission_id)
-                .bind(st)
-                .bind(biggest_fod)
-                .bind(biggest_fod_size)
-                .bind(created)
-                .bind(updated_at)
-                .execute(&state.db)
-                .await?;
-            }
+        .bind(st)
+        .bind(biggest_fod)
+        .bind(biggest_fod_size)
+        .bind(created)
+        .bind(updated_at)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!("sync_fod upsert FodGroup {gid} error: {e}");
         }
 
         // primaryPacket → createFodBatch (R1's fod-ingest + imagewriter; the
@@ -457,7 +445,8 @@ async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         } else {
             let _ = sqlx::query(
                 r#"UPDATE "FodGroup" SET "biggestFodId" = $1, "biggestFodSize" = $2, "updatedAt" = now()
-                   WHERE "groupId" = $3 AND "missionId" = $4"#
+                   WHERE "groupId" = $3 AND "missionId" = $4
+                     AND ("biggestFodId" IS DISTINCT FROM $1 OR "biggestFodSize" IS DISTINCT FROM $2)"#
             )
             .bind(&f.id)
             .bind(f.size as i32)

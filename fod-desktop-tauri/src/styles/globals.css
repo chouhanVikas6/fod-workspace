@@ -60,9 +60,9 @@ select {
 1. Correct the inability to style clickable types in iOS and Safari.
 2. Remove default button styles.
 */
-button:active{
-  transform: scale(0.95);
-  box-shadow: 0 4px 6px rgba(0, 0, 0, );
+button:active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 
@@ -298,20 +298,18 @@ background-color: #EA5454;;
 
 .tool-tip {
 position: absolute;
-top: calc(100% + 20px); /* Position below the main part */
+top: calc(100% + 14px); /* Position below the main part */
 left: -10px;
 width:calc(100% + 72px);
 /* transform: translateX(-50%); */
-padding: 5px;
+padding: 10px 12px;
 background-color: #fff;
-/* padding: 5px 10px; */
-border-radius: 5px;
+border: 1px solid rgba(226, 232, 240, 0.9);
+border-radius: 12px;
 font-size: 14px;
 white-space: nowrap;
-z-index: 4;
-box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Add shadow */
-
-/* overflow-y: auto; */
+z-index: 100;
+box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 }
 
 .vehicle{
@@ -695,29 +693,23 @@ align-items: center;
 
 /* Global scrollbar styles */
 ::-webkit-scrollbar {
-  width: 10px;
-	background-color: #F5F5F5;
+  width: 6px;
+  height: 6px;
+  background-color: transparent;
 }
 
 ::-webkit-scrollbar-track {
-  -webkit-box-shadow: inset 0 0 6px rgba(0,0,0,0.3);
-	background-color: #F5F5F5;
-	border-radius: 10px;
+  background-color: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  border-radius: 10px;
-  height: 50px;
-	background-image: -webkit-gradient(linear,
-									   left bottom,
-									   left top,
-									   color-stop(0.44, rgb(122,153,217)),
-									   color-stop(0.72, rgb(73,125,189)),
-									   color-stop(0.86, rgb(28,58,148)));
+  border-radius: 9999px;
+  background-color: rgba(156, 163, 175, 0.4);
+  transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: blue; /* Color of the thumb on hover */
+  background-color: rgba(107, 114, 128, 0.7);
 }
 
 /* For Firefox */

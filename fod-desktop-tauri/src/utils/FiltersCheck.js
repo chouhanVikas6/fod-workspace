@@ -27,10 +27,10 @@ export const sortByFilter = (filters, fods, currentLocation = null) => {
     let sortingFunction;
     switch (sortby) {
         case 'latest':
-            sortingFunction = (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+            sortingFunction = (a, b) => (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0);
             break;
         case 'oldest':
-            sortingFunction = (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+            sortingFunction = (a, b) => (Date.parse(a.timestamp) || 0) - (Date.parse(b.timestamp) || 0);
             break;
         case 'biggestTosmallest':
             sortingFunction = (a, b) => b.size - a.size;

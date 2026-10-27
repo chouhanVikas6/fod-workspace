@@ -4,7 +4,7 @@ import { Gauge, ShieldAlert, Sparkles } from 'lucide-react';
 export default function ThroughputTab() {
   const { config, random, custom, updateConfig, updateRandom, updateCustom } = useSimulatorStore();
 
-  const presetFrequencies = [0.5, 1.0, 5.0, 10.0, 20.0, 50.0];
+  const presetFrequencies = [0.5, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 150.0, 200.0];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 select-none transition-colors">
@@ -19,36 +19,57 @@ export default function ThroughputTab() {
 
           <div className="flex flex-col gap-4">
             <div>
-              <div className="flex justify-between items-center mb-1 text-xs">
+              <div className="flex justify-between items-center mb-1.5 text-xs">
                 <span className="text-slate-600 dark:text-slate-300 font-medium">Throughput Rate:</span>
-                <span className="font-mono font-bold text-cyan-700 dark:text-cyan-300 text-sm">
-                  {config.throughput_hz.toFixed(1)} Hz ({Math.round(config.throughput_hz * config.batch_size)} detections/sec)
-                </span>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-slate-50 dark:bg-[#141b29] border border-slate-300 dark:border-[#253248] rounded px-2 py-0.5 focus-within:border-cyan-500">
+                    <input
+                      type="number"
+                      min="0.1"
+                      max="200"
+                      step="0.5"
+                      value={config.throughput_hz}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (!isNaN(val)) {
+                          updateConfig({ throughput_hz: Math.min(200, Math.max(0.1, val)) });
+                        }
+                      }}
+                      className="w-14 bg-transparent font-mono text-xs font-bold text-cyan-700 dark:text-cyan-300 text-right outline-none"
+                    />
+                    <span className="font-mono text-xs text-slate-400 ml-1">Hz</span>
+                  </div>
+                  <span className="font-mono font-medium text-slate-500 dark:text-slate-400 text-xs">
+                    ({Math.round(config.throughput_hz * config.batch_size)} det/s)
+                  </span>
+                </div>
               </div>
               <input
                 type="range"
                 min="0.1"
-                max="50.0"
+                max="200.0"
                 step="0.5"
                 value={config.throughput_hz}
                 onChange={(e) => updateConfig({ throughput_hz: parseFloat(e.target.value) })}
                 className="w-full accent-cyan-500 cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-1">
-                <span>0.1 Hz (Slow)</span>
-                <span>25 Hz</span>
-                <span>50 Hz (Stress Test)</span>
+                <span>0.1 Hz</span>
+                <span>50 Hz</span>
+                <span>100 Hz</span>
+                <span>150 Hz</span>
+                <span>200 Hz (Max)</span>
               </div>
             </div>
 
             {/* Frequency Quick Presets */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Presets:</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium mr-1">Presets:</span>
               {presetFrequencies.map((f) => (
                 <button
                   key={f}
                   onClick={() => updateConfig({ throughput_hz: f })}
-                  className={`px-2.5 py-1 rounded text-xs font-mono font-medium border cursor-pointer transition-colors ${
+                  className={`px-2 py-0.5 rounded text-xs font-mono font-medium border cursor-pointer transition-colors ${
                     config.throughput_hz === f
                       ? 'bg-cyan-50 border-cyan-400 text-cyan-700 dark:bg-cyan-950 dark:border-cyan-500 dark:text-cyan-300'
                       : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200 dark:bg-[#161f30] dark:border-[#243147] dark:text-slate-300 dark:hover:bg-[#1e2a40]'

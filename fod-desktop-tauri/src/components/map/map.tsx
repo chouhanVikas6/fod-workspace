@@ -17,8 +17,14 @@ const Map = () => {
   const [isMapReady, setMapReady] = useState(false);
   const [refrenceIndex, setRefrenceIndex] = useState<number>(0);
   const linesCoordinatesData = useMemo(() => {
-    return mapArea(config.map.boundaryPoints, config.map.lateraldistance, config.map.OFFSET);
-  }, [config.map.boundaryPoints, config.map.lateraldistance, config.map.OFFSET]);
+    return mapArea(
+      config.map.boundaryPoints,
+      config.map.lateraldistance,
+      config.map.OFFSET,
+      config.map.pathDirection || 'OPTIMAL',
+      config.map.reversePath || false
+    );
+  }, [config.map.boundaryPoints, config.map.lateraldistance, config.map.OFFSET, config.map.pathDirection, config.map.reversePath]);
   // Making mission polygon
   const coordinates = config.map.boundaryPoints.map(point => [point.lon, point.lat]);
   coordinates.push(coordinates[0]); // Close the polygon

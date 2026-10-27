@@ -59,49 +59,58 @@ const FodReducer = createSlice({
   reducers: {
     pushFod: (state, action) => {
       const { payload } = action;
-      if(payload.frame)payload.frame="data:image/jpeg;base64,"+payload.frame;
-      
-      if(state.fodMap.hasOwnProperty(payload.id)){
-        state.fods[state.fodMap[payload.id]]=payload;
-      }else{
+      if (payload.frame) payload.frame = "data:image/jpeg;base64," + payload.frame;
+
+      const gid = payload.groupId;
+      if (gid !== undefined && state.fodMap.hasOwnProperty(gid)) {
+        state.fods[state.fodMap[gid]] = payload;
+      } else {
         state.fods.unshift(payload);
+        if (state.fods.length > FodListsLimit) {
+          state.fods = state.fods.slice(0, FodListsLimit);
+        }
       }
       // Rebuild the fodMap
-      let map:any={};
-      state.fodMap = state.fods.reduce((map, fod, index) => {
-        map[fod.groupId] = index;
-        return map;
-      }, map);
+      const map: Record<number, number> = {};
+      for (let i = 0; i < state.fods.length; i++) {
+        map[state.fods[i].groupId] = i;
+      }
+      state.fodMap = map;
     },
     syncFod: (state, action) => {
       const { payload } = action;
-      // Merge the new fods into the state
-      let tempFod:any=[];
+      if (!Array.isArray(payload) || payload.length === 0) return;
+
+      const addedGroups = new Set<number>();
+      const tempFod: any[] = [];
+
       payload.forEach((newFod) => {
-        if(!newFod.groupId)return;
-        
-        // if(newFod.frame)newFod.frame=base64decodedFrame(newFod.frame);
-        const existingFodIndex = state.fods.findIndex(fod => fod.groupId === newFod.groupId);
-    
-        if (existingFodIndex !== -1) {
-          // If the FOD already exists, update it
+        if (!newFod || !newFod.groupId) return;
+        const gid = newFod.groupId;
+
+        const existingFodIndex = state.fodMap[gid];
+        if (existingFodIndex !== undefined && state.fods[existingFodIndex]) {
+          // If the FOD already exists, update it in place
           state.fods[existingFodIndex] = { ...state.fods[existingFodIndex], ...newFod };
-        } else {
-          // If the FOD doesn't exist, add it to the start of the array
-          // state.fods.unshift(newFod);
-          tempFod.push(newFod); 
+        } else if (!addedGroups.has(gid)) {
+          addedGroups.add(gid);
+          tempFod.push(newFod);
         }
       });
-      if(tempFod.length>0){
-        state.fods=[...tempFod,...state.fods];
+
+      if (tempFod.length > 0) {
+        state.fods = [...tempFod, ...state.fods];
+        if (state.fods.length > FodListsLimit) {
+          state.fods = state.fods.slice(0, FodListsLimit);
+        }
       }
-    
+
       // Rebuild the fodMap
-      let map:any={};
-      state.fodMap = state.fods.reduce((map, fod, index) => {
-        map[fod.groupId] = index;
-        return map;
-      }, map);
+      const map: Record<number, number> = {};
+      for (let i = 0; i < state.fods.length; i++) {
+        map[state.fods[i].groupId] = i;
+      }
+      state.fodMap = map;
     },
     add_updateFod: (state, action) => {
       const { payload } = action;
@@ -168,14 +177,14 @@ const FodReducer = createSlice({
         ...(data.clearenceQueueFods || []), 
         ...(data.rejectedFods || []),
         ...(data.clearedFods || [])
-      ];
+      ].slice(0, FodListsLimit);
       
       // Rebuild the fodMap
-      let map:any = {};
-      state.fodMap = state.fods.reduce((map, fod, index) => {
-        map[fod.groupId] = index;
-        return map;
-      }, map);
+      const map: Record<number, number> = {};
+      for (let i = 0; i < state.fods.length; i++) {
+        map[state.fods[i].groupId] = i;
+      }
+      state.fodMap = map;
     },
     set_ImageModal: (state, action) => {
       const { FodId, flag } = action.payload;

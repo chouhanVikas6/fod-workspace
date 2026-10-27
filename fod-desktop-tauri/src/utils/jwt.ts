@@ -17,6 +17,12 @@ export interface JwtDecodeOptions {
     iat?: number;
     jti?: string;
     username?: string;
+    userName?: string;
+    firstName?: string;
+    lastName?: string;
+    role?: string;
+    id?: string;
+    isActive?: boolean;
   }
   
   export class InvalidTokenError extends Error {}

@@ -55,7 +55,9 @@ export const config ={
             lateraldistance: 10 ,//in meters
     lateralShiftThreshold: 5 ,
     OFFSET:3,
-    boundingBoxPadding:5
+    boundingBoxPadding:5,
+    pathDirection: 'LENGTHWISE' as 'LENGTHWISE' | 'CROSSWISE' | 'OPTIMAL',
+    reversePath: false,
      },
      filters:{
        size:{ min:3,

@@ -24,10 +24,14 @@ export interface CameraConfig {
 }
 
 export interface LocationConfig {
-  min_lat: number;
-  max_lat: number;
-  min_lon: number;
-  max_lon: number;
+  p1_lat: number;
+  p1_lon: number;
+  p2_lat: number;
+  p2_lon: number;
+  p3_lat: number;
+  p3_lon: number;
+  p4_lat: number;
+  p4_lon: number;
   vehicle_speed_kmh: number;
   sweep_passes: number;
   lane_width_m: number;
@@ -168,10 +172,14 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
   cameras: [],
   location: {
-    min_lat: 9.9400,
-    max_lat: 9.9500,
-    min_lon: 76.2700,
-    max_lon: 76.2800,
+    p1_lat: 9.9400,
+    p1_lon: 76.2700,
+    p2_lat: 9.9400,
+    p2_lon: 76.2800,
+    p3_lat: 9.9500,
+    p3_lon: 76.2800,
+    p4_lat: 9.9500,
+    p4_lon: 76.2700,
     vehicle_speed_kmh: 25.0,
     sweep_passes: 3,
     lane_width_m: 10.0,

@@ -42,20 +42,25 @@ const [isToolTipVisible,setToolTipsVisibility] = useState(false);
 
 
   return (
-    <div className="w-full flex justify-between border-r-2 border-black">
-         <div className="w-full flex space-x-1">
-          <div className="my-auto font-semibold text-md">Communication</div>
-         <CommunicationInfo />
-         </div>
-         <div className="w-full  p-2 flex items-center justify-center space-x-3 border-x-2 border-black">
-          <div className="text-md font-semibold">GNSS </div>
-         <SelfGpsInfo isToolTipVisible = {isToolTipVisible} />
-         <div className="w-[0.5px] h-8 bg-gray-200 rounded"></div>
-         <GpsInfo isToolTipVisible = {isToolTipVisible} />
-         </div>
-         <div className="w-full flex items-center justify-center">
-         <CamerasInfo isToolTipVisible = {isToolTipVisible} />
-         </div>
+    <div className="healthbar flex items-center space-x-2.5 h-full">
+      {/* Communication capsule */}
+      <div className="flex items-center space-x-2 px-3 py-1 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 rounded-xl transition-colors">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Comm</span>
+        <CommunicationInfo />
+      </div>
+
+      {/* GNSS capsule */}
+      <div className="flex items-center space-x-2.5 px-3 py-1 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 rounded-xl transition-colors">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">GNSS</span>
+        <SelfGpsInfo isToolTipVisible={isToolTipVisible} />
+        <div className="w-[1px] h-4 bg-slate-200"></div>
+        <GpsInfo isToolTipVisible={isToolTipVisible} />
+      </div>
+
+      {/* Camera & AI capsule */}
+      <div className="flex items-center px-3 py-1 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 rounded-xl transition-colors">
+        <CamerasInfo isToolTipVisible={isToolTipVisible} />
+      </div>
     </div>
   );
 };

@@ -46,10 +46,10 @@ const MissionControl = () => {
                                 <WebCam />
                             </div>
                         )}
-                        <div className='w-[100%] h-[8%]' >
+                        <div className='w-[100%] h-[8%] relative z-50' >
                             <Header />
                         </div>
-                        <div className='flex relative h-[92%]' style={{ background }}>
+                        <div className='flex relative h-[92%] z-0' style={{ background }}>
                             <OperationSideBar tab={tab} setTab={handleTab} />
                             <div className='h-[100%]' style={{ width: isSidebarVisible ? `calc(${width}% - 250px)` : `${width}%` }}>
                                 <FodPanel open={tab == 'dashboard'} />
@@ -66,13 +66,13 @@ const MissionControl = () => {
                     </>
                     :
                     <>
-                        <div className='w-[100%] h-[8%]' >
+                        <div className='w-[100%] h-[8%] relative z-50' >
                             <Header />
                         </div>
                         {/* h-[92%] wrapper: MissionSelector is h-full, so without
                             this it overflows the viewport by the header's 8% and
                             its bottom edge (incl. footer buttons) gets clipped. */}
-                        <div className='h-[92%]'>
+                        <div className='h-[92%] relative z-0'>
                             <MissionSelector />
                         </div>
                     </>

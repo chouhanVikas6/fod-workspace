@@ -66,31 +66,40 @@ const MissionType = ({ activeMission, selectedMission,startTemplateView ,mission
         // })
     }
     return (
-        <div className="h-1/6 w-full p-2.5 bg-[#F5F5F5] border border-[#dfd4d4] rounded-lg items-center overflow-y-auto relative">
-
+        <div className="w-full p-2.5 bg-white border border-slate-200/90 rounded-2xl shadow-sm flex items-center justify-center flex-shrink-0 min-h-[72px]">
             {
                 activeMission?.length ?
                     activeMission.map((mission) => {
                         return <MissionCard active={true} missionData={mission} key={mission.mission_id} />
                     })
                     :
-                    <div className=" h-full flex justify-around items-center gap-4">
+                    <div className="w-full flex justify-center items-center">
                         {
                             selectedMission ?
-                                <button className={`h-10 w-1/2 rounded-lg text-center text-[#FCFCFC] bg-[#017ED7] ${!!selectedMission ? "" : "bg-gray-400"}`} disabled={apiLoading} onClick={() => restartMission(selectedMission.mission_id)}>Restart Mission</button>
+                                <button
+                                    className={`w-full py-2.5 px-4 rounded-xl text-center text-white font-bold text-sm shadow-md transition-all active:scale-[0.98] ${
+                                        apiLoading ? "bg-slate-400 cursor-not-allowed" : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-500/20"
+                                    }`}
+                                    disabled={apiLoading}
+                                    onClick={() => restartMission(selectedMission.mission_id)}
+                                >
+                                    Restart Mission #{selectedMission.mission_id}
+                                </button>
                                 :
                                 <button
-                                    className={`h-10 w-1/2 rounded-lg text-center text-[#FCFCFC]  ${apiLoading || missionTemplateView?"bg-gray-400":"bg-[#002756]"}`}
+                                    className={`w-full py-2.5 px-4 rounded-xl text-center text-white font-bold text-sm shadow-md transition-all active:scale-[0.98] flex items-center justify-center space-x-2 ${
+                                        apiLoading || missionTemplateView
+                                            ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                                            : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-500/20"
+                                    }`}
                                     onClick={newMission}
                                     disabled={apiLoading || missionTemplateView}
                                 >
-                                    Start Mission
+                                    <span>Start Mission</span>
                                 </button>
                         }
-
                     </div>
             }
-
         </div>
     );
 }

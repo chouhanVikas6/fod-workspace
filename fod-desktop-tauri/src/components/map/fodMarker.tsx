@@ -42,7 +42,7 @@ const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: a
       return selectedQueue.includes(fod.groupStatus)
     });
   }, [propFods, reduxFods, selectedQueue]);
-  const fodGeoJson = {
+  const fodGeoJson = useMemo(() => ({
     type: "FeatureCollection",
     features: fodsToRender
       .map(fod => {
@@ -63,7 +63,7 @@ const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: a
         };
       })
       .filter(Boolean)
-  };
+  }), [fodsToRender]);
   // Keep the click handler (registered once on style load) pointed at the
   // current fod list without re-registering.
   const fodsRef = useRef(fods);

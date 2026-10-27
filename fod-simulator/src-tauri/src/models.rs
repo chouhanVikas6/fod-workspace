@@ -39,26 +39,86 @@ pub struct CameraConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationConfig {
-    pub min_lat: f64,
-    pub max_lat: f64,
-    pub min_lon: f64,
-    pub max_lon: f64,
+    #[serde(default = "default_p1_lat")]
+    pub p1_lat: f64,
+    #[serde(default = "default_p1_lon")]
+    pub p1_lon: f64,
+    #[serde(default = "default_p2_lat")]
+    pub p2_lat: f64,
+    #[serde(default = "default_p2_lon")]
+    pub p2_lon: f64,
+    #[serde(default = "default_p3_lat")]
+    pub p3_lat: f64,
+    #[serde(default = "default_p3_lon")]
+    pub p3_lon: f64,
+    #[serde(default = "default_p4_lat")]
+    pub p4_lat: f64,
+    #[serde(default = "default_p4_lon")]
+    pub p4_lon: f64,
     pub vehicle_speed_kmh: f64,
     pub sweep_passes: u32,
     pub lane_width_m: f64,
 }
 
+fn default_p1_lat() -> f64 { 9.9400 }
+fn default_p1_lon() -> f64 { 76.2700 }
+fn default_p2_lat() -> f64 { 9.9400 }
+fn default_p2_lon() -> f64 { 76.2800 }
+fn default_p3_lat() -> f64 { 9.9500 }
+fn default_p3_lon() -> f64 { 76.2800 }
+fn default_p4_lat() -> f64 { 9.9500 }
+fn default_p4_lon() -> f64 { 76.2700 }
+
 impl Default for LocationConfig {
     fn default() -> Self {
         Self {
-            min_lat: 9.9400,
-            max_lat: 9.9500,
-            min_lon: 76.2700,
-            max_lon: 76.2800,
+            p1_lat: 9.9400,
+            p1_lon: 76.2700,
+            p2_lat: 9.9400,
+            p2_lon: 76.2800,
+            p3_lat: 9.9500,
+            p3_lon: 76.2800,
+            p4_lat: 9.9500,
+            p4_lon: 76.2700,
             vehicle_speed_kmh: 25.0,
             sweep_passes: 3,
             lane_width_m: 10.0,
         }
+    }
+}
+
+#[allow(dead_code)]
+impl LocationConfig {
+    pub fn polygon(&self) -> [(f64, f64); 4] {
+        [
+            (self.p1_lat, self.p1_lon),
+            (self.p2_lat, self.p2_lon),
+            (self.p3_lat, self.p3_lon),
+            (self.p4_lat, self.p4_lon),
+        ]
+    }
+
+    pub fn centroid(&self) -> (f64, f64) {
+        (
+            (self.p1_lat + self.p2_lat + self.p3_lat + self.p4_lat) / 4.0,
+            (self.p1_lon + self.p2_lon + self.p3_lon + self.p4_lon) / 4.0,
+        )
+    }
+
+    pub fn min_lat(&self) -> f64 {
+        self.p1_lat.min(self.p2_lat).min(self.p3_lat).min(self.p4_lat)
+    }
+
+    pub fn max_lat(&self) -> f64 {
+        self.p1_lat.max(self.p2_lat).max(self.p3_lat).max(self.p4_lat)
+    }
+
+    pub fn min_lon(&self) -> f64 {
+        self.p1_lon.min(self.p2_lon).min(self.p3_lon).min(self.p4_lon)
+    }
+
+    pub fn max_lon(&self) -> f64 {
+        self.p1_lon.max(self.p2_lon).max(self.p3_lon).max(self.p4_lon)
     }
 }
 
