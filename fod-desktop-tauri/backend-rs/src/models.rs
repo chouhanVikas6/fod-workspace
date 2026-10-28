@@ -114,6 +114,9 @@ pub enum Role {
     #[sqlx(rename = "COLLECTOR")]
     #[serde(rename = "COLLECTOR")]
     Collector,
+    #[sqlx(rename = "DRIVER")]
+    #[serde(rename = "DRIVER")]
+    Driver,
 }
 
 #[derive(sqlx::FromRow, Serialize, Clone, Debug)]
@@ -210,6 +213,7 @@ pub struct User {
     pub password: String,
     pub is_active: bool,
     pub role: Role,
+    pub dirty: Option<bool>,
     #[serde(with = "iso_millis")]
     pub created_at: NaiveDateTime,
     #[serde(with = "iso_millis")]

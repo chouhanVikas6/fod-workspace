@@ -2,7 +2,7 @@ CREATE TYPE mission_status      AS ENUM ('ACTIVE','INACTIVE','TERMINATED');
 CREATE TYPE mission_scan_status AS ENUM ('PLAY','PAUSE');
 CREATE TYPE fod_group_status    AS ENUM ('NEW','ACCEPTED','REJECTED','CLEARED');
 CREATE TYPE cleared_fod_status  AS ENUM ('found','not_found','false_positive');
-CREATE TYPE user_role           AS ENUM ('admin','collector','driver');
+CREATE TYPE user_role           AS ENUM ('admin','collector','driver','guest');
 
 CREATE TABLE IF NOT EXISTS missions (
   id BIGINT PRIMARY KEY,

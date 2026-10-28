@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         scheduler::spawn_primary_schedular(state.clone());
         scheduler::spawn_sync_service(state.clone());
+        scheduler::spawn_user_sync_service(state.clone());
     }
 
     // CORS setup

@@ -1,6 +1,6 @@
 use crate::models::{
     AppliedCommandRow, ChangeLogRow, ClearedFodRow, FodGroupRow, FodGroupStatus, FodRow,
-    MissionRow, MissionScanStatus, MissionStatus,
+    MissionRow, MissionScanStatus, MissionStatus, UserRole, UserRow,
 };
 use crate::Db;
 use uuid::Uuid;
@@ -618,6 +618,106 @@ impl Db {
         .map_err(|e| ZoidError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    // ----------------- User Queries & Sync -----------------
+
+    pub async fn get_user(&self, id: Uuid) -> Result<Option<UserRow>> {
+        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_user_by_username(&self, username: &str) -> Result<Option<UserRow>> {
+        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE username = $1")
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_all_users(&self) -> Result<Vec<UserRow>> {
+        sqlx::query_as::<_, UserRow>("SELECT * FROM users ORDER BY created_at ASC")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_users_since(&self, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<UserRow>> {
+        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE updated_at >= $1 ORDER BY updated_at ASC")
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn upsert_replicated_user(&self, u: &proto_defination::user::UserEntity) -> Result<UserRow> {
+        let id = Uuid::parse_str(&u.id).unwrap_or_else(|_| Uuid::new_v4());
+        let role = match proto_defination::user::UserRole::try_from(u.role).unwrap_or(proto_defination::user::UserRole::Collector) {
+            proto_defination::user::UserRole::Admin => UserRole::Admin,
+            proto_defination::user::UserRole::Collector => UserRole::Collector,
+            proto_defination::user::UserRole::Driver => UserRole::Driver,
+            proto_defination::user::UserRole::Guest => UserRole::Guest,
+            _ => UserRole::Collector,
+        };
+        let created_at = if u.created_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(u.created_at_ms).unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::Utc::now()
+        };
+        let updated_at = if u.updated_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(u.updated_at_ms).unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::Utc::now()
+        };
+
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            INSERT INTO users (id, username, first_name, last_name, password_hash, is_active, role, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (username) DO UPDATE
+            SET first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                password_hash = CASE WHEN EXCLUDED.password_hash != '' THEN EXCLUDED.password_hash ELSE users.password_hash END,
+                is_active = EXCLUDED.is_active,
+                role = EXCLUDED.role,
+                updated_at = EXCLUDED.updated_at
+            WHERE users.updated_at <= EXCLUDED.updated_at
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(&u.username)
+        .bind(&u.first_name)
+        .bind(&u.last_name)
+        .bind(&u.password_hash)
+        .bind(u.is_active)
+        .bind(role)
+        .bind(created_at)
+        .bind(updated_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+        if let Some(r) = row {
+            Ok(r)
+        } else {
+            // Already newer in DB
+            self.get_user_by_username(&u.username)
+                .await?
+                .ok_or_else(|| ZoidError::Database("User not found after upsert".to_string()))
+        }
+    }
+
+    pub async fn delete_user_by_username(&self, username: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(username)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
+        Ok(res.rows_affected() > 0)
     }
 }
 

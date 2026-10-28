@@ -37,3 +37,7 @@ pub mod ingest {
 pub mod replication {
     tonic::include_proto!("zoid.replication");
 }
+
+pub mod user {
+    tonic::include_proto!("zoid.user");
+}

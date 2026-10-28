@@ -11,6 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!("{}/image.proto", proto_dir),
         format!("{}/ingest.proto", proto_dir),
         format!("{}/replication.proto", proto_dir),
+        format!("{}/user.proto", proto_dir),
     ];
 
     println!("cargo:rerun-if-changed=../../proto");

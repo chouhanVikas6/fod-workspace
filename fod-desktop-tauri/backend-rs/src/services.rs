@@ -737,6 +737,67 @@ pub async fn fetch_fod_from_car(
     Some(res.into_inner())
 }
 
+pub async fn push_user_to_upstream(state: &AppState, user: &crate::models::User) -> bool {
+    let role = match user.role {
+        crate::models::Role::Admin => proto_defination::user::UserRole::Admin as i32,
+        crate::models::Role::Collector => proto_defination::user::UserRole::Collector as i32,
+        crate::models::Role::Guest => proto_defination::user::UserRole::Guest as i32,
+        crate::models::Role::Driver => proto_defination::user::UserRole::Driver as i32,
+    };
+    let entity = proto_defination::user::UserEntity {
+        id: user.id.clone(),
+        username: user.username.clone(),
+        first_name: user.first_name.clone(),
+        last_name: user.last_name.clone(),
+        password_hash: user.password.clone(),
+        is_active: user.is_active,
+        role,
+        created_at_ms: user.created_at.and_utc().timestamp_millis(),
+        updated_at_ms: user.updated_at.and_utc().timestamp_millis(),
+    };
+
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    for url in urls {
+        if let Ok(mut client) = proto_defination::user::user_service_client::UserServiceClient::connect(url).await {
+            if let Ok(res) = client.upsert_user(tonic::Request::new(entity.clone())).await {
+                if res.into_inner().success {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+pub async fn pull_users_from_upstream(state: &AppState, since_ms: i64) -> Vec<proto_defination::user::UserEntity> {
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    for url in urls {
+        if let Ok(mut client) = proto_defination::user::user_service_client::UserServiceClient::connect(url).await {
+            if let Ok(res) = client.sync_users(tonic::Request::new(proto_defination::user::SyncUsersRequest { since_ms })).await {
+                let users = res.into_inner().users;
+                if !users.is_empty() {
+                    return users;
+                }
+            }
+            if let Ok(res) = client.get_users(tonic::Request::new(proto_defination::user::GetUsersRequest {})).await {
+                let users = res.into_inner().users;
+                if !users.is_empty() {
+                    return users;
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
 pub async fn fetch_image_from_car(
     state: &AppState,
     sha256: &str,

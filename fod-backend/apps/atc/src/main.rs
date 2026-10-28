@@ -3,6 +3,7 @@ use proto_defination::fod::fod_service_server::FodServiceServer;
 use proto_defination::fod_group::fod_group_service_server::FodGroupServiceServer;
 use proto_defination::image::image_service_server::ImageServiceServer;
 use proto_defination::mission::mission_service_server::MissionServiceServer;
+use proto_defination::user::user_service_server::UserServiceServer;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ mod sync_client;
 
 use services::{
     AtcClearedFodServiceImpl, AtcFodGroupServiceImpl, AtcFodServiceImpl, AtcImageServiceImpl,
-    AtcMissionServiceImpl,
+    AtcMissionServiceImpl, AtcUserServiceImpl,
 };
 use sync_client::SyncClient;
 use zoid_db::Db;
@@ -68,12 +69,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx) = SyncClient::new(car_url, db.clone(), node_id);
+    let (sync_client, cmd_rx, user_rx) = SyncClient::new(car_url, db.clone(), node_id);
     let cmd_tx = sync_client.command_sender();
+    let user_tx = sync_client.user_sender();
     let sync_client_arc = Arc::new(sync_client);
 
     tokio::spawn(async move {
-        sync_client_arc.run_replication_loop(cmd_rx).await;
+        sync_client_arc.run_replication_loop(cmd_rx, user_rx).await;
     });
 
     let (group_tx, _) = broadcast::channel(1000);
@@ -84,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cleared_fod_svc = AtcClearedFodServiceImpl::new(db.clone());
     let mission_svc = AtcMissionServiceImpl::new(db.clone());
     let image_svc = AtcImageServiceImpl::new(storage);
+    let user_svc = AtcUserServiceImpl::new(db.clone(), user_tx);
 
     // Health Reporting
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -102,6 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health_reporter
         .set_serving::<ImageServiceServer<AtcImageServiceImpl>>()
         .await;
+    health_reporter
+        .set_serving::<UserServiceServer<AtcUserServiceImpl>>()
+        .await;
 
     tracing::info!("Starting ATC gRPC server on {}", addr);
 
@@ -115,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(ClearedFodServiceServer::new(cleared_fod_svc))
         .add_service(MissionServiceServer::new(mission_svc))
         .add_service(ImageServiceServer::new(image_svc))
+        .add_service(UserServiceServer::new(user_svc))
         .serve(addr)
         .await?;
 

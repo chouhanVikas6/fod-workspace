@@ -4,10 +4,11 @@ import { getCurrentUser, Auth } from "@/utils/auth";
 
 // User profile tab — reads the signed-in user's claims from the JWT
 // (id/userName/role/firstName/lastName/isActive, see api/auth/login.ts).
-const Profile = () => {
+const Profile = ({ onManageUsers }: { onManageUsers?: () => void }) => {
     const user = useMemo(() => (getCurrentUser() || {}) as any, []);
 
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.userName || 'Unknown user';
+    const isAdmin = String(user.role || '').toUpperCase() === 'ADMIN';
 
     const rows: Array<[string, React.ReactNode]> = [
         ['Username', user.userName || '—'],
@@ -35,9 +36,19 @@ const Profile = () => {
                         </React.Fragment>
                     ))}
                 </div>
+
+                {isAdmin && onManageUsers && (
+                    <button
+                        onClick={onManageUsers}
+                        className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg active:scale-95 transition shadow"
+                    >
+                        User Management (Admin Console)
+                    </button>
+                )}
+
                 <button
                     onClick={() => { Auth.logout(); window.location.reload(); }}
-                    className="mt-6 w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-2 rounded-lg active:scale-95 transition"
+                    className={`${isAdmin ? 'mt-3' : 'mt-6'} w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-2 rounded-lg active:scale-95 transition`}
                 >
                     Log out
                 </button>

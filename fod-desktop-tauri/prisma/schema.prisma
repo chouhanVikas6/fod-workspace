@@ -81,6 +81,7 @@ model User {
   password  String
   isActive  Boolean  @default(true)
   role      Role     @default(COLLECTOR)
+  dirty     Boolean? @default(false)
   createdAt DateTime
   updatedAt DateTime @updatedAt
 }
@@ -89,6 +90,7 @@ enum Role {
   ADMIN
   GUEST
   COLLECTOR
+  DRIVER
 }
 
 enum MissionStatus {

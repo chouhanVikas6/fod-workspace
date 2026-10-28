@@ -18,27 +18,43 @@ pub struct SyncClient {
     db: Db,
     node_id: String,
     cmd_tx: mpsc::Sender<Command>,
+    user_tx: mpsc::Sender<proto_defination::user::UserEntity>,
 }
 
 impl SyncClient {
-    pub fn new(car_endpoint: String, db: Db, node_id: String) -> (Self, mpsc::Receiver<Command>) {
+    pub fn new(
+        car_endpoint: String,
+        db: Db,
+        node_id: String,
+    ) -> (
+        Self,
+        mpsc::Receiver<Command>,
+        mpsc::Receiver<proto_defination::user::UserEntity>,
+    ) {
         let (cmd_tx, cmd_rx) = mpsc::channel(100);
+        let (user_tx, user_rx) = mpsc::channel(100);
         let client = Self {
             car_endpoint,
             db,
             node_id,
             cmd_tx,
+            user_tx,
         };
-        (client, cmd_rx)
+        (client, cmd_rx, user_rx)
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
         self.cmd_tx.clone()
     }
 
+    pub fn user_sender(&self) -> mpsc::Sender<proto_defination::user::UserEntity> {
+        self.user_tx.clone()
+    }
+
     pub async fn run_replication_loop(
         self: Arc<Self>,
         mut cmd_rx: mpsc::Receiver<Command>,
+        mut user_rx: mpsc::Receiver<proto_defination::user::UserEntity>,
     ) {
         let mut backoff_secs = 1;
 
@@ -97,6 +113,16 @@ impl SyncClient {
                                                 msg: Some(ReplicaMsg::Command(c)),
                                             };
                                             if out_tx.send(cmd_msg).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    u = user_rx.recv() => {
+                                        if let Some(user) = u {
+                                            let user_msg = ReplicaMessage {
+                                                msg: Some(ReplicaMsg::UserUpsert(user)),
+                                            };
+                                            if out_tx.send(user_msg).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -230,6 +256,9 @@ impl SyncClient {
                                     created_by: c.created_by,
                                 };
                                 self.db.insert_cleared_fod(&row).await?;
+                            }
+                            change::Entity::User(u) => {
+                                self.db.upsert_replicated_user(&u).await?;
                             }
                             _ => {}
                         }

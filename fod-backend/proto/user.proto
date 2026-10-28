@@ -1,0 +1,48 @@
+syntax = "proto3";
+package zoid.user;
+
+enum UserRole {
+    USER_ROLE_UNSPECIFIED = 0;
+    ADMIN = 1;
+    COLLECTOR = 2;
+    DRIVER = 3;
+    GUEST = 4;
+}
+
+message UserEntity {
+    string id = 1;
+    string username = 2;
+    string first_name = 3;
+    string last_name = 4;
+    string password_hash = 5;
+    bool is_active = 6;
+    UserRole role = 7;
+    int64 created_at_ms = 8;
+    int64 updated_at_ms = 9;
+}
+
+service UserService {
+    rpc UpsertUser (UserEntity) returns (UpsertUserResponse);
+    rpc GetUsers (GetUsersRequest) returns (GetUsersResponse);
+    rpc SyncUsers (SyncUsersRequest) returns (SyncUsersResponse);
+}
+
+message UpsertUserResponse {
+    bool success = 1;
+    UserEntity user = 2;
+    string error = 3;
+}
+
+message GetUsersRequest {}
+
+message GetUsersResponse {
+    repeated UserEntity users = 1;
+}
+
+message SyncUsersRequest {
+    int64 since_ms = 1;
+}
+
+message SyncUsersResponse {
+    repeated UserEntity users = 1;
+}

@@ -1,8 +1,13 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import settingIcon from '@/assets/images/svg/setting.svg'
 import Image from 'next/image'
 import SettingIcon from '@/assets/images/svgr/setting'
+import { getCurrentUser } from '@/utils/auth'
+import { HiUsers } from 'react-icons/hi2'
+
 function BottomNavigation({selectedTab,setSelectedTab}) {
+  const currentUser = useMemo(() => getCurrentUser(), []);
+  const isAdmin = String(currentUser?.role || '').toUpperCase() === 'ADMIN';
 
   return (
 <div className="fixed z-50 w-full h-16 max-w-sm -translate-x-1/2 bg-white border border-gray-200 rounded-full bottom-4 left-1/2">
@@ -70,6 +75,31 @@ function BottomNavigation({selectedTab,setSelectedTab}) {
             BITE
             <div className="tooltip-arrow" data-popper-arrow></div>
         </div>
+
+        {isAdmin && (
+            <>
+                <button
+                    onClick={() => setSelectedTab('users')}
+                    data-tooltip-target="tooltip-users"
+                    type="button"
+                    className={`inline-flex flex-col items-center justify-center px-4 hover:bg-gray-400 group ${
+                        selectedTab === 'users' ? 'bg-gray-400 text-white' : 'text-gray-400 hover:text-white'
+                    }`}
+                >
+                    <HiUsers className="w-5 h-5 mb-1" />
+                    <span className="sr-only">Users</span>
+                </button>
+                <div
+                    id="tooltip-users"
+                    role="tooltip"
+                    className="absolute z-10 invisible inline-block px-3 py-2 text-sm font-medium text-white transition-opacity duration-300 bg-gray-900 rounded-lg shadow-sm opacity-0 tooltip dark:bg-gray-700"
+                >
+                    Users
+                    <div className="tooltip-arrow" data-popper-arrow></div>
+                </div>
+            </>
+        )}
+
         <button onClick={()=>setSelectedTab('profile')}  data-tooltip-target="tooltip-profile" type="button" className={`inline-flex flex-col items-center justify-center px-5 rounded-e-full hover:bg-gray-400 group ${selectedTab=='profile'?'bg-gray-400 text-white':"text-gray-400 hover:text-white"}`}>
             <svg className="w-5 h-5 mb-1" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M10 0a10 10 0 1 0 10 10A10.011 10.011 0 0 0 10 0Zm0 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 13a8.949 8.949 0 0 1-4.951-1.488A3.987 3.987 0 0 1 9 13h2a3.987 3.987 0 0 1 3.951 3.512A8.949 8.949 0 0 1 10 18Z"/>

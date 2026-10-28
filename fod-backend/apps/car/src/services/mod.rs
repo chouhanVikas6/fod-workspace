@@ -7,6 +7,7 @@ pub mod ingest;
 pub mod mission;
 pub mod mission_control;
 pub mod replication;
+pub mod user;
 
 pub use bite::BiteServiceImpl;
 pub use cleared_fod::ClearedFodServiceImpl;
@@ -17,3 +18,4 @@ pub use ingest::IngestServiceImpl;
 pub use mission::MissionServiceImpl;
 pub use mission_control::MissionControlServiceImpl;
 pub use replication::ReplicationServiceImpl;
+pub use user::UserServiceImpl;

@@ -9,6 +9,7 @@ import { config } from "@/config/clientConfig";
 import General from "./general";
 import Bite from "./bite";
 import Profile from "./profile";
+import UserManagement from "./userManagement";
 import { RootState } from "@/store";
 
 const Setting = ({ open }) => {
@@ -123,7 +124,11 @@ const Setting = ({ open }) => {
             }
 
             {
-                selectedTab == 'profile' && <Profile />
+                selectedTab == 'profile' && <Profile onManageUsers={() => setSelectedTab('users')} />
+            }
+
+            {
+                selectedTab == 'users' && <UserManagement />
             }
 
             <BottomNavigation  {...{ selectedTab, setSelectedTab }} />

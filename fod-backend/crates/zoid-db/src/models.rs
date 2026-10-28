@@ -40,6 +40,7 @@ pub enum UserRole {
     Admin,
     Collector,
     Driver,
+    Guest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -295,6 +296,41 @@ impl ClearedFodRow {
             }),
             created_at: self.created_at.timestamp_millis(),
             created_by: self.created_by.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct UserRow {
+    pub id: Uuid,
+    pub username: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub password_hash: String,
+    pub is_active: bool,
+    pub role: UserRole,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl UserRow {
+    pub fn to_proto(&self) -> proto_defination::user::UserEntity {
+        let role = match self.role {
+            UserRole::Admin => proto_defination::user::UserRole::Admin as i32,
+            UserRole::Collector => proto_defination::user::UserRole::Collector as i32,
+            UserRole::Driver => proto_defination::user::UserRole::Driver as i32,
+            UserRole::Guest => proto_defination::user::UserRole::Guest as i32,
+        };
+        proto_defination::user::UserEntity {
+            id: self.id.to_string(),
+            username: self.username.clone(),
+            first_name: self.first_name.clone(),
+            last_name: self.last_name.clone(),
+            password_hash: self.password_hash.clone(),
+            is_active: self.is_active,
+            role,
+            created_at_ms: self.created_at.timestamp_millis(),
+            updated_at_ms: self.updated_at.timestamp_millis(),
         }
     }
 }

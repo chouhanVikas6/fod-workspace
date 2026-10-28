@@ -86,6 +86,15 @@ impl ReplicationServiceImpl {
                     }
                 }
             }
+            5 => {
+                // User "username"
+                if let Ok(Some(u)) = self.db.get_user_by_username(key).await {
+                    return Some(Change {
+                        seq,
+                        entity: Some(change::Entity::User(u.to_proto())),
+                    });
+                }
+            }
             _ => {}
         }
         None
@@ -269,6 +278,12 @@ impl ReplicationService for ReplicationServiceImpl {
                                                             } else { None }
                                                         } else { None }
                                                     }
+                                                    5 => {
+                                                        db.get_user_by_username(&row.entity_key).await.ok().flatten().map(|u| Change {
+                                                            seq: row.seq,
+                                                            entity: Some(change::Entity::User(u.to_proto())),
+                                                        })
+                                                    }
                                                     _ => None,
                                                 };
 
@@ -339,6 +354,17 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 detail: format!("{:?}", result_outcome),
                                             })),
                                         };
+                                    }
+                                    Some(ReplicaMsg::UserUpsert(u)) => {
+                                        if let Ok(row) = db.upsert_replicated_user(&u).await {
+                                            let proto_user = row.to_proto();
+                                            let new_seq = db.append_change(5, &row.username).await.unwrap_or(0);
+                                            let change_item = Change {
+                                                seq: new_seq,
+                                                entity: Some(change::Entity::User(proto_user)),
+                                            };
+                                            let _ = change_tx.send(change_item);
+                                        }
                                     }
                                     _ => {}
                                 }

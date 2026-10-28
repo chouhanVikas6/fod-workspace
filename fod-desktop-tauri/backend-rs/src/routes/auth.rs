@@ -235,6 +235,7 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
     let role = match role_str.as_str() {
         "ADMIN" => "ADMIN",
         "COLLECTOR" => "COLLECTOR",
+        "DRIVER" => "DRIVER",
         _ => "GUEST",
     };
     let is_active = body.get("isActive").and_then(Value::as_bool).unwrap_or(true);
@@ -270,8 +271,8 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
     let id = uuid::Uuid::new_v4().to_string();
     let inserted = sqlx::query_as::<_, User>(
         r#"INSERT INTO "User"
-             ("id","username","password","firstName","lastName","isActive","role","createdAt","updatedAt")
-           VALUES ($1,$2,$3,$4,$5,$6,$7::"Role",now(),now())
+             ("id","username","password","firstName","lastName","isActive","role","dirty","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,$5,$6,$7::"Role",true,now(),now())
            RETURNING *"#,
     )
     .bind(&id)
@@ -287,6 +288,18 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
         Ok(u) => u,
         Err(_) => return internal_error(),
     };
+
+    // Asynchronously push new user to upstream Car/ATC
+    let state_push = state.clone();
+    let user_push = user.clone();
+    tokio::spawn(async move {
+        if crate::services::push_user_to_upstream(&state_push, &user_push).await {
+            let _ = sqlx::query(r#"UPDATE "User" SET "dirty" = false WHERE "id" = $1"#)
+                .bind(&user_push.id)
+                .execute(&state_push.db)
+                .await;
+        }
+    });
 
     let payload = user_payload(&user);
     match sign_token(&state, &payload) {
@@ -390,11 +403,13 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
     let role = match role_str.as_deref() {
         Some("ADMIN") => "ADMIN",
         Some("COLLECTOR") => "COLLECTOR",
+        Some("DRIVER") => "DRIVER",
         Some("GUEST") => "GUEST",
         _ => match user.role {
             Role::Admin => "ADMIN",
             Role::Collector => "COLLECTOR",
             Role::Guest => "GUEST",
+            Role::Driver => "DRIVER",
         },
     };
 
@@ -413,7 +428,7 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
 
     let updated = sqlx::query_as::<_, User>(
         r#"UPDATE "User"
-           SET "firstName" = $1, "lastName" = $2, "isActive" = $3, "role" = $4::"Role", "password" = $5, "updatedAt" = now()
+           SET "firstName" = $1, "lastName" = $2, "isActive" = $3, "role" = $4::"Role", "password" = $5, "dirty" = true, "updatedAt" = now()
            WHERE "id" = $6
            RETURNING *"#,
     )
@@ -427,11 +442,24 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
     .await;
 
     match updated {
-        Ok(u) => (
-            StatusCode::OK,
-            Json(json!({ "success": true, "user": user_payload(&u) })),
-        )
-            .into_response(),
+        Ok(u) => {
+            let state_push = state.clone();
+            let user_push = u.clone();
+            tokio::spawn(async move {
+                if crate::services::push_user_to_upstream(&state_push, &user_push).await {
+                    let _ = sqlx::query(r#"UPDATE "User" SET "dirty" = false WHERE "id" = $1"#)
+                        .bind(&user_push.id)
+                        .execute(&state_push.db)
+                        .await;
+                }
+            });
+
+            (
+                StatusCode::OK,
+                Json(json!({ "success": true, "user": user_payload(&u) })),
+            )
+                .into_response()
+        }
         Err(e) => {
             eprintln!("Failed to update user: {e}");
             internal_error()

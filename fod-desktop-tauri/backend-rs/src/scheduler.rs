@@ -656,3 +656,105 @@ fn str_array(v: Option<&Value>) -> Vec<String> {
         .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
         .unwrap_or_default()
 }
+
+pub fn spawn_user_sync_service(state: AppState) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(3));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            if let Err(e) = sync_users_cycle(&state).await {
+                tracing::debug!("User sync cycle warning: {e}");
+            }
+        }
+    });
+}
+
+async fn sync_users_cycle(state: &AppState) -> anyhow::Result<()> {
+    // 1. Push any dirty users in zoid_client to upstream Car/ATC
+    let dirty_users = sqlx::query_as::<_, crate::models::User>(
+        r#"SELECT * FROM "User" WHERE "dirty" = true"#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    for user in dirty_users {
+        if crate::services::push_user_to_upstream(state, &user).await {
+            let _ = sqlx::query(r#"UPDATE "User" SET "dirty" = false WHERE "id" = $1"#)
+                .bind(&user.id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
+    // 2. Pull users from upstream Car/ATC
+    let latest_ts: Option<sqlx::types::chrono::NaiveDateTime> = sqlx::query_scalar(
+        r#"SELECT MAX("updatedAt") FROM "User""#,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let since_ms = latest_ts
+        .map(|dt| dt.and_utc().timestamp_millis())
+        .unwrap_or(0);
+
+    let incoming_users = crate::services::pull_users_from_upstream(state, since_ms).await;
+    for u in incoming_users {
+        let role = match proto_defination::user::UserRole::try_from(u.role).unwrap_or(proto_defination::user::UserRole::Collector) {
+            proto_defination::user::UserRole::Admin => "ADMIN",
+            proto_defination::user::UserRole::Collector => "COLLECTOR",
+            proto_defination::user::UserRole::Driver => "DRIVER",
+            proto_defination::user::UserRole::Guest => "GUEST",
+            _ => "COLLECTOR",
+        };
+
+        let created_at = if u.created_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(u.created_at_ms)
+                .map(|dt| dt.naive_utc())
+                .unwrap_or_else(|| chrono::Utc::now().naive_utc())
+        } else {
+            chrono::Utc::now().naive_utc()
+        };
+        let updated_at = if u.updated_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(u.updated_at_ms)
+                .map(|dt| dt.naive_utc())
+                .unwrap_or_else(|| chrono::Utc::now().naive_utc())
+        } else {
+            chrono::Utc::now().naive_utc()
+        };
+
+        let id = if u.id.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            u.id
+        };
+
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO "User" ("id", "username", "firstName", "lastName", "password", "isActive", "role", "dirty", "createdAt", "updatedAt")
+            VALUES ($1, $2, $3, $4, $5, $6, $7::"Role", false, $8, $9)
+            ON CONFLICT ("username") DO UPDATE
+            SET "firstName" = EXCLUDED."firstName",
+                "lastName" = EXCLUDED."lastName",
+                "password" = CASE WHEN EXCLUDED."password" != '' THEN EXCLUDED."password" ELSE "User"."password" END,
+                "isActive" = EXCLUDED."isActive",
+                "role" = EXCLUDED."role",
+                "updatedAt" = EXCLUDED."updatedAt"
+            WHERE "User"."updatedAt" <= EXCLUDED."updatedAt" AND ("User"."dirty" IS NOT TRUE)
+            "#,
+        )
+        .bind(id)
+        .bind(&u.username)
+        .bind(&u.first_name)
+        .bind(&u.last_name)
+        .bind(&u.password_hash)
+        .bind(u.is_active)
+        .bind(role)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&state.db)
+        .await;
+    }
+
+    Ok(())
+}

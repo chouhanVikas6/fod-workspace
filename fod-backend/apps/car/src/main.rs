@@ -7,6 +7,7 @@ use proto_defination::ingest::ingest_service_server::IngestServiceServer;
 use proto_defination::mission::mission_service_server::MissionServiceServer;
 use proto_defination::mission_control::mission_control_service_server::MissionControlServiceServer;
 use proto_defination::replication::replication_service_server::ReplicationServiceServer;
+use proto_defination::user::user_service_server::UserServiceServer;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +20,7 @@ mod services;
 use services::{
     BiteServiceImpl, ClearedFodServiceImpl, FodGroupServiceImpl, FodServiceImpl, ImageServiceImpl,
     IngestServiceImpl, MissionControlServiceImpl, MissionServiceImpl, ReplicationServiceImpl,
+    UserServiceImpl,
 };
 use zoid_bite::BiteAggregator;
 use zoid_db::Db;
@@ -101,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "car-primary".to_string(),
         change_tx.clone(),
     );
+    let user_svc = UserServiceImpl::new(db.clone(), change_tx.clone());
 
     // Health Reporting
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -131,6 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health_reporter
         .set_serving::<ReplicationServiceServer<ReplicationServiceImpl>>()
         .await;
+    health_reporter
+        .set_serving::<UserServiceServer<UserServiceImpl>>()
+        .await;
 
     tracing::info!("Starting gRPC server with tonic-web & permissive CORS on {}", addr);
 
@@ -151,6 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .max_decoding_message_size(16 * 1024 * 1024), // 16MB for batches with JPEG frames
         )
         .add_service(ReplicationServiceServer::new(replication_svc))
+        .add_service(UserServiceServer::new(user_svc))
         .serve(addr)
         .await?;
 
