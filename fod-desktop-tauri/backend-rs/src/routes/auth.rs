@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 
 use axum::body::Bytes;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use crate::error::ApiError;
-use crate::models::User;
+use crate::models::{Role, User};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -37,6 +37,10 @@ pub fn router() -> Router<AppState> {
         .route("/logout", any(logout))
         .route("/me", any(me))
         .route("/register", any(register))
+        .route("/users", any(users_collection))
+        .route("/users/update", any(update_user_body))
+        .route("/users/delete", any(delete_user_body))
+        .route("/users/{id}", any(user_by_id))
 }
 
 /// PARITY: `res.setHeader('Allow',[allow]); res.status(405).end(`Method ${m} Not Allowed`)`
@@ -214,11 +218,27 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
         return method_not_allowed(&method, "POST");
     }
     let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let user_name = body.get("userName").and_then(Value::as_str).unwrap_or("");
+    let user_name = body
+        .get("userName")
+        .or_else(|| body.get("username"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let password = body.get("password").and_then(Value::as_str).unwrap_or("");
     // PARITY: `firstName || ''` / `lastName || ''`.
     let first_name = body.get("firstName").and_then(Value::as_str).unwrap_or("");
     let last_name = body.get("lastName").and_then(Value::as_str).unwrap_or("");
+    let role_str = body
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("GUEST")
+        .to_uppercase();
+    let role = match role_str.as_str() {
+        "ADMIN" => "ADMIN",
+        "COLLECTOR" => "COLLECTOR",
+        _ => "GUEST",
+    };
+    let is_active = body.get("isActive").and_then(Value::as_bool).unwrap_or(true);
+
     if user_name.is_empty() || password.is_empty() {
         return bad_request_missing();
     }
@@ -245,7 +265,7 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
         Ok(h) => h,
         Err(_) => return internal_error(),
     };
-    // id: Prisma @default(uuid()) is app-side; role GUEST; isActive default true;
+    // id: Prisma @default(uuid()) is app-side; role GUEST/specified; isActive default true;
     // createdAt = new Date(); updatedAt (@updatedAt) = now() on create.
     let id = uuid::Uuid::new_v4().to_string();
     let inserted = sqlx::query_as::<_, User>(
@@ -259,8 +279,8 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
     .bind(&hashed)
     .bind(first_name)
     .bind(last_name)
-    .bind(true)
-    .bind("GUEST")
+    .bind(is_active)
+    .bind(role)
     .fetch_one(&state.db)
     .await;
     let user = match inserted {
@@ -276,5 +296,237 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
         )
             .into_response(),
         Err(e) => e.into_response(),
+    }
+}
+
+// ---- /api/auth/users (GET: list, POST: create) -----------------------------
+async fn users_collection(
+    method: Method,
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Response {
+    match method {
+        Method::GET => list_users(State(state)).await,
+        Method::POST => register(Method::POST, State(state), body).await,
+        _ => method_not_allowed(&method, "GET, POST"),
+    }
+}
+
+async fn list_users(State(state): State<AppState>) -> Response {
+    let rows = sqlx::query_as::<_, User>(r#"SELECT * FROM "User" ORDER BY "createdAt" DESC"#)
+        .fetch_all(&state.db)
+        .await;
+    match rows {
+        Ok(users) => {
+            let list: Vec<Value> = users
+                .iter()
+                .map(|u| {
+                    json!({
+                        "id": u.id,
+                        "userName": u.username,
+                        "username": u.username,
+                        "role": u.role,
+                        "firstName": u.first_name,
+                        "lastName": u.last_name,
+                        "isActive": u.is_active,
+                        "createdAt": u.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                        "updatedAt": u.updated_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                    })
+                })
+                .collect();
+            (StatusCode::OK, Json(json!({ "users": list }))).into_response()
+        }
+        Err(e) => {
+            eprintln!("Failed to fetch users: {e}");
+            internal_error()
+        }
+    }
+}
+
+// ---- /api/auth/users/update (POST) -----------------------------------------
+async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Response {
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let id = body.get("id").and_then(Value::as_str).unwrap_or("");
+    if id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Missing user id" })),
+        )
+            .into_response();
+    }
+
+    let existing = sqlx::query_as::<_, User>(r#"SELECT * FROM "User" WHERE "id" = $1"#)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await;
+    let user = match existing {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "User not found" })),
+            )
+                .into_response()
+        }
+        Err(_) => return internal_error(),
+    };
+
+    let first_name = body
+        .get("firstName")
+        .and_then(Value::as_str)
+        .unwrap_or(&user.first_name);
+    let last_name = body
+        .get("lastName")
+        .and_then(Value::as_str)
+        .unwrap_or(&user.last_name);
+    let is_active = body
+        .get("isActive")
+        .and_then(Value::as_bool)
+        .unwrap_or(user.is_active);
+    let role_str = body
+        .get("role")
+        .and_then(Value::as_str)
+        .map(|s| s.to_uppercase());
+    let role = match role_str.as_deref() {
+        Some("ADMIN") => "ADMIN",
+        Some("COLLECTOR") => "COLLECTOR",
+        Some("GUEST") => "GUEST",
+        _ => match user.role {
+            Role::Admin => "ADMIN",
+            Role::Collector => "COLLECTOR",
+            Role::Guest => "GUEST",
+        },
+    };
+
+    let password_hash = if let Some(new_pwd) = body
+        .get("password")
+        .and_then(Value::as_str)
+        .filter(|p| !p.is_empty())
+    {
+        match bcrypt::hash(new_pwd, 10) {
+            Ok(h) => h,
+            Err(_) => return internal_error(),
+        }
+    } else {
+        user.password.clone()
+    };
+
+    let updated = sqlx::query_as::<_, User>(
+        r#"UPDATE "User"
+           SET "firstName" = $1, "lastName" = $2, "isActive" = $3, "role" = $4::"Role", "password" = $5, "updatedAt" = now()
+           WHERE "id" = $6
+           RETURNING *"#,
+    )
+    .bind(first_name)
+    .bind(last_name)
+    .bind(is_active)
+    .bind(role)
+    .bind(password_hash)
+    .bind(id)
+    .fetch_one(&state.db)
+    .await;
+
+    match updated {
+        Ok(u) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "user": user_payload(&u) })),
+        )
+            .into_response(),
+        Err(e) => {
+            eprintln!("Failed to update user: {e}");
+            internal_error()
+        }
+    }
+}
+
+// ---- /api/auth/users/delete (POST) -----------------------------------------
+async fn delete_user_body(State(state): State<AppState>, body: Bytes) -> Response {
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let id = body.get("id").and_then(Value::as_str).unwrap_or("");
+    if id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Missing user id" })),
+        )
+            .into_response();
+    }
+
+    let is_target_admin = sqlx::query_scalar::<_, bool>(
+        r#"SELECT "role" = 'ADMIN'::"Role" FROM "User" WHERE "id" = $1"#,
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false);
+
+    if is_target_admin {
+        let admin_count: Option<i64> = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM "User" WHERE "role" = 'ADMIN'::"Role""#,
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(None);
+
+        if admin_count.unwrap_or(0) <= 1 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Cannot delete the only remaining admin" })),
+            )
+                .into_response();
+        }
+    }
+
+    let res = sqlx::query(r#"DELETE FROM "User" WHERE "id" = $1"#)
+        .bind(id)
+        .execute(&state.db)
+        .await;
+
+    match res {
+        Ok(_) => (StatusCode::OK, Json(json!({ "success": true }))).into_response(),
+        Err(e) => {
+            eprintln!("Failed to delete user: {e}");
+            internal_error()
+        }
+    }
+}
+
+// ---- /api/auth/users/{id} (GET, PUT, PATCH, DELETE) ------------------------
+async fn user_by_id(
+    method: Method,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
+    match method {
+        Method::GET => {
+            let found = sqlx::query_as::<_, User>(r#"SELECT * FROM "User" WHERE "id" = $1"#)
+                .bind(&id)
+                .fetch_optional(&state.db)
+                .await;
+            match found {
+                Ok(Some(u)) => (StatusCode::OK, Json(json!({ "user": user_payload(&u) }))).into_response(),
+                Ok(None) => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "User not found" })),
+                )
+                    .into_response(),
+                Err(_) => internal_error(),
+            }
+        }
+        Method::PUT | Method::PATCH => {
+            let mut val: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            if let Value::Object(ref mut map) = val {
+                map.insert("id".to_string(), json!(id));
+            }
+            let modified = Bytes::from(serde_json::to_vec(&val).unwrap_or_default());
+            update_user_body(State(state), modified).await
+        }
+        Method::DELETE => {
+            let val = json!({ "id": id });
+            let modified = Bytes::from(serde_json::to_vec(&val).unwrap_or_default());
+            delete_user_body(State(state), modified).await
+        }
+        _ => method_not_allowed(&method, "GET, PUT, PATCH, DELETE"),
     }
 }
