@@ -762,11 +762,22 @@ pub async fn push_user_to_upstream(state: &AppState, user: &crate::models::User)
     ];
 
     for url in urls {
-        if let Ok(mut client) = proto_defination::user::user_service_client::UserServiceClient::connect(url).await {
-            if let Ok(res) = client.upsert_user(tonic::Request::new(entity.clone())).await {
-                if res.into_inner().success {
-                    return true;
+        match proto_defination::user::user_service_client::UserServiceClient::connect(url.clone()).await {
+            Ok(mut client) => {
+                match client.upsert_user(tonic::Request::new(entity.clone())).await {
+                    Ok(res) => {
+                        if res.into_inner().success {
+                            tracing::info!("User '{}' pushed successfully to upstream at {}", user.username, url);
+                            return true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed upsert_user on upstream {url}: {e}");
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::debug!("Could not connect to {url} for user sync: {e}");
             }
         }
     }
