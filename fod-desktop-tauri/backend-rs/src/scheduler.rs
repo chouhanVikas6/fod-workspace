@@ -665,7 +665,7 @@ pub fn spawn_user_sync_service(state: AppState) {
         loop {
             ticker.tick().await;
             cycle = cycle.wrapping_add(1);
-            let full_reconcile = (cycle % 5) == 0;
+            let full_reconcile = cycle == 1 || (cycle % 5) == 0;
             if let Err(e) = sync_users_cycle(&state, full_reconcile).await {
                 tracing::debug!("User sync cycle warning: {e}");
             }

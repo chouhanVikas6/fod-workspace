@@ -52,7 +52,10 @@ impl UserService for AtcUserServiceImpl {
             return Err(Status::invalid_argument("Username cannot be empty"));
         }
 
-        let _ = self.db.delete_user_by_username(username).await;
+        let deleted = self.db.delete_user_by_username(username).await.unwrap_or(false);
+        if deleted {
+            let _ = self.db.append_change(5, username).await;
+        }
 
         Ok(Response::new(DeleteUserResponse {
             success: true,
