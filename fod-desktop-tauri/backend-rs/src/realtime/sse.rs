@@ -288,11 +288,7 @@ pub async fn retrive_data(
             }
         });
     }
-
-    let (tx, rx) = mpsc::channel::<Event>(32);
-
-    tokio::spawn(async move {
-        let mut st = RetriveState {
+         let mut st = RetriveState {
             last_updated_at: "1970-01-01T00:00:00.000Z".to_string(),
             last_group_id: 0,
             last_activity: Instant::now(),
@@ -345,11 +341,17 @@ async fn send_data(
             let evt = Event::default()
                 .event("error")
                 .data(json!({ "error": "Failed to fetch data" }).to_string());
-            return tx.send(evt).await.is_ok();
+            let _ = tx.send(evt).await;
+            return true; // Keep SSE stream open on transient query error
         }
     };
 
     if rows.is_empty() {
+        if !st.data_has_been_sent {
+            st.data_has_been_sent = true;
+            let evt = Event::default().event("update").data("[]");
+            return tx.send(evt).await.is_ok();
+        }
         // Inactivity timeout stops the DB polling but keeps the connection
         // (and heartbeats) alive — Node only clears pollInterval.
         if st.data_has_been_sent
@@ -401,29 +403,47 @@ async fn query_rows(
         let id: Option<String> = row.try_get("id")?;
         let size: Option<f64> = row.try_get("size")?;
         let group_id: Option<i32> = row.try_get("groupId")?;
-        let timestamp: Option<chrono::NaiveDateTime> = row.try_get("timestamp")?;
+        let timestamp: Option<String> = row
+            .try_get::<chrono::NaiveDateTime, _>("timestamp")
+            .ok()
+            .map(iso_millis_naive)
+            .or_else(|| {
+                row.try_get::<chrono::DateTime<chrono::Utc>, _>("timestamp")
+                    .ok()
+                    .map(iso_millis_utc)
+            });
         let location: Option<Value> = row.try_get("location")?;
         let class: Option<String> = row.try_get("class")?;
         let velocity: Option<f64> = row.try_get("velocity")?;
         let sysid: Option<String> = row.try_get("sysid")?;
         let biggest_size: Option<f64> = row.try_get("biggestSize")?;
-        let updated_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("updatedAt")?;
+        let updated_at: Option<String> = row
+            .try_get::<chrono::DateTime<chrono::Utc>, _>("updatedAt")
+            .ok()
+            .map(iso_millis_utc)
+            .or_else(|| {
+                row.try_get::<chrono::NaiveDateTime, _>("updatedAt")
+                    .ok()
+                    .map(iso_millis_naive)
+            });
         let group_status: Option<String> = row.try_get("groupStatus")?;
         let idssssss: i32 = row.try_get("idssssss")?;
         out.push(json!({
             "id": id,
             "size": size,
             "groupId": group_id,
-            "timestamp": timestamp.map(iso_millis_naive),
+            "timestamp": timestamp,
             "location": location,
             "class": class,
             "velocity": velocity,
             "sysid": sysid,
             "biggestSize": biggest_size,
-            "updatedAt": updated_at.map(iso_millis_utc),
+            "updatedAt": updated_at,
             "groupStatus": group_status,
             "idssssss": idssssss,
         }));
     }
     Ok(out)
 }
+
+
