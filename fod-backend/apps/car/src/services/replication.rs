@@ -93,6 +93,14 @@ impl ReplicationServiceImpl {
                         seq,
                         entity: Some(change::Entity::User(u.to_proto())),
                     });
+                } else {
+                    return Some(Change {
+                        seq,
+                        entity: Some(change::Entity::Deleted(proto_defination::replication::Tombstone {
+                            entity: 5,
+                            entity_key: key.to_string(),
+                        })),
+                    });
                 }
             }
             _ => {}

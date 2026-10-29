@@ -784,6 +784,38 @@ pub async fn push_user_to_upstream(state: &AppState, user: &crate::models::User)
     false
 }
 
+pub async fn delete_user_from_upstream(state: &AppState, username: &str) -> bool {
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    let mut any_success = false;
+    for url in urls {
+        match proto_defination::user::user_service_client::UserServiceClient::connect(url.clone()).await {
+            Ok(mut client) => {
+                match client.delete_user(tonic::Request::new(proto_defination::user::DeleteUserRequest {
+                    username: username.to_string(),
+                })).await {
+                    Ok(res) => {
+                        if res.into_inner().success {
+                            tracing::info!("User '{}' deleted successfully from upstream at {}", username, url);
+                            any_success = true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed delete_user on upstream {url}: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!("Could not connect to {url} for user delete: {e}");
+            }
+        }
+    }
+    any_success
+}
+
 pub async fn pull_users_from_upstream(state: &AppState, since_ms: i64) -> Vec<proto_defination::user::UserEntity> {
     let urls = [
         state.cfg.car_backend_url.clone(),
@@ -797,11 +829,16 @@ pub async fn pull_users_from_upstream(state: &AppState, since_ms: i64) -> Vec<pr
                 if !users.is_empty() {
                     return users;
                 }
+                if since_ms > 0 {
+                    return Vec::new();
+                }
             }
-            if let Ok(res) = client.get_users(tonic::Request::new(proto_defination::user::GetUsersRequest {})).await {
-                let users = res.into_inner().users;
-                if !users.is_empty() {
-                    return users;
+            if since_ms == 0 {
+                if let Ok(res) = client.get_users(tonic::Request::new(proto_defination::user::GetUsersRequest {})).await {
+                    let users = res.into_inner().users;
+                    if !users.is_empty() {
+                        return users;
+                    }
                 }
             }
         }

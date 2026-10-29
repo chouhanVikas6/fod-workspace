@@ -712,7 +712,7 @@ impl Db {
     }
 
     pub async fn delete_user_by_username(&self, username: &str) -> Result<bool> {
-        let res = sqlx::query("DELETE FROM users WHERE username = $1")
+        let res = sqlx::query("DELETE FROM users WHERE username = $1 OR LOWER(username) = LOWER($1)")
             .bind(username)
             .execute(&self.pool)
             .await

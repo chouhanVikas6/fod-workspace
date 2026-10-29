@@ -1,8 +1,8 @@
 use proto_defination::replication::{change, Change};
 use proto_defination::user::user_service_server::UserService;
 use proto_defination::user::{
-    GetUsersRequest, GetUsersResponse, SyncUsersRequest, SyncUsersResponse, UpsertUserResponse,
-    UserEntity,
+    DeleteUserRequest, DeleteUserResponse, GetUsersRequest, GetUsersResponse, SyncUsersRequest,
+    SyncUsersResponse, UpsertUserResponse, UserEntity,
 };
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status};
@@ -42,6 +42,39 @@ impl UserService for UserServiceImpl {
         Ok(Response::new(UpsertUserResponse {
             success: true,
             user: Some(proto_user),
+            error: String::new(),
+        }))
+    }
+
+    async fn delete_user(
+        &self,
+        request: Request<DeleteUserRequest>,
+    ) -> Result<Response<DeleteUserResponse>, Status> {
+        let req = request.into_inner();
+        let username = req.username.trim();
+        if username.is_empty() {
+            return Err(Status::invalid_argument("Username cannot be empty"));
+        }
+
+        let deleted = self
+            .db
+            .delete_user_by_username(username)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        if deleted {
+            let seq = self.db.append_change(5, username).await.unwrap_or(0);
+            let _ = self.change_tx.send(Change {
+                seq,
+                entity: Some(change::Entity::Deleted(proto_defination::replication::Tombstone {
+                    entity: 5,
+                    entity_key: username.to_string(),
+                })),
+            });
+        }
+
+        Ok(Response::new(DeleteUserResponse {
+            success: true,
             error: String::new(),
         }))
     }

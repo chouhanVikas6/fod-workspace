@@ -260,7 +260,11 @@ impl SyncClient {
                             change::Entity::User(u) => {
                                 self.db.upsert_replicated_user(&u).await?;
                             }
-                            _ => {}
+                            change::Entity::Deleted(t) => {
+                                if t.entity == 5 {
+                                    let _ = self.db.delete_user_by_username(&t.entity_key).await;
+                                }
+                            }
                         }
                     }
                 }

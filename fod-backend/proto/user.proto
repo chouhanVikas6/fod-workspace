@@ -23,6 +23,7 @@ message UserEntity {
 
 service UserService {
     rpc UpsertUser (UserEntity) returns (UpsertUserResponse);
+    rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
     rpc GetUsers (GetUsersRequest) returns (GetUsersResponse);
     rpc SyncUsers (SyncUsersRequest) returns (SyncUsersResponse);
 }
@@ -31,6 +32,15 @@ message UpsertUserResponse {
     bool success = 1;
     UserEntity user = 2;
     string error = 3;
+}
+
+message DeleteUserRequest {
+    string username = 1;
+}
+
+message DeleteUserResponse {
+    bool success = 1;
+    string error = 2;
 }
 
 message GetUsersRequest {}

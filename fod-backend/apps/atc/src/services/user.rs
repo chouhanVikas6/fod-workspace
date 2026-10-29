@@ -1,7 +1,7 @@
 use proto_defination::user::user_service_server::UserService;
 use proto_defination::user::{
-    GetUsersRequest, GetUsersResponse, SyncUsersRequest, SyncUsersResponse, UpsertUserResponse,
-    UserEntity,
+    DeleteUserRequest, DeleteUserResponse, GetUsersRequest, GetUsersResponse, SyncUsersRequest,
+    SyncUsersResponse, UpsertUserResponse, UserEntity,
 };
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
@@ -38,6 +38,24 @@ impl UserService for AtcUserServiceImpl {
         Ok(Response::new(UpsertUserResponse {
             success: true,
             user: Some(proto_user),
+            error: String::new(),
+        }))
+    }
+
+    async fn delete_user(
+        &self,
+        request: Request<DeleteUserRequest>,
+    ) -> Result<Response<DeleteUserResponse>, Status> {
+        let req = request.into_inner();
+        let username = req.username.trim();
+        if username.is_empty() {
+            return Err(Status::invalid_argument("Username cannot be empty"));
+        }
+
+        let _ = self.db.delete_user_by_username(username).await;
+
+        Ok(Response::new(DeleteUserResponse {
+            success: true,
             error: String::new(),
         }))
     }

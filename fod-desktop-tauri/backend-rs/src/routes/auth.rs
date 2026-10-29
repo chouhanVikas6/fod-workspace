@@ -479,16 +479,26 @@ async fn delete_user_body(State(state): State<AppState>, body: Bytes) -> Respons
             .into_response();
     }
 
-    let is_target_admin = sqlx::query_scalar::<_, bool>(
-        r#"SELECT "role" = 'ADMIN'::"Role" FROM "User" WHERE "id" = $1"#,
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or(None)
-    .unwrap_or(false);
+    let user = match sqlx::query_as::<_, User>(r#"SELECT * FROM "User" WHERE "id" = $1"#)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "User not found" })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            eprintln!("Failed to find user: {e}");
+            return internal_error();
+        }
+    };
 
-    if is_target_admin {
+    if user.role == Role::Admin {
         let admin_count: Option<i64> = sqlx::query_scalar(
             r#"SELECT COUNT(*) FROM "User" WHERE "role" = 'ADMIN'::"Role""#,
         )
@@ -511,7 +521,15 @@ async fn delete_user_body(State(state): State<AppState>, body: Bytes) -> Respons
         .await;
 
     match res {
-        Ok(_) => (StatusCode::OK, Json(json!({ "success": true }))).into_response(),
+        Ok(_) => {
+            let state_del = state.clone();
+            let username = user.username.clone();
+            tokio::spawn(async move {
+                crate::services::delete_user_from_upstream(&state_del, &username).await;
+            });
+
+            (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+        }
         Err(e) => {
             eprintln!("Failed to delete user: {e}");
             internal_error()
