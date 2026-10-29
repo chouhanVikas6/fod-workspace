@@ -816,7 +816,18 @@ pub async fn delete_user_from_upstream(state: &AppState, username: &str) -> bool
     any_success
 }
 
-pub async fn pull_users_from_upstream(state: &AppState, since_ms: i64) -> Vec<proto_defination::user::UserEntity> {
+#[derive(Debug, Default, Clone)]
+pub struct PulledUsers {
+    pub users: Vec<proto_defination::user::UserEntity>,
+    pub deleted_usernames: Vec<String>,
+    pub all_active_usernames: Option<Vec<String>>,
+}
+
+pub async fn pull_users_from_upstream(
+    state: &AppState,
+    since_ms: i64,
+    full_reconcile: bool,
+) -> PulledUsers {
     let urls = [
         state.cfg.car_backend_url.clone(),
         state.cfg.atc_backend_url.clone(),
@@ -824,26 +835,29 @@ pub async fn pull_users_from_upstream(state: &AppState, since_ms: i64) -> Vec<pr
 
     for url in urls {
         if let Ok(mut client) = proto_defination::user::user_service_client::UserServiceClient::connect(url).await {
-            if let Ok(res) = client.sync_users(tonic::Request::new(proto_defination::user::SyncUsersRequest { since_ms })).await {
-                let users = res.into_inner().users;
-                if !users.is_empty() {
-                    return users;
-                }
-                if since_ms > 0 {
-                    return Vec::new();
-                }
-            }
-            if since_ms == 0 {
+            if full_reconcile || since_ms == 0 {
                 if let Ok(res) = client.get_users(tonic::Request::new(proto_defination::user::GetUsersRequest {})).await {
                     let users = res.into_inner().users;
-                    if !users.is_empty() {
-                        return users;
-                    }
+                    let all_active_usernames = Some(users.iter().map(|u| u.username.clone()).collect());
+                    return PulledUsers {
+                        users,
+                        deleted_usernames: Vec::new(),
+                        all_active_usernames,
+                    };
+                }
+            } else {
+                if let Ok(res) = client.sync_users(tonic::Request::new(proto_defination::user::SyncUsersRequest { since_ms })).await {
+                    let inner = res.into_inner();
+                    return PulledUsers {
+                        users: inner.users,
+                        deleted_usernames: inner.deleted_usernames,
+                        all_active_usernames: None,
+                    };
                 }
             }
         }
     }
-    Vec::new()
+    PulledUsers::default()
 }
 
 pub async fn fetch_image_from_car(

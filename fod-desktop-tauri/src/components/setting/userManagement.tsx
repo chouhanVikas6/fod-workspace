@@ -58,8 +58,8 @@ export default function UserManagement() {
   const [editPassword, setEditPassword] = useState('');
   const [showEditPassword, setShowEditPassword] = useState(false);
 
-  const fetchUsers = async () => {
-    setIsLoading(true);
+  const fetchUsers = async (showLoading = true) => {
+    if (showLoading) setIsLoading(true);
     try {
       const res = await axiosClient({
         method: 'GET',
@@ -70,14 +70,18 @@ export default function UserManagement() {
       }
     } catch (err: any) {
       console.error('Failed to fetch users:', err);
-      toast.error('Could not load user list');
+      if (showLoading) toast.error('Could not load user list');
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchUsers();
+    fetchUsers(true);
+    const interval = setInterval(() => {
+      fetchUsers(false);
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleAddSubmit = async (e: React.FormEvent) => {

@@ -653,6 +653,21 @@ impl Db {
             .map_err(|e| ZoidError::Database(e.to_string()))
     }
 
+    pub async fn get_deleted_usernames_since(&self, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<String>> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT cl.entity_key
+            FROM change_log cl
+            LEFT JOIN users u ON cl.entity_key = u.username
+            WHERE cl.entity = 5 AND cl.committed_at >= $1 AND u.username IS NULL
+            "#,
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
     pub async fn upsert_replicated_user(&self, u: &proto_defination::user::UserEntity) -> Result<UserRow> {
         let id = Uuid::parse_str(&u.id).unwrap_or_else(|_| Uuid::new_v4());
         let role = match proto_defination::user::UserRole::try_from(u.role).unwrap_or(proto_defination::user::UserRole::Collector) {

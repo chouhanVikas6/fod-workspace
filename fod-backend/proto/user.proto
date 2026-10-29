@@ -55,4 +55,5 @@ message SyncUsersRequest {
 
 message SyncUsersResponse {
     repeated UserEntity users = 1;
+    repeated string deleted_usernames = 2;
 }

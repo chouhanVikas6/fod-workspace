@@ -661,16 +661,19 @@ pub fn spawn_user_sync_service(state: AppState) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(3));
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut cycle: u64 = 0;
         loop {
             ticker.tick().await;
-            if let Err(e) = sync_users_cycle(&state).await {
+            cycle = cycle.wrapping_add(1);
+            let full_reconcile = (cycle % 5) == 0;
+            if let Err(e) = sync_users_cycle(&state, full_reconcile).await {
                 tracing::debug!("User sync cycle warning: {e}");
             }
         }
     });
 }
 
-async fn sync_users_cycle(state: &AppState) -> anyhow::Result<()> {
+async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Result<()> {
     // 1. Push any dirty users in zoid_client to upstream Car/ATC
     let dirty_users = sqlx::query_as::<_, crate::models::User>(
         r#"SELECT * FROM "User" WHERE "dirty" = true"#,
@@ -698,8 +701,40 @@ async fn sync_users_cycle(state: &AppState) -> anyhow::Result<()> {
         .map(|dt| dt.and_utc().timestamp_millis())
         .unwrap_or(0);
 
-    let incoming_users = crate::services::pull_users_from_upstream(state, since_ms).await;
-    for u in incoming_users {
+    let incoming = crate::services::pull_users_from_upstream(state, since_ms, full_reconcile).await;
+
+    // Prune users identified as deleted in delta sync
+    for del in incoming.deleted_usernames {
+        let _ = sqlx::query(
+            r#"DELETE FROM "User" WHERE ("username" = $1 OR LOWER("username") = LOWER($1)) AND ("dirty" IS NOT TRUE)"#,
+        )
+        .bind(&del)
+        .execute(&state.db)
+        .await;
+    }
+
+    // Full reconciliation: prune any local non-dirty user missing from upstream active users
+    if let Some(active_names) = incoming.all_active_usernames {
+        let local_users = sqlx::query_as::<_, (String, String)>(
+            r#"SELECT "id", "username" FROM "User" WHERE "dirty" IS NOT TRUE"#,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        for (local_id, local_name) in local_users {
+            let exists_upstream = active_names.iter().any(|a| a.eq_ignore_ascii_case(&local_name));
+            if !exists_upstream {
+                tracing::info!("User '{}' ({}) deleted upstream; removing locally", local_name, local_id);
+                let _ = sqlx::query(r#"DELETE FROM "User" WHERE "id" = $1"#)
+                    .bind(&local_id)
+                    .execute(&state.db)
+                    .await;
+            }
+        }
+    }
+
+    for u in incoming.users {
         let role = match proto_defination::user::UserRole::try_from(u.role).unwrap_or(proto_defination::user::UserRole::Collector) {
             proto_defination::user::UserRole::Admin => "ADMIN",
             proto_defination::user::UserRole::Collector => "COLLECTOR",

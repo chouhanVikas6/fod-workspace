@@ -105,6 +105,14 @@ impl UserService for UserServiceImpl {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
         let users = rows.into_iter().map(|r| r.to_proto()).collect();
-        Ok(Response::new(SyncUsersResponse { users }))
+        let deleted_usernames = self
+            .db
+            .get_deleted_usernames_since(since_dt)
+            .await
+            .unwrap_or_default();
+        Ok(Response::new(SyncUsersResponse {
+            users,
+            deleted_usernames,
+        }))
     }
 }
