@@ -14,12 +14,23 @@ pub fn spawn(state: AppState) {
     tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
         loop {
-            let endpoint = state.cfg.car_backend_url.clone();
-            tracing::info!(%endpoint, "Connecting to Car backend gRPC StreamGroups");
+            let primary = state.cfg.car_backend_url.clone();
+            let secondary = state.cfg.atc_backend_url.clone();
 
-            match FodGroupServiceClient::connect(endpoint.clone()).await {
-                Ok(mut client) => {
-                    tracing::info!(%endpoint, "Connected to Car StreamGroups");
+            let client_res = match connect_stream_client(&primary).await {
+                Some(c) => Some((primary, c)),
+                None => {
+                    if secondary != primary {
+                        connect_stream_client(&secondary).await.map(|c| (secondary, c))
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            match client_res {
+                Some((endpoint_str, mut client)) => {
+                    tracing::info!(endpoint = %endpoint_str, "Connected to gRPC StreamGroups");
                     backoff = Duration::from_secs(1);
 
                     match client.stream_groups(Request::new(StreamGroupsRequest { mission_id: 0 })).await {
@@ -40,12 +51,12 @@ pub fn spawn(state: AppState) {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to subscribe to StreamGroups: {e}");
+                            tracing::warn!("Failed to subscribe to StreamGroups on {endpoint_str}: {e}");
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::debug!("StreamGroups connect failed: {e}");
+                None => {
+                    tracing::debug!("StreamGroups connect failed on both primary and secondary");
                 }
             }
 
@@ -53,6 +64,17 @@ pub fn spawn(state: AppState) {
             backoff = (backoff * 2).min(Duration::from_secs(10));
         }
     });
+}
+
+async fn connect_stream_client(
+    endpoint_str: &str,
+) -> Option<FodGroupServiceClient<tonic::transport::Channel>> {
+    let endpoint = tonic::transport::Endpoint::from_shared(endpoint_str.to_string()).ok()?
+        .connect_timeout(Duration::from_millis(1500))
+        .tcp_keepalive(Some(Duration::from_secs(5)))
+        .http2_keep_alive_interval(Duration::from_secs(2))
+        .keep_alive_while_idle(true);
+    FodGroupServiceClient::connect(endpoint).await.ok()
 }
 
 async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()> {
@@ -122,6 +144,24 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
             .bind(created)
             .execute(&state.db)
             .await;
+        }
+    }
+
+    if let Some(io) = state.io() {
+        if let Some(gui_ns) = io.of("/gui") {
+            let _ = gui_ns
+                .emit(
+                    "update",
+                    &json!({
+                        "type": "fodGroup",
+                        "message": {
+                            "groupId": gid,
+                            "missionId": mission_id,
+                            "status": st
+                        }
+                    }),
+                )
+                .await;
         }
     }
 

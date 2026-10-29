@@ -68,8 +68,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         base_dir: frames_dir,
     }));
 
+    let (group_tx, _) = broadcast::channel(1000);
+
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx, user_rx) = SyncClient::new(car_url, db.clone(), node_id);
+    let (sync_client, cmd_rx, user_rx) = SyncClient::new(car_url, db.clone(), node_id, group_tx.clone());
     let cmd_tx = sync_client.command_sender();
     let user_tx = sync_client.user_sender();
     let sync_client_arc = Arc::new(sync_client);
@@ -77,8 +79,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         sync_client_arc.run_replication_loop(cmd_rx, user_rx).await;
     });
-
-    let (group_tx, _) = broadcast::channel(1000);
 
     // Instantiate gRPC Services
     let fod_group_svc = AtcFodGroupServiceImpl::new(db.clone(), cmd_tx, group_tx);

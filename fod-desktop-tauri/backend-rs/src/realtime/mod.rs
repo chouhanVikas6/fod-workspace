@@ -4,6 +4,7 @@
 
 pub mod car_telemetry;
 pub mod group_stream;
+pub mod mission_stream;
 pub mod socketio;
 pub mod sse;
 

@@ -14,12 +14,25 @@ pub fn spawn(state: AppState) {
     tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
         loop {
-            let endpoint = state.cfg.car_backend_url.clone();
-            tracing::info!(%endpoint, "Connecting to Car backend gRPC for telemetry");
+            let endpoint_str = state.cfg.car_backend_url.clone();
+            tracing::info!(endpoint = %endpoint_str, "Connecting to Car backend gRPC for telemetry");
 
-            match BiteServiceClient::connect(endpoint.clone()).await {
+            let endpoint = match tonic::transport::Endpoint::from_shared(endpoint_str.clone()) {
+                Ok(ep) => ep
+                    .connect_timeout(Duration::from_millis(1500))
+                    .tcp_keepalive(Some(Duration::from_secs(5)))
+                    .http2_keep_alive_interval(Duration::from_secs(2))
+                    .keep_alive_while_idle(true),
+                Err(e) => {
+                    tracing::warn!("Invalid car endpoint: {e}");
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+            };
+
+            match BiteServiceClient::connect(endpoint).await {
                 Ok(mut client) => {
-                    tracing::info!(%endpoint, "Connected to Car BiteService");
+                    tracing::info!(endpoint = %endpoint_str, "Connected to Car BiteService");
                     backoff = Duration::from_secs(1);
 
                     // Continuous polling + stream subscription
@@ -43,13 +56,17 @@ pub fn spawn(state: AppState) {
                         tokio::select! {
                             _ = poll_interval.tick() => {
                                 let t0 = std::time::Instant::now();
-                                match client.get_bite_state(Request::new(GetBiteStateRequest {})).await {
-                                    Ok(resp) => {
+                                match tokio::time::timeout(Duration::from_secs(2), client.get_bite_state(Request::new(GetBiteStateRequest {}))).await {
+                                    Ok(Ok(resp)) => {
                                         let ping_ms = t0.elapsed().as_millis() as u32;
                                         apply_bite_state(&state, resp.into_inner(), ping_ms).await;
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         tracing::warn!(error = %e, "Car gRPC get_bite_state poll failed");
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        tracing::warn!("Car gRPC get_bite_state poll timed out");
                                         break;
                                     }
                                 }
@@ -83,7 +100,7 @@ pub fn spawn(state: AppState) {
                     }
                 }
                 Err(e) => {
-                    tracing::debug!(error = %e, %endpoint, "Car gRPC connection failed (will retry)");
+                    tracing::debug!(error = %e, endpoint = %endpoint_str, "Car gRPC connection failed (will retry)");
                     let mut h = state.health.write().await;
                     h.latency.connected = false;
                     h.available_communication.clear();

@@ -108,13 +108,19 @@ impl FodGroupService for AtcFodGroupServiceImpl {
             let current_group = match group_opt {
                 Some(g) => g,
                 None => {
-                    results.push(ResolutionResult {
-                        command_id: res.command_id,
-                        outcome: "NOT_FOUND".to_string(),
-                        group: None,
-                        pending: false,
-                    });
-                    continue;
+                    let _ = self.db.ensure_mission_exists(res.mission_id).await;
+                    match self.db.upsert_fod_group(res.mission_id, res.group_id, None, None).await {
+                        Ok(g) => g,
+                        Err(_) => {
+                            results.push(ResolutionResult {
+                                command_id: res.command_id,
+                                outcome: "NOT_FOUND".to_string(),
+                                group: None,
+                                pending: false,
+                            });
+                            continue;
+                        }
+                    }
                 }
             };
 

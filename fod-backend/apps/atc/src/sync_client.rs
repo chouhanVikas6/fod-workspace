@@ -19,6 +19,7 @@ pub struct SyncClient {
     node_id: String,
     cmd_tx: mpsc::Sender<Command>,
     user_tx: mpsc::Sender<proto_defination::user::UserEntity>,
+    group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
 }
 
 impl SyncClient {
@@ -26,6 +27,7 @@ impl SyncClient {
         car_endpoint: String,
         db: Db,
         node_id: String,
+        group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
     ) -> (
         Self,
         mpsc::Receiver<Command>,
@@ -39,6 +41,7 @@ impl SyncClient {
             node_id,
             cmd_tx,
             user_tx,
+            group_tx,
         };
         (client, cmd_rx, user_rx)
     }
@@ -221,6 +224,7 @@ impl SyncClient {
                             change::Entity::Group(g) => {
                                 self.ensure_mission_exists(g.mission_id).await?;
                                 self.db.upsert_replicated_fod_group(&g).await?;
+                                let _ = self.group_tx.send(g);
                             }
                             change::Entity::Fod(f) => {
                                 self.ensure_mission_exists(f.mission_id).await?;

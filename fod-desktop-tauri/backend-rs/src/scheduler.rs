@@ -252,6 +252,22 @@ async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
         .await
         {
             tracing::warn!("FodGroup resolve-update failed (group {gid}/mission {mid}): {e}");
+        } else if let Some(io) = state.io() {
+            if let Some(gui_ns) = io.of("/gui") {
+                let _ = gui_ns
+                    .emit(
+                        "update",
+                        &json!({
+                            "type": "fodGroup",
+                            "message": {
+                                "groupId": gid,
+                                "missionId": mid,
+                                "status": st
+                            }
+                        }),
+                    )
+                    .await;
+            }
         }
     }
 
@@ -272,11 +288,16 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
         car_call(state, reqwest::Method::GET, "/api/mission/exclude", Some(json!({ "missionList": ids })))
             .await
         && is_2xx(status)
-        && let Some(list) = data.get("missionList").and_then(Value::as_array)
     {
-        for m in list {
-            if let Err(e) = insert_mission_full(state, m).await {
-                tracing::warn!("mission create failed: {e}");
+        if let Err(e) = reconcile_active_mission(state, &data).await {
+            tracing::warn!("activeMission reconciliation failed in sync_mission: {e}");
+        }
+
+        if let Some(list) = data.get("missionList").and_then(Value::as_array) {
+            for m in list {
+                if let Err(e) = insert_mission_full(state, m).await {
+                    tracing::warn!("mission create failed: {e}");
+                }
             }
         }
     }
@@ -397,6 +418,24 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         {
             tracing::warn!("clearedFod upsert (syncFod) failed: {e}");
         }
+
+        if let Some(io) = state.io() {
+            if let Some(gui_ns) = io.of("/gui") {
+                let _ = gui_ns
+                    .emit(
+                        "update",
+                        &json!({
+                            "type": "fodGroup",
+                            "message": {
+                                "groupId": gid,
+                                "missionId": mission_id,
+                                "status": st
+                            }
+                        }),
+                    )
+                    .await;
+            }
+        }
     }
 
     // Sync biggest FOD entities from Car backend into Fod table
@@ -493,39 +532,8 @@ async fn sync_mission_list(state: &AppState) -> anyhow::Result<()> {
     }
 
     // ── activeMission reconciliation ──
-    match data.get("activeMission") {
-        Some(am) if am.is_object() => {
-            let am_id = am.get("id").and_then(Value::as_i64);
-            let current: Option<i64> =
-                sqlx::query_scalar(r#"SELECT "id" FROM "Mission" WHERE "status" = 'ACTIVE' LIMIT 1"#)
-                    .fetch_optional(&state.db)
-                    .await?;
-            // Demote the stale local ACTIVE if it differs from the backend's.
-            if let (Some(cur), Some(aid)) = (current, am_id)
-                && cur != aid
-            {
-                sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = now() WHERE "id" = $1"#)
-                    .bind(cur)
-                    .execute(&state.db)
-                    .await?;
-            }
-            // Upsert: create {id, createdAt} (DB defaults fill the rest), update {status}.
-            if let Some(aid) = am_id {
-                let created = am.get("createdAt").and_then(Value::as_str);
-                let status_str = am.get("status").and_then(Value::as_str).unwrap_or("ACTIVE");
-                sqlx::query(
-                    r#"INSERT INTO "Mission" ("id","createdAt","updatedAt")
-                       VALUES ($1, COALESCE($2::timestamp, now()), now())
-                       ON CONFLICT ("id") DO UPDATE SET "status" = $3::"MissionStatus", "updatedAt" = now()"#,
-                )
-                .bind(aid)
-                .bind(created)
-                .bind(status_str)
-                .execute(&state.db)
-                .await?;
-            }
-        }
-        _ => {}
+    if let Err(e) = reconcile_active_mission(state, &data).await {
+        tracing::warn!("activeMission reconciliation failed: {e}");
     }
 
     // ── upsert each excluded mission: create {...mission}, update {} ──
@@ -542,6 +550,59 @@ async fn sync_mission_list(state: &AppState) -> anyhow::Result<()> {
 }
 
 // ─────────────────────────── shared table helpers ───────────────────────────
+
+/// Reconcile active mission state with the upstream car backend.
+/// If upstream has no active mission (or the active mission was terminated),
+/// any locally ACTIVE mission is immediately demoted to INACTIVE.
+pub async fn reconcile_active_mission(state: &AppState, data: &Value) -> anyhow::Result<()> {
+    let current_active_id: Option<i64> =
+        sqlx::query_scalar(r#"SELECT "id" FROM "Mission" WHERE "status" = 'ACTIVE' LIMIT 1"#)
+            .fetch_optional(&state.db)
+            .await?;
+
+    let upstream_active = data.get("activeMission").and_then(|v| v.as_object());
+    let upstream_active_id = upstream_active.and_then(|am| am.get("id")).and_then(Value::as_i64);
+    let upstream_status = upstream_active
+        .and_then(|am| am.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("ACTIVE");
+
+    match (current_active_id, upstream_active_id) {
+        (Some(cur), Some(aid)) if cur != aid || upstream_status != "ACTIVE" => {
+            // Local active differs or upstream active mission is no longer ACTIVE
+            sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = now() WHERE "id" = $1"#)
+                .bind(cur)
+                .execute(&state.db)
+                .await?;
+        }
+        (Some(cur), None) => {
+            // Upstream has NO active mission (e.g. terminated from another instance),
+            // demote any local active mission.
+            sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = now() WHERE "id" = $1"#)
+                .bind(cur)
+                .execute(&state.db)
+                .await?;
+        }
+        _ => {}
+    }
+
+    if let (Some(am), Some(aid)) = (upstream_active, upstream_active_id) {
+        if upstream_status == "ACTIVE" {
+            let created = am.get("createdAt").and_then(Value::as_str);
+            sqlx::query(
+                r#"INSERT INTO "Mission" ("id","createdAt","updatedAt")
+                   VALUES ($1, COALESCE($2::timestamp, now()), now())
+                   ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = now()"#,
+            )
+            .bind(aid)
+            .bind(created)
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
 
 /// Prisma `mission.create({data: mission})` / `upsert({create:{...mission}, update:{}})`.
 /// Full mission row from car-backend JSON; ON CONFLICT DO NOTHING (empty update).

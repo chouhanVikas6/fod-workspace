@@ -303,18 +303,21 @@ async fn connect_image_client(state: &AppState) -> Option<proto_defination::imag
     Some(proto_defination::image::image_service_client::ImageServiceClient::new(ch))
 }
 
+pub async fn connect_cleared_fod_client(state: &AppState) -> Option<proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient<tonic::transport::Channel>> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient::new(ch))
+}
+
 pub async fn call_car_grpc(
     state: &AppState,
     endpoint: &str,
     data: Option<Value>,
 ) -> Option<Value> {
-    let car_url = state.cfg.car_backend_url.clone();
-
     // 1. Mission Control: Start
     if endpoint == "/api/mission-control/start" {
         let speed = data.as_ref().and_then(|d| d.get("speed")).and_then(Value::as_i64).map(|v| v as i32);
         let pass = data.as_ref().and_then(|d| d.get("pass")).and_then(Value::as_i64).map(|v| v as i32);
-        let mut client = proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_control_client(state).await?;
         let res = match client.start_mission(tonic::Request::new(
             proto_defination::mission_control::StartMissionRequest { speed, pass },
         )).await {
@@ -351,7 +354,7 @@ pub async fn call_car_grpc(
     // 2. Mission Control: Join
     if let Some(id_str) = endpoint.strip_prefix("/api/mission-control/join/") {
         let mission_id = id_str.parse::<i64>().ok()?;
-        let mut client = proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_control_client(state).await?;
         let res = client.join_mission(tonic::Request::new(
             proto_defination::mission_control::JoinMissionRequest { mission_id },
         )).await.ok()?.into_inner();
@@ -375,7 +378,7 @@ pub async fn call_car_grpc(
     // 3. Mission Control: Restart
     if let Some(id_str) = endpoint.strip_prefix("/api/mission-control/restart/") {
         let mission_id = id_str.parse::<i64>().ok()?;
-        let mut client = proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_control_client(state).await?;
         let res = client.restart_mission(tonic::Request::new(
             proto_defination::mission_control::RestartMissionRequest { mission_id },
         )).await.ok()?.into_inner();
@@ -396,7 +399,7 @@ pub async fn call_car_grpc(
 
     // 4. Mission Control: Scan Status
     if endpoint == "/api/mission-control/scan-status" || endpoint == "/mission/scan/status" {
-        let mut client = proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_control_client(state).await?;
         let res = client.get_scan_status(tonic::Request::new(
             proto_defination::mission_control::GetScanStatusRequest {},
         )).await.ok()?.into_inner();
@@ -423,7 +426,7 @@ pub async fn call_car_grpc(
             .and_then(|d| d.get("camList").and_then(Value::as_array))
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
             .unwrap_or_default();
-        let mut client = proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_control_client(state).await?;
         let res = client.toggle_scan_status(tonic::Request::new(
             proto_defination::mission_control::ToggleScanRequest { resume, cam_list },
         )).await.ok()?.into_inner();
@@ -438,7 +441,7 @@ pub async fn call_car_grpc(
     // 6. Mission Control: Terminate
     if let Some(id_str) = endpoint.strip_prefix("/api/mission-control/terminate/") {
         let mission_id = id_str.parse::<i64>().ok()?;
-        let mut client = proto_defination::mission_control::mission_control_service_client::MissionControlServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_control_client(state).await?;
         let res = client.terminate_mission(tonic::Request::new(
             proto_defination::mission_control::TerminateMissionRequest { mission_id },
         )).await.ok()?.into_inner();
@@ -455,7 +458,7 @@ pub async fn call_car_grpc(
 
     // 7. Mission: Active
     if endpoint == "/mission/active" || endpoint == "/api/mission/load/active" {
-        let mut client = proto_defination::mission::mission_service_client::MissionServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_client(state).await?;
         let res = client.get_active_mission(tonic::Request::new(
             proto_defination::mission::GetActiveMissionRequest {},
         )).await.ok()?.into_inner();
@@ -467,7 +470,7 @@ pub async fn call_car_grpc(
 
     // 8. Mission: Exclude (Scheduler & sync)
     if endpoint == "/api/mission/exclude" {
-        let mut client = proto_defination::mission::mission_service_client::MissionServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_client(state).await?;
         let active = client.get_active_mission(tonic::Request::new(
             proto_defination::mission::GetActiveMissionRequest {},
         )).await.ok().and_then(|r| r.into_inner().active_mission);
@@ -497,7 +500,7 @@ pub async fn call_car_grpc(
 
     // 9. Mission: List all
     if endpoint == "/mission" || endpoint == "/mission/get/all" || endpoint == "/api/mission" {
-        let mut client = proto_defination::mission::mission_service_client::MissionServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_client(state).await?;
         let res = client.list_missions(tonic::Request::new(
             proto_defination::mission::ListMissionsRequest {
                 pagination: Some(proto_defination::common::PaginationRequest { page: 1, limit: 100 }),
@@ -513,7 +516,7 @@ pub async fn call_car_grpc(
         .or_else(|| endpoint.strip_prefix("/mission/load/"))
     {
         let mission_id = id_str.parse::<i64>().ok()?;
-        let mut client = proto_defination::mission::mission_service_client::MissionServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_client(state).await?;
         let res = client.retrieve_mission_data(tonic::Request::new(
             proto_defination::mission::RetrieveMissionRequest { mission_id },
         )).await.ok()?.into_inner();
@@ -529,7 +532,7 @@ pub async fn call_car_grpc(
 
     // 11. Mission: Stats
     if let Some(_id_str) = endpoint.strip_prefix("/mission/stats/") {
-        let mut client = proto_defination::mission::mission_service_client::MissionServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_mission_client(state).await?;
         let res = client.list_missions_with_stats(tonic::Request::new(
             proto_defination::mission::ListMissionsWithStatsRequest {},
         )).await.ok()?.into_inner();
@@ -547,7 +550,7 @@ pub async fn call_car_grpc(
     // 12. Mission: Update (e.g. /mission/123)
     if let Some(id_str) = endpoint.strip_prefix("/mission/") {
         if let Ok(mission_id) = id_str.parse::<i64>() {
-            let mut client = proto_defination::mission::mission_service_client::MissionServiceClient::connect(car_url).await.ok()?;
+            let mut client = connect_mission_client(state).await?;
             let req = proto_defination::mission::UpdateMissionRequest {
                 mission_id,
                 status: data.as_ref().and_then(|d| d.get("status").and_then(Value::as_str)).map(|s| {
@@ -577,7 +580,7 @@ pub async fn call_car_grpc(
     // 13. FOD Group: Group count (/api/fod-group/group-count/{id})
     if let Some(id_str) = endpoint.strip_prefix("/api/fod-group/group-count/") {
         let mission_id = id_str.parse::<i64>().ok()?;
-        let mut client = proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_fod_group_client(state).await?;
         let res = client.get_group_count(tonic::Request::new(
             proto_defination::fod_group::GroupCountRequest { mission_id },
         )).await.ok()?.into_inner();
@@ -594,7 +597,7 @@ pub async fn call_car_grpc(
             .and_then(|d| d.get("missionId").and_then(Value::as_i64))
             .or_else(|| endpoint.strip_prefix("/api/fod-group/all/").and_then(|s| s.parse::<i64>().ok()))
             .unwrap_or(1);
-        let mut client = proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_fod_group_client(state).await?;
         let mut all_groups = Vec::new();
         let mut page = 1;
         loop {
@@ -633,7 +636,7 @@ pub async fn call_car_grpc(
         let group_id = gid_str.parse::<i64>().ok()?;
         let mission_id = data.as_ref().and_then(|d| d.get("missionId").and_then(Value::as_i64)).unwrap_or(1);
         let status = data.as_ref().and_then(|d| d.get("status").and_then(Value::as_str)).unwrap_or("NEW");
-        let mut client = proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_fod_group_client(state).await?;
         let resolutions = vec![proto_defination::fod_group::GroupResolution {
             command_id: uuid::Uuid::new_v4().to_string(),
             mission_id,
@@ -668,7 +671,7 @@ pub async fn call_car_grpc(
                 });
             }
         }
-        let mut client = proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_fod_group_client(state).await?;
         let res = client.resolve_groups(tonic::Request::new(
             proto_defination::fod_group::ResolveGroupsRequest { resolutions },
         )).await.ok()?.into_inner();
@@ -692,7 +695,7 @@ pub async fn call_car_grpc(
             .and_then(|d| d.get("excludedIds").and_then(Value::as_array))
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
             .unwrap_or_default();
-        let mut client = proto_defination::fod::fod_service_client::FodServiceClient::connect(car_url).await.ok()?;
+        let mut client = connect_fod_client(state).await?;
         let res = client.get_fods_by_group(tonic::Request::new(
             proto_defination::fod::GetFodsByGroupRequest {
                 mission_id,
@@ -711,9 +714,9 @@ pub async fn fetch_biggest_fods_for_mission(
     state: &AppState,
     mission_id: i64,
 ) -> Vec<proto_defination::fod::FodEntity> {
-    let car_url = state.cfg.car_backend_url.clone();
-    let Ok(mut client) = proto_defination::fod::fod_service_client::FodServiceClient::connect(car_url).await else {
-        return Vec::new();
+    let mut client = match connect_fod_client(state).await {
+        Some(c) => c,
+        None => return Vec::new(),
     };
     let Ok(res) = client.get_biggest_fod_per_group(tonic::Request::new(
         proto_defination::fod::GetBiggestFodRequest { mission_id },
@@ -727,8 +730,7 @@ pub async fn fetch_fod_from_car(
     state: &AppState,
     fod_id: &str,
 ) -> Option<proto_defination::fod::FodEntity> {
-    let car_url = state.cfg.car_backend_url.clone();
-    let mut client = proto_defination::fod::fod_service_client::FodServiceClient::connect(car_url).await.ok()?;
+    let mut client = connect_fod_client(state).await?;
     let res = client.get_fod(tonic::Request::new(
         proto_defination::fod::GetFodRequest {
             id: fod_id.to_string(),
