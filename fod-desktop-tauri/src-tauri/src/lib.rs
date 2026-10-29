@@ -162,11 +162,16 @@ fn project_root() -> PathBuf {
 /// when missing so `spawn()` fails with a clear error.
 fn resolve_dev_backend() -> PathBuf {
     let base = project_root().join("backend-rs").join("target");
-    let debug = base.join("debug").join(SIDECAR_NAME);
+    let bin_name = if cfg!(windows) {
+        format!("{}.exe", SIDECAR_NAME)
+    } else {
+        SIDECAR_NAME.to_string()
+    };
+    let debug = base.join("debug").join(&bin_name);
     if debug.exists() {
         return debug;
     }
-    let release = base.join("release").join(SIDECAR_NAME);
+    let release = base.join("release").join(&bin_name);
     if release.exists() {
         return release;
     }
@@ -178,11 +183,25 @@ fn resolve_cwd(app: &AppHandle) -> PathBuf {
     if cfg!(debug_assertions) {
         project_root()
     } else {
-        // TODO(phase-4.4): use a writable app-data dir (the AppImage resource dir
-        // is read-only) and migrate `.env` + `fod-images` there.
-        app.path()
+        // 1. If running beside .env or the sidecar executable, use the exe folder
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                if dir.join(".env").exists()
+                    || dir.join(SIDECAR_NAME).exists()
+                    || dir.join(format!("{}.exe", SIDECAR_NAME)).exists()
+                {
+                    return dir.to_path_buf();
+                }
+            }
+        }
+
+        // 2. Otherwise use app_data_dir, ensuring the directory exists on disk
+        let dir = app
+            .path()
             .app_data_dir()
-            .unwrap_or_else(|_| std::env::temp_dir())
+            .unwrap_or_else(|_| std::env::temp_dir());
+        let _ = std::fs::create_dir_all(&dir);
+        dir
     }
 }
 
