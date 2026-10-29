@@ -297,7 +297,13 @@ async fn clear_fod(method: Method, State(s): State<AppState>, bytes: axum::body:
     };
     match svc::create_cleared_fod_batch(&s, vec![body], mission_id).await {
         Ok(groups) => match groups.into_iter().next() {
-            Some(g) => (StatusCode::OK, Json(g)).into_response(),
+            Some(g) => {
+                let state = s.clone();
+                tokio::spawn(async move {
+                    let _ = crate::scheduler::resolve_fod_group(&state).await;
+                });
+                (StatusCode::OK, Json(g)).into_response()
+            }
             // Unreachable in Node too (Promise.all always resolves an array);
             // kept for the 404 branch's sake.
             None => err_json(StatusCode::NOT_FOUND, json!({ "error": "Group data not found" })),

@@ -125,7 +125,7 @@ pub async fn sync(state: &AppState, kind: &str) -> anyhow::Result<()> {
 
 // ─────────────────────── primary: resolveFodGroup ───────────────────────
 
-async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
+pub async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
     let dirty_rows = sqlx::query_as::<_, FodGroup>(r#"SELECT * FROM "FodGroup" WHERE "dirty" = true"#)
         .fetch_all(&state.db)
         .await?;
@@ -375,25 +375,21 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         let created = g.get("createdAt").and_then(Value::as_str);
         let updated_at = g.get("updatedAt").and_then(Value::as_str);
 
+        let group_mission_id = g.get("missionId").and_then(Value::as_i64).unwrap_or(mission_id);
+
         if let Err(e) = sqlx::query(
             r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","biggestFodId","biggestFodSize","createdAt","updatedAt")
                VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6, COALESCE($7::timestamp, now()), COALESCE($8::timestamp, now()))
                ON CONFLICT ("groupId","missionId") DO UPDATE SET
-                   "status" = CASE WHEN "FodGroup"."dirty" = true THEN "FodGroup"."status" ELSE EXCLUDED."status" END,
+                   "status" = EXCLUDED."status",
+                   "dirty" = false,
                    "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
                    "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
-                   "updatedAt" = CASE
-                       WHEN "FodGroup"."dirty" = true THEN "FodGroup"."updatedAt"
-                       WHEN "FodGroup"."status" != EXCLUDED."status"
-                         OR "FodGroup"."biggestFodId" IS DISTINCT FROM EXCLUDED."biggestFodId"
-                         OR "FodGroup"."biggestFodSize" IS DISTINCT FROM EXCLUDED."biggestFodSize"
-                       THEN now()
-                       ELSE "FodGroup"."updatedAt"
-                   END"#,
+                   "updatedAt" = now()"#,
         )
         .bind(id)
         .bind(gid)
-        .bind(mission_id)
+        .bind(group_mission_id)
         .bind(st)
         .bind(biggest_fod)
         .bind(biggest_fod_size)
@@ -408,7 +404,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         // primaryPacket → createFodBatch (R1's fod-ingest + imagewriter; the
         // fn ignores its missionId arg for parity — each fod carries its own).
         if let Some(packet) = g.get("primaryPacket").filter(|v| !v.is_null()) {
-            crate::services::create_fod_batch(state, vec![packet.clone()], mission_id.into())
+            crate::services::create_fod_batch(state, vec![packet.clone()], group_mission_id.into())
                 .await;
         }
 
@@ -428,7 +424,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                             "type": "fodGroup",
                             "message": {
                                 "groupId": gid,
-                                "missionId": mission_id,
+                                "missionId": group_mission_id,
                                 "status": st
                             }
                         }),

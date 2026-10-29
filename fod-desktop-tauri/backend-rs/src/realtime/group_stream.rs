@@ -90,7 +90,8 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
         r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","biggestFodId","biggestFodSize","createdAt","updatedAt")
            VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6, COALESCE($7, now()), now())
            ON CONFLICT ("groupId","missionId") DO UPDATE SET
-               "status" = CASE WHEN "FodGroup"."dirty" = true THEN "FodGroup"."status" ELSE EXCLUDED."status" END,
+               "status" = EXCLUDED."status",
+               "dirty" = false,
                "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
                "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
                "updatedAt" = now()"#,
@@ -104,48 +105,6 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
     .bind(created)
     .execute(&state.db)
     .await?;
-
-    if let Some(fod_id) = biggest_fod {
-        if let Some(f) = crate::services::fetch_fod_from_car(state, &fod_id).await {
-            let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
-            let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
-            let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
-            let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
-            let ts = chrono::DateTime::from_timestamp_millis(f.timestamp)
-                .map(|dt| dt.naive_utc())
-                .unwrap_or_else(crate::services::now_naive);
-            let created = chrono::DateTime::from_timestamp_millis(f.created_at)
-                .map(|dt| dt.naive_utc())
-                .unwrap_or(ts);
-
-            let _ = sqlx::query(
-                r#"INSERT INTO "Fod" (
-                    "id", "missionId", "groupId", "sysid", "location", "confidence",
-                    "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), false)
-                ON CONFLICT ("id") DO UPDATE SET
-                    "location" = EXCLUDED."location",
-                    "confidence" = EXCLUDED."confidence",
-                    "class" = EXCLUDED."class",
-                    "velocity" = EXCLUDED."velocity",
-                    "size" = EXCLUDED."size",
-                    "updatedAt" = now()"#,
-            )
-            .bind(&f.id)
-            .bind(f.mission_id)
-            .bind(f.group_id as i32)
-            .bind(if f.sysid.is_empty() { None } else { Some(&f.sysid) })
-            .bind(loc)
-            .bind(f.confidence)
-            .bind(if f.class_name.is_empty() { None } else { Some(&f.class_name) })
-            .bind(f.velocity)
-            .bind(f.size)
-            .bind(ts)
-            .bind(created)
-            .execute(&state.db)
-            .await;
-        }
-    }
 
     if let Some(io) = state.io() {
         if let Some(gui_ns) = io.of("/gui") {
@@ -163,6 +122,51 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
                 )
                 .await;
         }
+    }
+
+    if let Some(fod_id) = biggest_fod {
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            if let Some(f) = crate::services::fetch_fod_from_car(&state_clone, &fod_id).await {
+                let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
+                let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
+                let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
+                let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
+                let ts = chrono::DateTime::from_timestamp_millis(f.timestamp)
+                    .map(|dt| dt.naive_utc())
+                    .unwrap_or_else(crate::services::now_naive);
+                let created = chrono::DateTime::from_timestamp_millis(f.created_at)
+                    .map(|dt| dt.naive_utc())
+                    .unwrap_or(ts);
+
+                let _ = sqlx::query(
+                    r#"INSERT INTO "Fod" (
+                        "id", "missionId", "groupId", "sysid", "location", "confidence",
+                        "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), false)
+                    ON CONFLICT ("id") DO UPDATE SET
+                        "location" = EXCLUDED."location",
+                        "confidence" = EXCLUDED."confidence",
+                        "class" = EXCLUDED."class",
+                        "velocity" = EXCLUDED."velocity",
+                        "size" = EXCLUDED."size",
+                        "updatedAt" = now()"#,
+                )
+                .bind(&f.id)
+                .bind(f.mission_id)
+                .bind(f.group_id as i32)
+                .bind(if f.sysid.is_empty() { None } else { Some(&f.sysid) })
+                .bind(loc)
+                .bind(f.confidence)
+                .bind(if f.class_name.is_empty() { None } else { Some(&f.class_name) })
+                .bind(f.velocity)
+                .bind(f.size)
+                .bind(ts)
+                .bind(created)
+                .execute(&state_clone.db)
+                .await;
+            }
+        });
     }
 
     Ok(())

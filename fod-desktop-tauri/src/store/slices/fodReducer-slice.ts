@@ -85,11 +85,14 @@ const FodReducer = createSlice({
       const tempFod: any[] = [];
 
       payload.forEach((newFod) => {
-        if (!newFod || !newFod.groupId) return;
-        const gid = newFod.groupId;
+        if (!newFod || newFod.groupId === undefined || newFod.groupId === null) return;
+        const gid = Number(newFod.groupId);
 
-        const existingFodIndex = state.fodMap[gid];
-        if (existingFodIndex !== undefined && state.fods[existingFodIndex]) {
+        const existingFodIndex = state.fodMap[gid] !== undefined
+          ? state.fodMap[gid]
+          : state.fods.findIndex((f: any) => Number(f.groupId) === gid);
+
+        if (existingFodIndex !== -1 && existingFodIndex !== undefined && state.fods[existingFodIndex]) {
           // If the FOD already exists, update it in place
           state.fods[existingFodIndex] = { ...state.fods[existingFodIndex], ...newFod };
         } else if (!addedGroups.has(gid)) {
@@ -134,40 +137,47 @@ const FodReducer = createSlice({
       }
     },
     accept_Fod: (state, action) => {
-      const { payload: fodId } = action;
-      const idx = state.fods.findIndex((f: any) => f.groupId === fodId);
+      const fodId = Number(action.payload);
+      const idx = state.fods.findIndex((f: any) => Number(f.groupId) === fodId);
       if (idx !== -1) {
         state.fods[idx].groupStatus = "ACCEPTED";
+        state.fods[idx].status = "ACCEPTED";
       } else if (state.fodMap && state.fodMap[fodId] !== undefined && state.fods[state.fodMap[fodId]]) {
         state.fods[state.fodMap[fodId]].groupStatus = "ACCEPTED";
+        state.fods[state.fodMap[fodId]].status = "ACCEPTED";
       }
     },
     reject_Fod: (state, action) => {
-      const { payload: fodId } = action;
-      const idx = state.fods.findIndex((f: any) => f.groupId === fodId);
+      const fodId = Number(action.payload);
+      const idx = state.fods.findIndex((f: any) => Number(f.groupId) === fodId);
       if (idx !== -1) {
         state.fods[idx].groupStatus = "REJECTED";
+        state.fods[idx].status = "REJECTED";
       } else if (state.fodMap && state.fodMap[fodId] !== undefined && state.fods[state.fodMap[fodId]]) {
         state.fods[state.fodMap[fodId]].groupStatus = "REJECTED";
+        state.fods[state.fodMap[fodId]].status = "REJECTED";
       }
     },
     undo_fod: (state, action) => {
-      console.log({action})
-      const { payload: fodId } = action;
-      const idx = state.fods.findIndex((f: any) => f.groupId === fodId);
+      const fodId = Number(action.payload);
+      const idx = state.fods.findIndex((f: any) => Number(f.groupId) === fodId);
       if (idx !== -1) {
         state.fods[idx].groupStatus = "NEW";
+        state.fods[idx].status = "NEW";
       } else if (state.fodMap && state.fodMap[fodId] !== undefined && state.fods[state.fodMap[fodId]]) {
         state.fods[state.fodMap[fodId]].groupStatus = "NEW";
+        state.fods[state.fodMap[fodId]].status = "NEW";
       }
     },
     add_ToClearedFod: (state, action) => {
-       const { payload: fodId } = action;
-       const idx = state.fods.findIndex((f: any) => f.groupId === fodId);
+       const fodId = Number(action.payload);
+       const idx = state.fods.findIndex((f: any) => Number(f.groupId) === fodId);
        if (idx !== -1) {
          state.fods[idx].groupStatus = "CLEARED";
+         state.fods[idx].status = "CLEARED";
        } else if (state.fodMap && state.fodMap[fodId] !== undefined && state.fods[state.fodMap[fodId]]) {
          state.fods[state.fodMap[fodId]].groupStatus = "CLEARED";
+         state.fods[state.fodMap[fodId]].status = "CLEARED";
        }
     },
     add_FodsOnRefresh: (state, action) => {

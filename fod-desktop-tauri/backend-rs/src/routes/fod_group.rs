@@ -177,7 +177,13 @@ async fn update(method: Method,
     match updated {
         // Missing row → Prisma P2025 throw → catch → 500 (the Node 402 branch
         // is unreachable).
-        Ok(Some(g)) => (StatusCode::OK, Json(g)).into_response(),
+        Ok(Some(g)) => {
+            let state = s.clone();
+            tokio::spawn(async move {
+                let _ = crate::scheduler::resolve_fod_group(&state).await;
+            });
+            (StatusCode::OK, Json(g)).into_response()
+        }
         Ok(None) => err500("Failed to retrieve fod group"),
         Err(e) => {
             tracing::error!("{e}");

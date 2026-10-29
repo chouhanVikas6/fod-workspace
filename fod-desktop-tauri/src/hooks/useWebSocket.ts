@@ -25,23 +25,14 @@ interface EventHandler {
 
 const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = {}) => {
   // const { isOpen, fod,isFilteredFod } = useSelector((state: RootState) => state.FodDetailedView);
-  const mission = useSelector((store: any) => store.MissionState)
+  const mission = useSelector((store: any) => store.MissionState);
   const missionState = useSelector((store: RootState) => store.MissionState);
+  const missionRef = useRef(mission);
+  missionRef.current = mission;
+
   const [isConnected, setIsConnected] = useState(false);
   const dispatch = useDispatch();
   const socketClientRef = useRef<any>(null);
-  // const alertQueue = useSelector((state: RootState) => state.FodReducer.fods);
-  // const filters = useSelector((state: RootState) => state.FodReducer.filters);
-
-  //   const getNextFod = (idx?:number) => {
-  //     const providedFodId = fod.groupId;
-  //     let queue = alertQueue.filter(fod => fod.groupStatus == 'NEW');
-  //     const initFilteredArray = queue.filter((fod) => isFilteredFod ? !FiltersCheck(fod, filters) : FiltersCheck(fod, filters));
-  //     const filteredArray=sortByFilter(filters,initFilteredArray);
-  //     if (filteredArray.length <= 1) return null;
-  //     const filteredIndex = filteredArray.findIndex(item => item.groupId === providedFodId);
-  //     return typeof idx=='number'?filteredArray[idx]:filteredArray[filteredIndex + 1] || filteredArray[0];
-  // };
 
   useEffect(() => {
     // Initialize socket client when component mounts
@@ -76,51 +67,42 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = {}) =>
       setIsConnected(false);
     };
 
-    const handleUpdates = (data) => {
+    const handleUpdates = (data: any) => {
       console.log({ useSocketData: data });
       if (data.type == 'fodGroup') {
         let { groupId, missionId, status } = data.message;
         if (!groupId && !missionId) {
           return;
         }
-        if (mission.missionNumber != data.message.missionId) return;
-        // if(isOpen && groupId==fod.groupId){
-        //   setTimeout(async()=>{
-        //     try {
-        //         const nextFod = getNextFod();
-        //         const listFod = await getAllFrames(nextFod);
-        //         if (nextFod) {
-        //             const fod = { ...nextFod, FodPoints: listFod.data};
-        //             dispatch(update_DetailViewFod({ fod, isFilteredFod,origin:listFod.origin  }));
-        //         } else {
-        //             dispatch(reset_DetailedViewFod());
-        //         }
-        //     } catch (e) {
-        //         console.log("failed to accept");
-        //     }
-        // },100)
-        // }
+        const currentMissionId = missionRef.current?.missionNumber;
+        if (currentMissionId && String(currentMissionId) !== String(missionId)) {
+          return;
+        }
+        const gid = Number(groupId);
         switch (status) {
           case 'ACCEPTED':
-            dispatch(accept_Fod(groupId));
+            dispatch(accept_Fod(gid));
             break;
           case 'REJECTED':
-            dispatch(reject_Fod(groupId));
+            dispatch(reject_Fod(gid));
             break;
           case 'CLEARED':
-            dispatch(add_ToClearedFod(groupId));
+            dispatch(add_ToClearedFod(gid));
+            break;
+          case 'NEW':
+            dispatch(undo_fod(gid));
             break;
         }
       } else if (data.type == 'terminate') {
-        console.log({ data, mission })
-        if (data.missionNumber == mission.missionNumber) {
+        const currentMissionId = missionRef.current?.missionNumber;
+        if (currentMissionId && String(data.missionNumber) === String(currentMissionId)) {
           toast("This mission is stopped by admin, exit in 3 sec.");
           setTimeout(() => {
             dispatch(set_Terminate());
-          }, 3000)
+          }, 3000);
         }
       }
-    }
+    };
 
     // Add event listeners
     socketClient.addEventHandler('fod', handleFod);

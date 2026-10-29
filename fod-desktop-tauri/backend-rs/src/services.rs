@@ -1430,19 +1430,22 @@ pub async fn create_cleared_fod_batch(
         qb.push_bind(now);
         qb.build().execute(&state.db).await?;
 
-        // Then FodGroup → dirty + CLEARED (throws like Prisma P2025 when the
-        // group row is missing → route responds 500).
+        // Then FodGroup → dirty + CLEARED (upsert to ensure row exists)
         let group: Option<crate::models::FodGroup> = sqlx::query_as(
-            "UPDATE \"FodGroup\" SET \"dirty\" = true, \"status\" = 'CLEARED', \"updatedAt\" = $1 WHERE \"groupId\" = $2 AND \"missionId\" = $3 RETURNING *",
+            r#"INSERT INTO "FodGroup" ("id", "groupId", "missionId", "dirty", "status", "createdAt", "updatedAt")
+               VALUES ($1, $2, $3, true, 'CLEARED', $4, $4)
+               ON CONFLICT ("groupId", "missionId") DO UPDATE SET "dirty" = true, "status" = 'CLEARED', "updatedAt" = $4
+               RETURNING *"#,
         )
-        .bind(now)
+        .bind(uuid::Uuid::new_v4().to_string())
         .bind(group_id)
-        .bind(mission_id)
+        .bind(row_mission_id)
+        .bind(now)
         .fetch_optional(&state.db)
         .await?;
         match group {
             Some(g) => out.push(g),
-            None => anyhow::bail!("Record to update not found (FodGroup {group_id}/{mission_id})"),
+            None => anyhow::bail!("Record to update not found (FodGroup {group_id}/{row_mission_id})"),
         }
     }
     Ok(out)

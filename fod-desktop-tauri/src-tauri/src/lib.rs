@@ -84,7 +84,7 @@ impl SidecarSupervisor {
     fn surface_error(&self, app: &AppHandle, msg: &str) {
         if self.error_surfaced.swap(true, Ordering::SeqCst) {
             return;
-        }
+        } 
         self.log(&format!("ERROR surfaced to user: {msg}"));
         let app = app.clone();
         let msg = msg.to_string();
