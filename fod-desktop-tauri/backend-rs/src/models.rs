@@ -88,6 +88,17 @@ pub enum FodGroupStatus {
     Cleared,
 }
 
+impl std::fmt::Display for FodGroupStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::New => write!(f, "NEW"),
+            Self::Accepted => write!(f, "ACCEPTED"),
+            Self::Rejected => write!(f, "REJECTED"),
+            Self::Cleared => write!(f, "CLEARED"),
+        }
+    }
+}
+
 #[derive(sqlx::Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[sqlx(type_name = "ClearedFodStatus")]
 pub enum ClearedFodStatus {
@@ -151,6 +162,7 @@ pub struct FodGroup {
     pub biggest_fod_id: Option<String>,
     pub biggest_fod_size: Option<i32>,
     pub dirty: Option<bool>,
+    pub version: Option<i64>,
     #[serde(with = "iso_millis")]
     pub created_at: NaiveDateTime,
     #[serde(with = "iso_millis")]

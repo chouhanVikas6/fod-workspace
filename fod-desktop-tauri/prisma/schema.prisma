@@ -30,6 +30,7 @@ model FodGroup {
   biggestFodId   String?         @unique
   biggestFodSize Int?
   dirty          Boolean?       @default(false) // New field for tracking changes
+  version        BigInt         @default(0)
   createdAt      DateTime
   updatedAt      DateTime       @updatedAt
 

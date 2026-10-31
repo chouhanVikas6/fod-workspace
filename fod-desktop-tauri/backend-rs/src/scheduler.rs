@@ -23,7 +23,16 @@
 //! 10s axios timeout (src/utils/apiMain.ts), wrapped in tokio::time::timeout so
 //! a wedged car-backend can never hang a scheduler task. On any failure we log
 //! and continue — the next tick retries (dirty flags survive the failure).
-//!
+//!The Big Picture: Unified Architecture
+When you combine:
+
+Merging backend-rs into src-tauri (in-process Axum on Tokio)
+Replacing PostgreSQL with SQLite (client.db in app data)
+You get:
+
+Single executable: One binary for desktop, one .apk for Android.
+No external servers needed: No local Postgres daemon, no port conflicts, no sidecar process monitors.
+100% Mobile Ready: The exact same Rust and React codebase builds and runs directly on an Android tablet or phone.
 //! NOT ported (documented dependency): syncFod's `createFodBatch([primaryPacket])`
 //! writes Fod rows + JPEG frames — that is R1's fod-ingest / imagewriter domain
 //! and has no frozen cross-module signature in services.rs. We log when a
@@ -187,6 +196,7 @@ pub async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
         obj.insert("groupId".into(), json!(g.group_id));
         obj.insert("missionId".into(), json!(g.mission_id));
         obj.insert("status".into(), json!(g.status));
+        obj.insert("version".into(), json!(g.version.unwrap_or(0)));
         obj.insert("updatedAt".into(), json!(iso(g.updated_at)));
         obj.insert("dirty".into(), json!(g.dirty.unwrap_or(false)));
         obj.insert("biggestFodSize".into(), json!(g.biggest_fod_size));
@@ -242,12 +252,14 @@ pub async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
         ) else {
             continue;
         };
+        let ver = data.get("version").and_then(Value::as_i64).unwrap_or(0);
         if let Err(e) = sqlx::query(
-            r#"UPDATE "FodGroup" SET "status" = $1::"FodGroupStatus", "dirty" = false, "updatedAt" = now() WHERE "groupId" = $2 AND "missionId" = $3"#,
+            r#"UPDATE "FodGroup" SET "status" = $1::"FodGroupStatus", "version" = $4, "dirty" = false, "updatedAt" = now() WHERE "groupId" = $2 AND "missionId" = $3"#,
         )
         .bind(st)
         .bind(gid as i32)
         .bind(mid)
+        .bind(ver)
         .execute(&state.db)
         .await
         {
@@ -377,28 +389,105 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
 
         let group_mission_id = g.get("missionId").and_then(Value::as_i64).unwrap_or(mission_id);
 
-        if let Err(e) = sqlx::query(
-            r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","biggestFodId","biggestFodSize","createdAt","updatedAt")
-               VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6, COALESCE($7::timestamp, now()), COALESCE($8::timestamp, now()))
-               ON CONFLICT ("groupId","missionId") DO UPDATE SET
-                   "status" = EXCLUDED."status",
-                   "dirty" = false,
-                   "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
-                   "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
-                   "updatedAt" = now()"#,
+        let incoming_ver = g.get("version").and_then(Value::as_i64).unwrap_or(0);
+
+        let local: Option<FodGroup> = match sqlx::query_as::<_, FodGroup>(
+            r#"SELECT * FROM "FodGroup" WHERE "groupId" = $1 AND "missionId" = $2"#,
         )
-        .bind(id)
         .bind(gid)
         .bind(group_mission_id)
-        .bind(st)
-        .bind(biggest_fod)
-        .bind(biggest_fod_size)
-        .bind(created)
-        .bind(updated_at)
-        .execute(&state.db)
+        .fetch_optional(&state.db)
         .await
         {
-            tracing::warn!("sync_fod upsert FodGroup {gid} error: {e}");
+            Ok(opt) => opt,
+            Err(e) => {
+                tracing::warn!("sync_fod check local group error: {e}");
+                None
+            }
+        };
+
+        let mut should_emit = false;
+        match local {
+            None => {
+                let insert_res = sqlx::query(
+                    r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","biggestFodId","biggestFodSize","createdAt","updatedAt")
+                       VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6,$7, COALESCE($8::timestamp, now()), COALESCE($9::timestamp, now()))"#,
+                )
+                .bind(id)
+                .bind(gid)
+                .bind(group_mission_id)
+                .bind(st)
+                .bind(incoming_ver)
+                .bind(biggest_fod)
+                .bind(biggest_fod_size)
+                .bind(created)
+                .bind(updated_at)
+                .execute(&state.db)
+                .await;
+
+                if let Err(e) = insert_res {
+                    tracing::warn!("sync_fod insert FodGroup {gid} error: {e}");
+                } else {
+                    should_emit = true;
+                }
+            }
+            Some(local_g) => {
+                let local_ver = local_g.version.unwrap_or(0);
+                let local_dirty = local_g.dirty.unwrap_or(false);
+                let incoming_is_cleared = st == "CLEARED";
+
+                if incoming_is_cleared {
+                    let _ = sqlx::query(
+                        r#"UPDATE "FodGroup" SET "status" = 'CLEARED'::"FodGroupStatus", "version" = $1, "dirty" = false, "updatedAt" = now() WHERE "groupId" = $2 AND "missionId" = $3"#,
+                    )
+                    .bind(incoming_ver)
+                    .bind(gid)
+                    .bind(group_mission_id)
+                    .execute(&state.db)
+                    .await;
+
+                    if local_g.status != FodGroupStatus::Cleared {
+                        should_emit = true;
+                    }
+                } else if local_dirty {
+                    // Local operator decision in progress; retain local until resolved with upstream.
+                } else if local_ver > incoming_ver {
+                    // Collector is ahead of upstream (e.g. resolved on ATC, now reconnected to Car).
+                    // Retain local status and version, and mark dirty so resolve_fod_group pushes to Car.
+                    let _ = sqlx::query(
+                        r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = now() WHERE "groupId" = $1 AND "missionId" = $2 AND "dirty" IS NOT TRUE"#,
+                    )
+                    .bind(gid)
+                    .bind(group_mission_id)
+                    .execute(&state.db)
+                    .await;
+                } else {
+                    // incoming_ver >= local_ver: upstream has matching or newer authoritative version.
+                    let status_changed = local_g.status.to_string() != st;
+                    let _ = sqlx::query(
+                        r#"UPDATE "FodGroup" SET
+                            "status" = $1::"FodGroupStatus",
+                            "version" = $2,
+                            "dirty" = false,
+                            "biggestFodId" = COALESCE($3, "FodGroup"."biggestFodId"),
+                            "biggestFodSize" = COALESCE($4, "FodGroup"."biggestFodSize"),
+                            "updatedAt" = now()
+                        WHERE "groupId" = $5 AND "missionId" = $6"#,
+                    )
+                    .bind(st)
+                    .bind(incoming_ver)
+                    .bind(biggest_fod)
+                    .bind(biggest_fod_size)
+                    .bind(gid)
+                    .bind(group_mission_id)
+                    .execute(&state.db)
+                    .await;
+
+                    if status_changed {
+                        should_emit = true;
+                    }
+                }
+            }
         }
 
         // primaryPacket → createFodBatch (R1's fod-ingest + imagewriter; the
@@ -415,21 +504,23 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             tracing::warn!("clearedFod upsert (syncFod) failed: {e}");
         }
 
-        if let Some(io) = state.io() {
-            if let Some(gui_ns) = io.of("/gui") {
-                let _ = gui_ns
-                    .emit(
-                        "update",
-                        &json!({
-                            "type": "fodGroup",
-                            "message": {
-                                "groupId": gid,
-                                "missionId": group_mission_id,
-                                "status": st
-                            }
-                        }),
-                    )
-                    .await;
+        if should_emit {
+            if let Some(io) = state.io() {
+                if let Some(gui_ns) = io.of("/gui") {
+                    let _ = gui_ns
+                        .emit(
+                            "update",
+                            &json!({
+                                "type": "fodGroup",
+                                "message": {
+                                    "groupId": gid,
+                                    "missionId": group_mission_id,
+                                    "status": st
+                                }
+                            }),
+                        )
+                        .await;
+                }
             }
         }
     }

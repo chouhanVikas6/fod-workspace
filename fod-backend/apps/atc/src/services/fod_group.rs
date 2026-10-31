@@ -153,7 +153,7 @@ impl FodGroupService for AtcFodGroupServiceImpl {
                 mission_id: res.mission_id,
                 group_id: res.group_id,
                 desired_status: res.desired_status,
-                base_version: res.base_version,
+                base_version: if res.base_version > 0 { res.base_version } else { current_group.version },
                 operator_id: "atc-operator".to_string(),
                 origin_node: "atc-replica".to_string(),
                 issued_at_ms: chrono::Utc::now().timestamp_millis(),

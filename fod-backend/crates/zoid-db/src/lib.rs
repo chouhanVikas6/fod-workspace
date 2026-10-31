@@ -18,6 +18,11 @@ impl Db {
             .await
             .map_err(|e| ZoidError::Database(e.to_string()))?;
 
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .map_err(|e| ZoidError::Database(format!("Migration failed: {e}")))?;
+
         Ok(Self { pool })
     }
 

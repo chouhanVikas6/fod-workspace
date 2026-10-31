@@ -26,7 +26,7 @@ pub fn decide(current: &GroupState, cmd: &CommandRequest) -> CommandOutcome {
         (s, d) if s == d => CommandOutcome::NoOp,
         (FodGroupStatus::New, _) => CommandOutcome::Applied,
         // Competing human decisions or Undo back to New (ACCEPTED <-> REJECTED <-> NEW)
-        (_, _) if cmd.base_version == current.version || cmd.base_version == 0 => CommandOutcome::Applied,
+        (_, _) if cmd.base_version >= current.version || cmd.base_version == 0 => CommandOutcome::Applied,
         _ => CommandOutcome::RejectedStale,
     }
 }

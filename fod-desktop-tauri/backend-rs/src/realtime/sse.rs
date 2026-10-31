@@ -288,7 +288,11 @@ pub async fn retrive_data(
             }
         });
     }
-         let mut st = RetriveState {
+
+    let (tx, rx) = mpsc::channel::<Event>(32);
+
+    tokio::spawn(async move {
+        let mut st = RetriveState {
             last_updated_at: "1970-01-01T00:00:00.000Z".to_string(),
             last_group_id: 0,
             last_activity: Instant::now(),

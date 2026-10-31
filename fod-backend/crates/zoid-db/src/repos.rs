@@ -561,6 +561,7 @@ impl Db {
             SET status = EXCLUDED.status, version = EXCLUDED.version,
                 biggest_fod = EXCLUDED.biggest_fod, biggest_fod_size = EXCLUDED.biggest_fod_size,
                 updated_at = now()
+            WHERE EXCLUDED.version >= fod_groups.version OR EXCLUDED.status = 'CLEARED'
             "#,
         )
         .bind(g.mission_id)

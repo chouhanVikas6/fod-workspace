@@ -227,6 +227,7 @@ fn proto_fod_group_to_json(g: &proto_defination::fod_group::FodGroupEntity) -> V
         "status": proto_group_status_str(g.status),
         "biggestFod": g.biggest_fod,
         "biggestFodSize": g.biggest_fod_size,
+        "version": g.version,
         "createdAt": proto_ms_to_iso(g.created_at),
         "updatedAt": proto_ms_to_iso(g.updated_at),
         "primaryPacket": Value::Null,
@@ -662,12 +663,13 @@ pub async fn call_car_grpc(
                 let gid = item.get("groupId").and_then(Value::as_i64).unwrap_or(0);
                 let mid = item.get("missionId").and_then(Value::as_i64).unwrap_or(0);
                 let st = item.get("status").and_then(Value::as_str).unwrap_or("NEW");
+                let base_version = item.get("version").and_then(Value::as_i64).unwrap_or(0);
                 resolutions.push(proto_defination::fod_group::GroupResolution {
                     command_id: uuid::Uuid::new_v4().to_string(),
                     mission_id: mid,
                     group_id: gid,
                     desired_status: proto_group_status_from_str(st),
-                    base_version: 0,
+                    base_version,
                 });
             }
         }

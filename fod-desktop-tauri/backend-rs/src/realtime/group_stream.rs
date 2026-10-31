@@ -86,41 +86,121 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
     let biggest_fod_size = g.biggest_fod_size.map(|s| s as i32);
     let created = chrono::DateTime::from_timestamp_millis(g.created_at).map(|dt| dt.naive_utc());
 
-    sqlx::query(
-        r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","biggestFodId","biggestFodSize","createdAt","updatedAt")
-           VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6, COALESCE($7, now()), now())
-           ON CONFLICT ("groupId","missionId") DO UPDATE SET
-               "status" = EXCLUDED."status",
-               "dirty" = false,
-               "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
-               "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
-               "updatedAt" = now()"#,
+    let incoming_ver = g.version;
+
+    let local: Option<crate::models::FodGroup> = match sqlx::query_as::<_, crate::models::FodGroup>(
+        r#"SELECT * FROM "FodGroup" WHERE "groupId" = $1 AND "missionId" = $2"#,
     )
-    .bind(id)
     .bind(gid)
     .bind(mission_id)
-    .bind(st)
-    .bind(biggest_fod.as_deref())
-    .bind(biggest_fod_size)
-    .bind(created)
-    .execute(&state.db)
-    .await?;
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(opt) => opt,
+        Err(e) => {
+            tracing::warn!("handle_group check local group error: {e}");
+            None
+        }
+    };
 
-    if let Some(io) = state.io() {
-        if let Some(gui_ns) = io.of("/gui") {
-            let _ = gui_ns
-                .emit(
-                    "update",
-                    &json!({
-                        "type": "fodGroup",
-                        "message": {
-                            "groupId": gid,
-                            "missionId": mission_id,
-                            "status": st
-                        }
-                    }),
+    let mut should_emit = false;
+    match local {
+        None => {
+            let insert_res = sqlx::query(
+                r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","biggestFodId","biggestFodSize","createdAt","updatedAt")
+                   VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6,$7, COALESCE($8, now()), now())"#,
+            )
+            .bind(id)
+            .bind(gid)
+            .bind(mission_id)
+            .bind(st)
+            .bind(incoming_ver)
+            .bind(biggest_fod.as_deref())
+            .bind(biggest_fod_size)
+            .bind(created)
+            .execute(&state.db)
+            .await;
+
+            if let Err(e) = insert_res {
+                tracing::warn!("handle_group insert FodGroup {gid} error: {e}");
+            } else {
+                should_emit = true;
+            }
+        }
+        Some(local_g) => {
+            let local_ver = local_g.version.unwrap_or(0);
+            let local_dirty = local_g.dirty.unwrap_or(false);
+            let incoming_is_cleared = st == "CLEARED";
+
+            if incoming_is_cleared {
+                let _ = sqlx::query(
+                    r#"UPDATE "FodGroup" SET "status" = 'CLEARED'::"FodGroupStatus", "version" = $1, "dirty" = false, "updatedAt" = now() WHERE "groupId" = $2 AND "missionId" = $3"#,
                 )
+                .bind(incoming_ver)
+                .bind(gid)
+                .bind(mission_id)
+                .execute(&state.db)
                 .await;
+
+                if local_g.status != crate::models::FodGroupStatus::Cleared {
+                    should_emit = true;
+                }
+            } else if local_dirty {
+                // Local operator decision in progress; retain local.
+            } else if local_ver > incoming_ver {
+                // Collector has higher version than upstream; retain local and mark dirty so resolve pushes to upstream.
+                let _ = sqlx::query(
+                    r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = now() WHERE "groupId" = $1 AND "missionId" = $2 AND "dirty" IS NOT TRUE"#,
+                )
+                .bind(gid)
+                .bind(mission_id)
+                .execute(&state.db)
+                .await;
+            } else {
+                let status_changed = local_g.status.to_string() != st;
+                let _ = sqlx::query(
+                    r#"UPDATE "FodGroup" SET
+                        "status" = $1::"FodGroupStatus",
+                        "version" = $2,
+                        "dirty" = false,
+                        "biggestFodId" = COALESCE($3, "FodGroup"."biggestFodId"),
+                        "biggestFodSize" = COALESCE($4, "FodGroup"."biggestFodSize"),
+                        "updatedAt" = now()
+                    WHERE "groupId" = $5 AND "missionId" = $6"#,
+                )
+                .bind(st)
+                .bind(incoming_ver)
+                .bind(biggest_fod.as_deref())
+                .bind(biggest_fod_size)
+                .bind(gid)
+                .bind(mission_id)
+                .execute(&state.db)
+                .await;
+
+                if status_changed {
+                    should_emit = true;
+                }
+            }
+        }
+    }
+
+    if should_emit {
+        if let Some(io) = state.io() {
+            if let Some(gui_ns) = io.of("/gui") {
+                let _ = gui_ns
+                    .emit(
+                        "update",
+                        &json!({
+                            "type": "fodGroup",
+                            "message": {
+                                "groupId": gid,
+                                "missionId": mission_id,
+                                "status": st
+                            }
+                        }),
+                    )
+                    .await;
+            }
         }
     }
 
