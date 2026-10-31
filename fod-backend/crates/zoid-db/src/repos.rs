@@ -1,10 +1,14 @@
 use crate::models::{
     AppliedCommandRow, ChangeLogRow, ClearedFodRow, FodGroupRow, FodGroupStatus, FodRow,
-    MissionRow, MissionScanStatus, MissionStatus, UserRole, UserRow,
+    GroupWrite, MissionRow, MissionScanStatus, MissionStatus, UserRole, UserRow,
 };
 use crate::Db;
 use uuid::Uuid;
 use zoid_core::{Result, ZoidError};
+
+fn db_err(e: sqlx::Error) -> ZoidError {
+    ZoidError::Database(e.to_string())
+}
 
 impl Db {
     // ----------------- Mission Queries -----------------
@@ -230,28 +234,144 @@ impl Db {
         .map_err(|e| ZoidError::Database(e.to_string()))
     }
 
-    pub async fn update_fod_group_status(
+    /// Atomically read → decide → write one group's versioned status.
+    ///
+    /// The row is locked (`SELECT … FOR UPDATE`) while `decide` runs, so two
+    /// concurrent writers (operator UI + replication) can never both build on
+    /// the same base vector. `decide` returns the state to persist (or None to
+    /// leave the row untouched) plus any value the caller wants back.
+    ///
+    /// Returns None if the group does not exist, otherwise
+    /// `(before, after_if_written, extra)`.
+    pub async fn mutate_fod_group<T, F>(
         &self,
         mission_id: i64,
         group_id: i64,
-        desired_status: FodGroupStatus,
-        expected_version: i64,
-    ) -> Result<Option<FodGroupRow>> {
-        sqlx::query_as::<_, FodGroupRow>(
-            r#"
-            UPDATE fod_groups
-            SET status = $1, version = version + 1, updated_at = now()
-            WHERE mission_id = $2 AND group_id = $3 AND version = $4
-            RETURNING *
-            "#,
+        decide: F,
+    ) -> Result<Option<(FodGroupRow, Option<FodGroupRow>, T)>>
+    where
+        F: FnOnce(&FodGroupRow) -> (Option<GroupWrite>, T),
+    {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let current = sqlx::query_as::<_, FodGroupRow>(
+            "SELECT * FROM fod_groups WHERE mission_id = $1 AND group_id = $2 FOR UPDATE",
         )
-        .bind(desired_status)
         .bind(mission_id)
         .bind(group_id)
-        .bind(expected_version)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+
+        let Some(current) = current else {
+            tx.rollback().await.map_err(db_err)?;
+            return Ok(None);
+        };
+
+        let (write, extra) = decide(&current);
+        let after = match write {
+            None => None,
+            Some(w) => {
+                let status = FodGroupStatus::from(w.state.status);
+                let row = sqlx::query_as::<_, FodGroupRow>(
+                    r#"
+                    UPDATE fod_groups
+                    SET status = $1, vv = $2, version = $3, decided_at_ms = $4,
+                        updated_by = $5, dirty = $6, updated_at = now()
+                    WHERE mission_id = $7 AND group_id = $8
+                    RETURNING *
+                    "#,
+                )
+                .bind(status)
+                .bind(sqlx::types::Json(&w.state.vv))
+                .bind(zoid_replication::vv_sum(&w.state.vv))
+                .bind(w.state.decided_at_ms)
+                .bind(&w.state.updated_by)
+                .bind(w.dirty)
+                .bind(mission_id)
+                .bind(group_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                Some(row)
+            }
+        };
+        tx.commit().await.map_err(db_err)?;
+        Ok(Some((current, after, extra)))
+    }
+
+    /// Replica-side groups whose local decision has not yet been acknowledged
+    /// by the primary.
+    pub async fn list_dirty_fod_groups(&self, limit: i64) -> Result<Vec<FodGroupRow>> {
+        sqlx::query_as::<_, FodGroupRow>(
+            "SELECT * FROM fod_groups WHERE dirty ORDER BY updated_at LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    /// Insert a group received from another node with its full versioned
+    /// state. No-op if the group already exists. Returns true if inserted.
+    pub async fn insert_replicated_group_if_absent(
+        &self,
+        g: &proto_defination::fod_group::FodGroupEntity,
+        dirty: bool,
+    ) -> Result<bool> {
+        let v = crate::models::versioned_from_proto(g);
+        let biggest_fod = g.biggest_fod.as_ref().and_then(|u| Uuid::parse_str(u).ok());
+        let inserted = sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO fod_groups (mission_id, group_id, status, version, vv, decided_at_ms,
+                                    updated_by, dirty, biggest_fod, biggest_fod_size)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (mission_id, group_id) DO NOTHING
+            RETURNING id
+            "#,
+        )
+        .bind(g.mission_id)
+        .bind(g.group_id)
+        .bind(FodGroupStatus::from(v.status))
+        .bind(zoid_replication::vv_sum(&v.vv))
+        .bind(sqlx::types::Json(&v.vv))
+        .bind(v.decided_at_ms)
+        .bind(&v.updated_by)
+        .bind(dirty)
+        .bind(biggest_fod)
+        .bind(g.biggest_fod_size)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| ZoidError::Database(e.to_string()))
+        .map_err(db_err)?;
+        Ok(inserted.is_some())
+    }
+
+    /// Biggest-FOD metadata is ingest-owned (car) and independent of the
+    /// operator status, so it is merged separately: keep the larger one.
+    pub async fn merge_group_biggest_fod(
+        &self,
+        mission_id: i64,
+        group_id: i64,
+        biggest_fod: Option<&str>,
+        biggest_fod_size: Option<f64>,
+    ) -> Result<()> {
+        let (Some(fod), Some(size)) = (biggest_fod.and_then(|u| Uuid::parse_str(u).ok()), biggest_fod_size) else {
+            return Ok(());
+        };
+        sqlx::query(
+            r#"
+            UPDATE fod_groups SET biggest_fod = $3, biggest_fod_size = $4
+            WHERE mission_id = $1 AND group_id = $2
+              AND (biggest_fod_size IS NULL OR biggest_fod_size < $4)
+            "#,
+        )
+        .bind(mission_id)
+        .bind(group_id)
+        .bind(fod)
+        .bind(size)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(())
     }
 
     // ----------------- FOD Queries -----------------
@@ -541,41 +661,6 @@ impl Db {
         Ok(())
     }
 
-    pub async fn upsert_replicated_fod_group(
-        &self,
-        g: &proto_defination::fod_group::FodGroupEntity,
-    ) -> Result<()> {
-        let status = proto_defination::common::FodGroupStatus::try_from(g.status)
-            .map(FodGroupStatus::from)
-            .unwrap_or(FodGroupStatus::New);
-        let biggest_fod = g
-            .biggest_fod
-            .as_ref()
-            .and_then(|u| Uuid::parse_str(u).ok());
-
-        sqlx::query(
-            r#"
-            INSERT INTO fod_groups (mission_id, group_id, status, version, biggest_fod, biggest_fod_size)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (mission_id, group_id) DO UPDATE
-            SET status = EXCLUDED.status, version = EXCLUDED.version,
-                biggest_fod = EXCLUDED.biggest_fod, biggest_fod_size = EXCLUDED.biggest_fod_size,
-                updated_at = now()
-            WHERE EXCLUDED.version >= fod_groups.version OR EXCLUDED.status = 'CLEARED'
-            "#,
-        )
-        .bind(g.mission_id)
-        .bind(g.group_id)
-        .bind(status)
-        .bind(g.version)
-        .bind(biggest_fod)
-        .bind(g.biggest_fod_size)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| ZoidError::Database(e.to_string()))?;
-
-        Ok(())
-    }
 
     pub async fn upsert_replicated_fod(&self, f: &proto_defination::fod::FodEntity) -> Result<()> {
         let id = Uuid::parse_str(&f.id).unwrap_or_else(|_| Uuid::new_v4());

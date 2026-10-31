@@ -4,7 +4,7 @@ use proto_defination::replication::primary_message::Msg as PrimaryMsg;
 use proto_defination::replication::replication_service_server::ReplicationService;
 use proto_defination::replication::{
     change, replica_message::Msg as ReplicaMsg, Change, ChangeBatch, CommandOutcome, CommandResult,
-    MissionDigestRequest, MissionDigestResponse, Pong, PrimaryMessage, ReplicaMessage,
+    GroupPushAck, MissionDigestRequest, MissionDigestResponse, Pong, PrimaryMessage, ReplicaMessage,
     SnapshotRequest, Welcome,
 };
 use sha2::{Digest, Sha256};
@@ -12,9 +12,7 @@ use std::pin::Pin;
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status, Streaming};
 use uuid::Uuid;
-use zoid_db::models::FodGroupStatus as DbGroupStatus;
 use zoid_db::Db;
-use zoid_replication::{decide, CommandRequest, GroupState};
 
 pub struct ReplicationServiceImpl {
     db: Db,
@@ -318,39 +316,42 @@ impl ReplicationService for ReplicationServiceImpl {
                                     }
                                     Some(ReplicaMsg::Command(cmd)) => {
                                         let cmd_uuid = Uuid::parse_str(&cmd.command_id).unwrap_or_else(|_| Uuid::new_v4());
+                                        let desired_proto = FodGroupStatus::try_from(cmd.desired_status).unwrap_or(FodGroupStatus::GroupStatusUnspecified);
+                                        let decided_at = if cmd.issued_at_ms > 0 { cmd.issued_at_ms } else { chrono::Utc::now().timestamp_millis() };
+                                        let actor = if !cmd.operator_id.is_empty() { cmd.operator_id.clone() } else { "replica-operator".to_string() };
 
                                         let mut result_outcome = CommandOutcome::RejectedInvalid;
                                         let mut updated_group = None;
 
-                                        if let Ok(Some(g)) = db.get_fod_group(cmd.mission_id, cmd.group_id).await {
-                                            let desired_proto = FodGroupStatus::try_from(cmd.desired_status).unwrap_or(FodGroupStatus::GroupStatusUnspecified);
-                                            let state = GroupState {
-                                                status: FodGroupStatus::from(g.status.clone()),
-                                                version: g.version,
-                                            };
-                                            let req = CommandRequest {
-                                                desired_status: desired_proto,
-                                                base_version: cmd.base_version,
-                                            };
-
-                                            let outcome = decide(&state, &req);
+                                        if let Ok(Some((_before, after, outcome))) = db.mutate_fod_group(cmd.mission_id, cmd.group_id, |current| {
+                                            let local = current.versioned();
+                                            let (out, next_v) = zoid_replication::apply_local_decision(
+                                                &local,
+                                                desired_proto,
+                                                None,
+                                                decided_at,
+                                                &actor,
+                                                &primary_node_id,
+                                            );
+                                            let write = next_v.map(|st| zoid_db::models::GroupWrite {
+                                                state: st,
+                                                dirty: false,
+                                            });
+                                            (write, out)
+                                        }).await {
                                             result_outcome = outcome;
+                                            if let Some(ug) = after {
+                                                let proto_ug = ug.to_proto();
+                                                updated_group = Some(proto_ug.clone());
 
-                                            if outcome == CommandOutcome::Applied {
-                                                let desired_db = DbGroupStatus::from(desired_proto);
-                                                if let Ok(Some(ug)) = db.update_fod_group_status(cmd.mission_id, cmd.group_id, desired_db, g.version).await {
-                                                    let proto_ug = ug.to_proto();
-                                                    updated_group = Some(proto_ug.clone());
+                                                let new_seq = db.append_change(2, &format!("{}:{}", cmd.mission_id, cmd.group_id)).await.unwrap_or(0);
+                                                let _ = db.record_applied_command(cmd_uuid, CommandOutcome::Applied as i16, ug.version).await;
 
-                                                    let new_seq = db.append_change(2, &format!("{}:{}", cmd.mission_id, cmd.group_id)).await.unwrap_or(0);
-                                                    let _ = db.record_applied_command(cmd_uuid, CommandOutcome::Applied as i16, ug.version).await;
-
-                                                    let change_item = Change {
-                                                        seq: new_seq,
-                                                        entity: Some(change::Entity::Group(proto_ug)),
-                                                    };
-                                                    let _ = change_tx.send(change_item);
-                                                }
+                                                let change_item = Change {
+                                                    seq: new_seq,
+                                                    entity: Some(change::Entity::Group(proto_ug)),
+                                                };
+                                                let _ = change_tx.send(change_item);
                                             }
                                         }
 
@@ -360,6 +361,63 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 outcome: result_outcome as i32,
                                                 group: updated_group,
                                                 detail: format!("{:?}", result_outcome),
+                                            })),
+                                        };
+                                    }
+                                    Some(ReplicaMsg::GroupPush(push_g)) => {
+                                        let mission_id = push_g.mission_id;
+                                        let group_id = push_g.group_id;
+                                        let incoming = zoid_db::models::versioned_from_proto(&push_g);
+
+                                        let _ = db.insert_replicated_group_if_absent(&push_g, false).await;
+                                        let _ = db.merge_group_biggest_fod(mission_id, group_id, push_g.biggest_fod.as_deref(), push_g.biggest_fod_size).await;
+
+                                        let mut outcome_str = "NOT_FOUND".to_string();
+                                        let mut merged_proto = None;
+
+                                        if let Ok(Some((before, after, outcome))) = db.mutate_fod_group(mission_id, group_id, |current| {
+                                            let local = current.versioned();
+                                            let dec = zoid_replication::merge_remote(&local, &incoming, &primary_node_id);
+                                            match dec {
+                                                zoid_replication::MergeDecision::KeepLocal => {
+                                                    (None, ("KEPT_PRIMARY", current.to_proto()))
+                                                }
+                                                zoid_replication::MergeDecision::TakeIncoming => {
+                                                    let write = zoid_db::models::GroupWrite {
+                                                        state: incoming.clone(),
+                                                        dirty: false,
+                                                    };
+                                                    (Some(write), ("TOOK_REPLICA", current.to_proto()))
+                                                }
+                                                zoid_replication::MergeDecision::Merged(merged_state) => {
+                                                    let write = zoid_db::models::GroupWrite {
+                                                        state: merged_state,
+                                                        dirty: false,
+                                                    };
+                                                    (Some(write), ("MERGED", current.to_proto()))
+                                                }
+                                            }
+                                        }).await {
+                                            outcome_str = outcome.0.to_string();
+                                            let final_proto = after.map(|a| a.to_proto()).unwrap_or_else(|| before.to_proto());
+                                            merged_proto = Some(final_proto.clone());
+
+                                            if outcome_str != "KEPT_PRIMARY" {
+                                                let new_seq = db.append_change(2, &format!("{}:{}", mission_id, group_id)).await.unwrap_or(0);
+                                                let change_item = Change {
+                                                    seq: new_seq,
+                                                    entity: Some(change::Entity::Group(final_proto)),
+                                                };
+                                                let _ = change_tx.send(change_item);
+                                            }
+                                        }
+
+                                        yield PrimaryMessage {
+                                            msg: Some(PrimaryMsg::GroupAck(GroupPushAck {
+                                                mission_id,
+                                                group_id,
+                                                merged: merged_proto,
+                                                outcome: outcome_str,
                                             })),
                                         };
                                     }

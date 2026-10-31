@@ -644,6 +644,9 @@ pub async fn call_car_grpc(
             group_id,
             desired_status: proto_group_status_from_str(status),
             base_version: 0,
+            base_version_vector: Default::default(),
+            decided_at_ms: chrono::Utc::now().timestamp_millis(),
+            origin_node: "desktop".to_string(),
         }];
         let _ = client.resolve_groups(tonic::Request::new(
             proto_defination::fod_group::ResolveGroupsRequest { resolutions },
@@ -670,6 +673,9 @@ pub async fn call_car_grpc(
                     group_id: gid,
                     desired_status: proto_group_status_from_str(st),
                     base_version,
+                    base_version_vector: Default::default(),
+                    decided_at_ms: chrono::Utc::now().timestamp_millis(),
+                    origin_node: "desktop".to_string(),
                 });
             }
         }

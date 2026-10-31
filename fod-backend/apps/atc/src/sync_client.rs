@@ -20,6 +20,7 @@ pub struct SyncClient {
     cmd_tx: mpsc::Sender<Command>,
     user_tx: mpsc::Sender<proto_defination::user::UserEntity>,
     group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
+    group_push_tx: mpsc::Sender<proto_defination::fod_group::FodGroupEntity>,
 }
 
 impl SyncClient {
@@ -32,9 +33,11 @@ impl SyncClient {
         Self,
         mpsc::Receiver<Command>,
         mpsc::Receiver<proto_defination::user::UserEntity>,
+        mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
     ) {
         let (cmd_tx, cmd_rx) = mpsc::channel(100);
         let (user_tx, user_rx) = mpsc::channel(100);
+        let (group_push_tx, group_push_rx) = mpsc::channel(200);
         let client = Self {
             car_endpoint,
             db,
@@ -42,8 +45,9 @@ impl SyncClient {
             cmd_tx,
             user_tx,
             group_tx,
+            group_push_tx,
         };
-        (client, cmd_rx, user_rx)
+        (client, cmd_rx, user_rx, group_push_rx)
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
@@ -54,10 +58,15 @@ impl SyncClient {
         self.user_tx.clone()
     }
 
+    pub fn group_push_sender(&self) -> mpsc::Sender<proto_defination::fod_group::FodGroupEntity> {
+        self.group_push_tx.clone()
+    }
+
     pub async fn run_replication_loop(
         self: Arc<Self>,
         mut cmd_rx: mpsc::Receiver<Command>,
         mut user_rx: mpsc::Receiver<proto_defination::user::UserEntity>,
+        mut group_push_rx: mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
     ) {
         let mut backoff_secs = 1;
 
@@ -91,6 +100,15 @@ impl SyncClient {
                     };
                     let _ = out_tx.send(hello_msg).await;
 
+                    // Immediately push any offline/dirty groups from ATC to Car!
+                    if let Ok(dirty_groups) = self.db.list_dirty_fod_groups(200).await {
+                        for dg in dirty_groups {
+                            let _ = out_tx.send(ReplicaMessage {
+                                msg: Some(ReplicaMsg::GroupPush(dg.to_proto())),
+                            }).await;
+                        }
+                    }
+
                     let in_stream_req = Request::new(ReceiverStream::new(out_rx));
 
                     match client.session(in_stream_req).await {
@@ -116,6 +134,16 @@ impl SyncClient {
                                                 msg: Some(ReplicaMsg::Command(c)),
                                             };
                                             if out_tx.send(cmd_msg).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    push_g = group_push_rx.recv() => {
+                                        if let Some(g) = push_g {
+                                            let push_msg = ReplicaMessage {
+                                                msg: Some(ReplicaMsg::GroupPush(g)),
+                                            };
+                                            if out_tx.send(push_msg).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -223,8 +251,76 @@ impl SyncClient {
                             }
                             change::Entity::Group(g) => {
                                 self.ensure_mission_exists(g.mission_id).await?;
-                                self.db.upsert_replicated_fod_group(&g).await?;
-                                let _ = self.group_tx.send(g);
+                                let _ = self.db.insert_replicated_group_if_absent(&g, false).await;
+                                let _ = self.db.merge_group_biggest_fod(g.mission_id, g.group_id, g.biggest_fod.as_deref(), g.biggest_fod_size).await;
+                                let incoming = zoid_db::models::versioned_from_proto(&g);
+                                let mut updated_group = None;
+                                let mut needs_push_back = false;
+
+                                if let Ok(Some((_before, after, dec))) = self.db.mutate_fod_group(g.mission_id, g.group_id, |current| {
+                                    let local = current.versioned();
+                                    let dec = zoid_replication::merge_remote(&local, &incoming, &self.node_id);
+                                    match dec {
+                                        zoid_replication::MergeDecision::KeepLocal => {
+                                            let write = if !current.dirty {
+                                                Some(zoid_db::models::GroupWrite {
+                                                    state: local.clone(),
+                                                    dirty: true,
+                                                })
+                                            } else {
+                                                None
+                                            };
+                                            (write, zoid_replication::MergeDecision::KeepLocal)
+                                        }
+                                        zoid_replication::MergeDecision::TakeIncoming => {
+                                            let write = zoid_db::models::GroupWrite {
+                                                state: incoming.clone(),
+                                                dirty: false,
+                                            };
+                                            (Some(write), zoid_replication::MergeDecision::TakeIncoming)
+                                        }
+                                        zoid_replication::MergeDecision::Merged(merged_state) => {
+                                            let merged_clone = merged_state.clone();
+                                            let write = zoid_db::models::GroupWrite {
+                                                state: merged_state,
+                                                dirty: true,
+                                            };
+                                            (Some(write), zoid_replication::MergeDecision::Merged(merged_clone))
+                                        }
+                                    }
+                                }).await {
+                                    match dec {
+                                        zoid_replication::MergeDecision::KeepLocal => {
+                                            needs_push_back = true;
+                                        }
+                                        zoid_replication::MergeDecision::TakeIncoming => {
+                                            if let Some(a) = after {
+                                                let proto = a.to_proto();
+                                                let _ = self.group_tx.send(proto);
+                                            }
+                                        }
+                                        zoid_replication::MergeDecision::Merged(_) => {
+                                            needs_push_back = true;
+                                            if let Some(a) = after {
+                                                let proto = a.to_proto();
+                                                let _ = self.group_tx.send(proto.clone());
+                                                updated_group = Some(proto);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if needs_push_back {
+                                    let push_entity = match updated_group {
+                                        Some(eg) => Some(eg),
+                                        None => self.db.get_fod_group(g.mission_id, g.group_id).await.ok().flatten().map(|row| row.to_proto()),
+                                    };
+                                    if let Some(push_msg) = push_entity {
+                                        let _ = out_tx.send(ReplicaMessage {
+                                            msg: Some(ReplicaMsg::GroupPush(push_msg)),
+                                        }).await;
+                                    }
+                                }
                             }
                             change::Entity::Fod(f) => {
                                 self.ensure_mission_exists(f.mission_id).await?;
@@ -283,6 +379,33 @@ impl SyncClient {
                     })),
                 };
                 let _ = out_tx.send(ack_msg).await;
+            }
+            Some(PrimaryMsg::GroupAck(ack)) => {
+                tracing::info!(
+                    "GroupAck received from Car: mission={}, group={}, outcome={}",
+                    ack.mission_id,
+                    ack.group_id,
+                    ack.outcome
+                );
+                if let Some(merged_g) = ack.merged {
+                    let incoming = zoid_db::models::versioned_from_proto(&merged_g);
+                    let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |_current| {
+                        let write = zoid_db::models::GroupWrite {
+                            state: incoming.clone(),
+                            dirty: false,
+                        };
+                        (Some(write), ())
+                    }).await;
+                    let _ = self.group_tx.send(merged_g);
+                } else {
+                    let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |current| {
+                        let write = zoid_db::models::GroupWrite {
+                            state: current.versioned(),
+                            dirty: false,
+                        };
+                        (Some(write), ())
+                    }).await;
+                }
             }
             Some(PrimaryMsg::Result(res)) => {
                 tracing::info!(

@@ -5,30 +5,31 @@ use proto_defination::fod_group::{
     ListGroupsRequest, ResolutionResult, ResolveGroupsRequest, ResolveGroupsResponse,
     StreamGroupsRequest,
 };
-use proto_defination::replication::Command;
 use std::pin::Pin;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
-use zoid_db::models::FodGroupStatus as DbGroupStatus;
 use zoid_db::Db;
 
 pub struct AtcFodGroupServiceImpl {
     db: Db,
-    cmd_tx: mpsc::Sender<Command>,
+    node_id: String,
+    group_push_tx: mpsc::Sender<FodGroupEntity>,
     group_tx: broadcast::Sender<FodGroupEntity>,
 }
 
 impl AtcFodGroupServiceImpl {
     pub fn new(
         db: Db,
-        cmd_tx: mpsc::Sender<Command>,
+        node_id: String,
+        group_push_tx: mpsc::Sender<FodGroupEntity>,
         group_tx: broadcast::Sender<FodGroupEntity>,
     ) -> Self {
         Self {
             db,
-            cmd_tx,
+            node_id,
+            group_push_tx,
             group_tx,
         }
     }
@@ -99,73 +100,86 @@ impl FodGroupService for AtcFodGroupServiceImpl {
         let mut results = Vec::with_capacity(req.resolutions.len());
 
         for res in req.resolutions {
-            let group_opt = self
-                .db
-                .get_fod_group(res.mission_id, res.group_id)
-                .await
-                .map_err(|e| Status::internal(e.to_string()))?;
+            let desired_proto = ProtoGroupStatus::try_from(res.desired_status)
+                .unwrap_or(ProtoGroupStatus::GroupStatusUnspecified);
+            let base_vv = if res.base_version_vector.is_empty() {
+                if res.base_version > 0 {
+                    let mut b = std::collections::BTreeMap::new();
+                    b.insert("legacy".to_string(), res.base_version);
+                    Some(b)
+                } else {
+                    None
+                }
+            } else {
+                Some(zoid_replication::vv_from_map(&res.base_version_vector))
+            };
+            let decided_at = if res.decided_at_ms > 0 {
+                res.decided_at_ms
+            } else {
+                chrono::Utc::now().timestamp_millis()
+            };
+            let actor = if !res.origin_node.is_empty() {
+                res.origin_node.clone()
+            } else {
+                "atc-operator".to_string()
+            };
 
-            let current_group = match group_opt {
-                Some(g) => g,
-                None => {
-                    let _ = self.db.ensure_mission_exists(res.mission_id).await;
-                    match self.db.upsert_fod_group(res.mission_id, res.group_id, None, None).await {
-                        Ok(g) => g,
-                        Err(_) => {
-                            results.push(ResolutionResult {
-                                command_id: res.command_id,
-                                outcome: "NOT_FOUND".to_string(),
-                                group: None,
-                                pending: false,
-                            });
-                            continue;
+            let _ = self.db.ensure_mission_exists(res.mission_id).await;
+            let placeholder = FodGroupEntity {
+                id: 0,
+                group_id: res.group_id,
+                mission_id: res.mission_id,
+                status: proto_defination::common::FodGroupStatus::New as i32,
+                biggest_fod: None,
+                biggest_fod_size: None,
+                version: 0,
+                created_at: decided_at,
+                updated_at: decided_at,
+                pending_command_id: None,
+                version_vector: Default::default(),
+                decided_at_ms: 0,
+                updated_by: String::new(),
+            };
+            let _ = self.db.insert_replicated_group_if_absent(&placeholder, false).await;
+
+            let mutation = self.db.mutate_fod_group(res.mission_id, res.group_id, |current| {
+                let local = current.versioned();
+                let (outcome, next_v) = zoid_replication::apply_local_decision(
+                    &local,
+                    desired_proto,
+                    base_vv.as_ref(),
+                    decided_at,
+                    &actor,
+                    &self.node_id,
+                );
+                let write = next_v.map(|st| zoid_db::models::GroupWrite {
+                    state: st,
+                    dirty: true,
+                });
+                (write, outcome)
+            }).await.map_err(|e| Status::internal(e.to_string()))?;
+
+            let (outcome_str, final_group) = match mutation {
+                None => ("NOT_FOUND".to_string(), None),
+                Some((before, after, outcome)) => {
+                    let outcome_str = format!("{:?}", outcome);
+                    let final_proto = match after {
+                        Some(ug) => {
+                            let proto_ug = ug.to_proto();
+                            let _ = self.group_tx.send(proto_ug.clone());
+                            let _ = self.group_push_tx.send(proto_ug.clone()).await;
+                            proto_ug
                         }
-                    }
+                        None => before.to_proto(),
+                    };
+                    (outcome_str, Some(final_proto))
                 }
             };
 
-            let desired_proto = ProtoGroupStatus::try_from(res.desired_status)
-                .unwrap_or(ProtoGroupStatus::GroupStatusUnspecified);
-            let desired_db = DbGroupStatus::from(desired_proto);
-
-            // Optimistically update status in ATC replica DB so all connected clients see it
-            let updated = self
-                .db
-                .update_fod_group_status(
-                    res.mission_id,
-                    res.group_id,
-                    desired_db,
-                    current_group.version,
-                )
-                .await
-                .map_err(|e| Status::internal(e.to_string()))?;
-
-            let proto_g = if let Some(g) = updated {
-                let proto = g.to_proto();
-                let _ = self.group_tx.send(proto.clone());
-                proto
-            } else {
-                current_group.to_proto()
-            };
-
-            let cmd = Command {
-                command_id: res.command_id.clone(),
-                mission_id: res.mission_id,
-                group_id: res.group_id,
-                desired_status: res.desired_status,
-                base_version: if res.base_version > 0 { res.base_version } else { current_group.version },
-                operator_id: "atc-operator".to_string(),
-                origin_node: "atc-replica".to_string(),
-                issued_at_ms: chrono::Utc::now().timestamp_millis(),
-                cleared: None,
-            };
-
-            let _ = self.cmd_tx.send(cmd).await;
-
             results.push(ResolutionResult {
                 command_id: res.command_id,
-                outcome: "APPLIED".to_string(),
-                group: Some(proto_g),
+                outcome: outcome_str,
+                group: final_group,
                 pending: false,
             });
         }

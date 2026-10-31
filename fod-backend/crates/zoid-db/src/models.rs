@@ -68,6 +68,19 @@ pub struct FodGroupRow {
     pub biggest_fod_size: Option<f64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Per-node version vector; `version` == sum(vv).
+    pub vv: sqlx::types::Json<zoid_replication::VersionVector>,
+    pub decided_at_ms: i64,
+    pub updated_by: String,
+    /// Replica-only: local change not yet acknowledged by the primary.
+    pub dirty: bool,
+}
+
+/// A versioned state to persist for a group (see `Db::mutate_fod_group`).
+#[derive(Debug, Clone)]
+pub struct GroupWrite {
+    pub state: zoid_replication::VersionedGroup,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -251,7 +264,37 @@ impl FodGroupRow {
             created_at: self.created_at.timestamp_millis(),
             updated_at: self.updated_at.timestamp_millis(),
             pending_command_id: None,
+            version_vector: zoid_replication::vv_to_map(&self.vv.0),
+            decided_at_ms: self.decided_at_ms,
+            updated_by: self.updated_by.clone(),
         }
+    }
+
+    pub fn versioned(&self) -> zoid_replication::VersionedGroup {
+        zoid_replication::VersionedGroup {
+            status: proto_defination::common::FodGroupStatus::from(self.status.clone()),
+            vv: self.vv.0.clone(),
+            decided_at_ms: self.decided_at_ms,
+            updated_by: self.updated_by.clone(),
+        }
+    }
+}
+
+/// Versioned view of a group received over the wire.
+pub fn versioned_from_proto(
+    g: &proto_defination::fod_group::FodGroupEntity,
+) -> zoid_replication::VersionedGroup {
+    let mut vv = zoid_replication::vv_from_map(&g.version_vector);
+    // Peer still on the old (scalar-only) protocol: file it under "legacy".
+    if vv.is_empty() && g.version > 0 {
+        vv.insert("legacy".to_string(), g.version);
+    }
+    zoid_replication::VersionedGroup {
+        status: proto_defination::common::FodGroupStatus::try_from(g.status)
+            .unwrap_or(proto_defination::common::FodGroupStatus::New),
+        vv,
+        decided_at_ms: g.decided_at_ms,
+        updated_by: g.updated_by.clone(),
     }
 }
 

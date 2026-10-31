@@ -12,18 +12,17 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
-use zoid_db::models::FodGroupStatus as DbGroupStatus;
 use zoid_db::Db;
-use zoid_replication::{decide, CommandRequest, GroupState};
 
 pub struct FodGroupServiceImpl {
     db: Db,
     group_tx: broadcast::Sender<FodGroupEntity>,
+    node_id: String,
 }
 
 impl FodGroupServiceImpl {
-    pub fn new(db: Db, group_tx: broadcast::Sender<FodGroupEntity>) -> Self {
-        Self { db, group_tx }
+    pub fn new(db: Db, group_tx: broadcast::Sender<FodGroupEntity>, node_id: String) -> Self {
+        Self { db, group_tx, node_id }
     }
 }
 
@@ -107,81 +106,69 @@ impl FodGroupService for FodGroupServiceImpl {
                 }
             }
 
-            // Fetch current group
-            let group_opt = self
-                .db
-                .get_fod_group(res.mission_id, res.group_id)
-                .await
-                .map_err(|e| Status::internal(e.to_string()))?;
-
-            let current_group = match group_opt {
-                Some(g) => g,
-                None => {
-                    results.push(ResolutionResult {
-                        command_id: res.command_id,
-                        outcome: "NOT_FOUND".to_string(),
-                        group: None,
-                        pending: false,
-                    });
-                    continue;
-                }
-            };
-
             let desired_proto = FodGroupStatus::try_from(res.desired_status)
                 .unwrap_or(FodGroupStatus::GroupStatusUnspecified);
-            let desired_db = DbGroupStatus::from(desired_proto);
-
-            let group_state = GroupState {
-                status: FodGroupStatus::from(current_group.status.clone()),
-                version: current_group.version,
+            let base_vv = if res.base_version_vector.is_empty() {
+                if res.base_version > 0 {
+                    let mut b = std::collections::BTreeMap::new();
+                    b.insert("legacy".to_string(), res.base_version);
+                    Some(b)
+                } else {
+                    None
+                }
+            } else {
+                Some(zoid_replication::vv_from_map(&res.base_version_vector))
             };
-            let cmd_req = CommandRequest {
-                desired_status: desired_proto,
-                base_version: res.base_version,
+            let decided_at = if res.decided_at_ms > 0 {
+                res.decided_at_ms
+            } else {
+                chrono::Utc::now().timestamp_millis()
+            };
+            let actor = if !res.origin_node.is_empty() {
+                res.origin_node.clone()
+            } else {
+                "car-operator".to_string()
             };
 
-            let outcome = decide(&group_state, &cmd_req);
+            let mutation = self.db.mutate_fod_group(res.mission_id, res.group_id, |current| {
+                let local = current.versioned();
+                let (outcome, next_v) = zoid_replication::apply_local_decision(
+                    &local,
+                    desired_proto,
+                    base_vv.as_ref(),
+                    decided_at,
+                    &actor,
+                    &self.node_id,
+                );
+                let write = next_v.map(|st| zoid_db::models::GroupWrite {
+                    state: st,
+                    dirty: false,
+                });
+                (write, outcome)
+            }).await.map_err(|e| Status::internal(e.to_string()))?;
 
-            let (final_group, outcome_str) = match outcome {
-                CommandOutcome::Applied => {
-                    let updated = self
-                        .db
-                        .update_fod_group_status(
-                            res.mission_id,
-                            res.group_id,
-                            desired_db,
-                            current_group.version,
-                        )
-                        .await
-                        .map_err(|e| Status::internal(e.to_string()))?;
-
-                    if let Some(g) = updated {
-                        let proto_g = g.to_proto();
-                        let _ = self
-                            .db
-                            .append_change(2, &format!("{}:{}", res.mission_id, res.group_id))
-                            .await;
-                        let _ = self
-                            .db
-                            .record_applied_command(cmd_uuid, CommandOutcome::Applied as i16, g.version)
-                            .await;
-                        let _ = self.group_tx.send(proto_g.clone());
-                        (Some(proto_g), "APPLIED".to_string())
-                    } else {
-                        (Some(current_group.to_proto()), "REJECTED_STALE".to_string())
-                    }
+            let (outcome_str, final_group) = match mutation {
+                None => ("NOT_FOUND".to_string(), None),
+                Some((before, after, outcome)) => {
+                    let outcome_str = format!("{:?}", outcome);
+                    let final_proto = match after {
+                        Some(ug) => {
+                            let proto_ug = ug.to_proto();
+                            let _ = self
+                                .db
+                                .append_change(2, &format!("{}:{}", res.mission_id, res.group_id))
+                                .await;
+                            let _ = self
+                                .db
+                                .record_applied_command(cmd_uuid, CommandOutcome::Applied as i16, ug.version)
+                                .await;
+                            let _ = self.group_tx.send(proto_ug.clone());
+                            proto_ug
+                        }
+                        None => before.to_proto(),
+                    };
+                    (outcome_str, Some(final_proto))
                 }
-                CommandOutcome::NoOp => (Some(current_group.to_proto()), "NO_OP".to_string()),
-                CommandOutcome::RejectedCleared => {
-                    (Some(current_group.to_proto()), "REJECTED_CLEARED".to_string())
-                }
-                CommandOutcome::RejectedStale => {
-                    (Some(current_group.to_proto()), "REJECTED_STALE".to_string())
-                }
-                CommandOutcome::RejectedInvalid => {
-                    (Some(current_group.to_proto()), "REJECTED_INVALID".to_string())
-                }
-                _ => (Some(current_group.to_proto()), "REJECTED_INVALID".to_string()),
             };
 
             results.push(ResolutionResult {

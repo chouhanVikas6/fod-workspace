@@ -2989,6 +2989,7 @@ dependencies = [
  "tracing",
  "uuid",
  "zoid-core",
+ "zoid-replication",
 ]
 
 [[package]]

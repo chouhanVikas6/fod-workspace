@@ -21,6 +21,12 @@ message FodGroupEntity {
     int64 created_at = 8;
     int64 updated_at = 9;
     optional string pending_command_id = 10;
+    // Per-node version vector {node_id: counter}. `version` == sum(version_vector).
+    map<string, int64> version_vector = 11;
+    // Wall-clock (ms) of the operator decision that produced `status`.
+    int64 decided_at_ms = 12;
+    // Node/actor that made the decision currently held in `status`.
+    string updated_by = 13;
 }
 
 message ListGroupsRequest {
@@ -48,6 +54,12 @@ message GroupResolution {
     int64 group_id = 3;
     zoid.common.FodGroupStatus desired_status = 4;
     int64 base_version = 5;
+    // Version vector the client last saw for this group (empty = unknown/legacy).
+    map<string, int64> base_version_vector = 6;
+    // Wall-clock (ms) when the operator made this decision (0 = now).
+    int64 decided_at_ms = 7;
+    // Who made the decision (e.g. "desktop").
+    string origin_node = 8;
 }
 
 message ResolveGroupsRequest {

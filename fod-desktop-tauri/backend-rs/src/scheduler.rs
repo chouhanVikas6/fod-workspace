@@ -23,16 +23,14 @@
 //! 10s axios timeout (src/utils/apiMain.ts), wrapped in tokio::time::timeout so
 //! a wedged car-backend can never hang a scheduler task. On any failure we log
 //! and continue — the next tick retries (dirty flags survive the failure).
-//!The Big Picture: Unified Architecture
-When you combine:
-
-Merging backend-rs into src-tauri (in-process Axum on Tokio)
-Replacing PostgreSQL with SQLite (client.db in app data)
-You get:
-
-Single executable: One binary for desktop, one .apk for Android.
-No external servers needed: No local Postgres daemon, no port conflicts, no sidecar process monitors.
-100% Mobile Ready: The exact same Rust and React codebase builds and runs directly on an Android tablet or phone.
+//! The Big Picture: Unified Architecture
+//! When you combine:
+//! Merging backend-rs into src-tauri (in-process Axum on Tokio)
+//! Replacing PostgreSQL with SQLite (client.db in app data)
+//! You get:
+//! Single executable: One binary for desktop, one .apk for Android.
+//! No external servers needed: No local Postgres daemon, no port conflicts, no sidecar process monitors.
+//! 100% Mobile Ready: The exact same Rust and React codebase builds and runs directly on an Android tablet or phone.
 //! NOT ported (documented dependency): syncFod's `createFodBatch([primaryPacket])`
 //! writes Fod rows + JPEG frames — that is R1's fod-ingest / imagewriter domain
 //! and has no frozen cross-module signature in services.rs. We log when a
@@ -451,18 +449,8 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                     }
                 } else if local_dirty {
                     // Local operator decision in progress; retain local until resolved with upstream.
-                } else if local_ver > incoming_ver {
-                    // Collector is ahead of upstream (e.g. resolved on ATC, now reconnected to Car).
-                    // Retain local status and version, and mark dirty so resolve_fod_group pushes to Car.
-                    let _ = sqlx::query(
-                        r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = now() WHERE "groupId" = $1 AND "missionId" = $2 AND "dirty" IS NOT TRUE"#,
-                    )
-                    .bind(gid)
-                    .bind(group_mission_id)
-                    .execute(&state.db)
-                    .await;
-                } else {
-                    // incoming_ver >= local_ver: upstream has matching or newer authoritative version.
+                } else if incoming_ver > local_ver {
+                    // Case 2: received data has greater version than local -> replace
                     let status_changed = local_g.status.to_string() != st;
                     let _ = sqlx::query(
                         r#"UPDATE "FodGroup" SET
@@ -486,6 +474,8 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                     if status_changed {
                         should_emit = true;
                     }
+                } else {
+                    // Case 1: desktop already has greater or equal version -> ignored
                 }
             }
         }

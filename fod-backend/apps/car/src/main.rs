@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         mission_ctrl_svc.restore_active_mission(active.id, active.scan_status);
     }
-    let fod_group_svc = FodGroupServiceImpl::new(db.clone(), group_tx.clone());
+    let fod_group_svc = FodGroupServiceImpl::new(db.clone(), group_tx.clone(), "car-primary".to_string());
     let fod_svc = FodServiceImpl::new(db.clone());
     let cleared_fod_svc = ClearedFodServiceImpl::new(db.clone());
     let mission_svc = MissionServiceImpl::new(db.clone());

@@ -119,7 +119,7 @@ const FodDisplay = () => {
   );
 
   return (
-    <div className="absolute w-full h-[90%] top-[70px] overflow-hidden select-none px-[5px] border">
+    <div className="absolute w-full h-[90%] top-[70px] overflow-hidden select-none px-[5px]">
       <Grid
         cellComponent={FodGridCell as any}
         cellProps={cellProps}
