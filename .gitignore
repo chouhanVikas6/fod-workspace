@@ -35,3 +35,5 @@ sample_images/
 data/
 **/frames/
 frames/
+
+zoid_client.db
