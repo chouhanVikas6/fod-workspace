@@ -98,12 +98,16 @@ pub fn spawn(state: AppState) {
                         h.latency.connected = false;
                         h.available_communication.clear();
                     }
+                    crate::services::terminate_active_mission_if_car_down(&state).await;
                 }
                 Err(e) => {
                     tracing::debug!(error = %e, endpoint = %endpoint_str, "Car gRPC connection failed (will retry)");
-                    let mut h = state.health.write().await;
-                    h.latency.connected = false;
-                    h.available_communication.clear();
+                    {
+                        let mut h = state.health.write().await;
+                        h.latency.connected = false;
+                        h.available_communication.clear();
+                    }
+                    crate::services::terminate_active_mission_if_car_down(&state).await;
                 }
             }
 

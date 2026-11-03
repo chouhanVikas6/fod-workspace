@@ -464,6 +464,116 @@ impl Db {
         Ok(())
     }
 
+    /// Inserts a batch of FOD detections and updates their corresponding groups inside a single
+    /// database transaction for high-throughput ingest (e.g. 1800 FOD/s).
+    pub async fn ingest_fod_batch(
+        &self,
+        mission_id: i64,
+        fods: &[FodRow],
+    ) -> Result<(u32, u32, Vec<FodGroupRow>)> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let mut accepted = 0u32;
+        let mut duplicates = 0u32;
+        let mut group_biggest: std::collections::BTreeMap<i64, (Uuid, f64)> =
+            std::collections::BTreeMap::new();
+
+        for fod in fods {
+            let res = sqlx::query(
+                r#"
+                INSERT INTO fods (
+                    id, mission_id, group_id, sysid, cam_id,
+                    lat, lon, sd, confidence, class,
+                    velocity, size, image_sha256, image_size,
+                    frame_missing, captured_at, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(fod.id)
+            .bind(fod.mission_id)
+            .bind(fod.group_id)
+            .bind(&fod.sysid)
+            .bind(&fod.cam_id)
+            .bind(fod.lat)
+            .bind(fod.lon)
+            .bind(fod.sd)
+            .bind(fod.confidence)
+            .bind(&fod.class)
+            .bind(fod.velocity)
+            .bind(fod.size)
+            .bind(&fod.image_sha256)
+            .bind(fod.image_size)
+            .bind(fod.frame_missing)
+            .bind(fod.captured_at)
+            .bind(fod.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+            if res.rows_affected() == 0 {
+                duplicates += 1;
+                continue;
+            }
+
+            accepted += 1;
+            let entry = group_biggest.entry(fod.group_id).or_insert((fod.id, fod.size));
+            if fod.size > entry.1 {
+                *entry = (fod.id, fod.size);
+            }
+
+            let _ = sqlx::query(
+                "INSERT INTO change_log (seq, entity, entity_key) VALUES (nextval('change_seq'), 3, $1)",
+            )
+            .bind(format!("{}:{}", mission_id, fod.id))
+            .execute(&mut *tx)
+            .await;
+        }
+
+        let mut updated_groups = Vec::with_capacity(group_biggest.len());
+        for (group_id, (biggest_fod, biggest_size)) in group_biggest {
+            let group_row = sqlx::query_as::<_, FodGroupRow>(
+                r#"
+                INSERT INTO fod_groups (mission_id, group_id, status, version, biggest_fod, biggest_fod_size)
+                VALUES ($1, $2, 'NEW', 0, $3, $4)
+                ON CONFLICT (mission_id, group_id) DO UPDATE
+                SET
+                    biggest_fod = CASE
+                        WHEN EXCLUDED.biggest_fod_size > COALESCE(fod_groups.biggest_fod_size, 0)
+                        THEN EXCLUDED.biggest_fod
+                        ELSE fod_groups.biggest_fod
+                    END,
+                    biggest_fod_size = CASE
+                        WHEN EXCLUDED.biggest_fod_size > COALESCE(fod_groups.biggest_fod_size, 0)
+                        THEN EXCLUDED.biggest_fod_size
+                        ELSE fod_groups.biggest_fod_size
+                    END,
+                    updated_at = now()
+                RETURNING *
+                "#,
+            )
+            .bind(mission_id)
+            .bind(group_id)
+            .bind(Some(biggest_fod))
+            .bind(Some(biggest_size))
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+            let _ = sqlx::query(
+                "INSERT INTO change_log (seq, entity, entity_key) VALUES (nextval('change_seq'), 2, $1)",
+            )
+            .bind(format!("{}:{}", mission_id, group_id))
+            .execute(&mut *tx)
+            .await;
+
+            updated_groups.push(group_row);
+        }
+
+        tx.commit().await.map_err(db_err)?;
+        Ok((accepted, duplicates, updated_groups))
+    }
+
     // ----------------- Cleared FOD Queries -----------------
 
     pub async fn get_cleared_fod(

@@ -1,25 +1,29 @@
 import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
 import atcCommImg from "@/assets/images/atc-comm.svg";
-import { ServerBase } from '@/config/clientConfig';
+import axiosClient from '@/utils/axios';
 
 function AtcIcon() {
     const [atc, setAtc] = useState(false);
     useEffect(() => {
-        const interval = setInterval(() => {
-            fetch(`${ServerBase}/api/health/atc-status`)
-                .then((res) => res.json())
-                .then((data) => setAtc(Boolean(data?.connected)))
+        const checkStatus = () => {
+            axiosClient({
+                method: 'GET',
+                url: '/api/health/atc-status',
+            })
+                .then((res) => setAtc(Boolean(res?.data?.connected)))
                 .catch(() => setAtc(false));
-        }, 2000);
+        };
+        checkStatus();
+        const interval = setInterval(checkStatus, 2000);
         return () => clearInterval(interval);
     }, []);
 
     if (atc) {
         return (
-            <div key="atc" className="flex items-center">
+            <div key="atc" className="flex items-center gap-1">
                 <Image src={atcCommImg} alt="atc" width={15} height={15} />
-                <span>atc </span>
+                <span className="text-xs font-semibold">atc </span>
             </div>
         );
     }

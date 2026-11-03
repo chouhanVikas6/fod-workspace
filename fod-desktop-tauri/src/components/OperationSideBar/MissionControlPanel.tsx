@@ -1,60 +1,67 @@
 import React, { useEffect } from 'react';
-import MapMode from '@/assets/images/svg/MissionControl/MapMode.svg';
-import SoundOn from "@/assets/images/svg/MissionControl/soundOn.svg";
-import Slash from "@/assets/images/svg/MissionControl/slash.svg";
-import Settings from "@/assets/images/svg/MissionControl/settings.svg";
-import Line from "@/assets/images/svg/MissionControl/line.svg";
-import ResumeButton from "@/assets/images/svg/MissionControl/play.svg";
-import PauseButton from "@/assets/images/svg/MissionControl/pause.svg";
-import Terminate from "@/assets/images/svg/MissionControl/stop.svg";
-import ExitMissionIcon from "@/assets/images/svg/MissionControl/exit.svg";
 import { useDispatch, useSelector } from "react-redux";
-import { AppDispatch } from "@/store";
-import Image from 'next/image';
+import { AppDispatch, RootState } from "@/store";
 import { BarLoader } from '../commen/loader';
 import axiosClient from '@/utils/axios';
 import { pause_resumeMission, toggleNotification } from '@/store/slices/missionState-slice';
 import { exitMission, terminateMission } from '@/store/actions/MissionControls';
 import { toggle_Mapview } from '@/store/slices/mapReducer-slice';
 import { toast } from 'react-toastify';
+import { 
+  RxSpeakerLoud, 
+  RxSpeakerOff, 
+  RxGear, 
+  RxBell, 
+  RxPause, 
+  RxPlay, 
+  RxStop, 
+  RxExit, 
+  RxFileText 
+} from "react-icons/rx";
+import { HiOutlineMap } from "react-icons/hi";
 
-const MissionControlPanel = ({ tab, setTab }) => {
+const MissionControlPanel = ({ tab, setTab }: any) => {
   const dispatch = useDispatch<AppDispatch>();
-  const mission = useSelector((store: any) => store.MissionState)
+  const mission = useSelector((store: any) => store.MissionState);
+  const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
   const { isPause, isNotificationOn, isPauseLoading } = mission;
+  const { latency, availableCommunication } = useSelector((store: RootState) => store.SystemHealth);
+  const isCarLive = Boolean(
+    latency?.connected ||
+    (availableCommunication as any[])?.some((c: any) => c?.type === 'car' || c?.type?.startsWith('car'))
+  );
 
-  function handleKeyDown(event: any) {
-    // Check if the pressed key is F9, F7, or F4
-    if (event.keyCode === 120) {
-      // dispatch(toggelMapView);
-    }
-  }
-
+  // Keyboard shortcut listener
   useEffect(() => {
-    // Add event listener for key press events
+    function handleKeyDown(event: any) {
+      if (event.keyCode === 120) {
+        dispatch(toggle_Mapview());
+      }
+    }
     window.addEventListener('keydown', handleKeyDown);
-
-    // Cleanup function 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []); //runs only once
+  }, [dispatch]);
 
-  //mission scan status toggle api
+  // Mission scan status toggle api
   async function handlePlayPause() {
+    if (!isCarLive) {
+      toast.error("Vehicle is not in communication");
+      return;
+    }
     try {
       let result = await axiosClient({
         method: "get",
         url: "/api/mission/toggle-scan" + `?type=${isPause ? 'resume' : 'pause'}`
       });
       if (result?.data?.data) {
-        dispatch(pause_resumeMission(result.data.data=='PAUSE'))
+        dispatch(pause_resumeMission(result.data.data === 'PAUSE'));
       } else {
-        // apiToMain swallows backend failures into a 200 null — surface it.
-        toast.error(result?.data?.error || `Failed to ${isPause ? 'resume' : 'pause'} scan — no response from vehicle`)
+        toast.error(result?.data?.error || `Failed to ${isPause ? 'resume' : 'pause'} scan — no response from vehicle`);
       }
     } catch (e: any) {
-      toast.error(e?.data?.error || `Failed to ${isPause ? 'resume' : 'pause'} scan`)
+      toast.error(e?.data?.error || `Failed to ${isPause ? 'resume' : 'pause'} scan`);
     }
   }
 
@@ -63,70 +70,161 @@ const MissionControlPanel = ({ tab, setTab }) => {
       let response = await axiosClient({
         method: "get",
         url: "/api/mission/scan-status"
-      })
-      // scanStatus may be the car-backend envelope ({data:'PLAY'}) or a bare
-      // string fallback — never assume the nested shape (background poll, no toast).
+      });
       const s = response?.data?.scanStatus;
       const scanVal = typeof s === 'string' ? s : s?.data;
       if (scanVal) {
-        dispatch(pause_resumeMission(scanVal == 'PAUSE'))
+        dispatch(pause_resumeMission(scanVal === 'PAUSE'));
       }
     } catch (e) {
-      console.log('scan-status poll failed', e)
+      console.log('scan-status poll failed', e);
     }
   }
 
   useEffect(() => {
     let interval = setInterval(() => {
       syncPlayPause();
-    }, 1500)
+    }, 1500);
     return () => clearInterval(interval);
-  }, [])
+  }, []);
 
   return (
-    <div className="h-1/2 w-full flex flex-col flex-nowrap justify-evenly items-center">
-      <></>
-      <Image className='active:scale-95' onClick={() => dispatch(toggle_Mapview())} src={MapMode} alt='' width={65} height={60} />
-      <div
-        onClick={() => dispatch(toggleNotification(!isNotificationOn))}
-        className='cursor-pointer active:scale-95'>
-        {isNotificationOn ? <Image src={SoundOn} alt='' width={40} height={40} /> :
-          <div className='relative'>
-            <Image src={Slash} alt='' width={40} height={40} className='absolute top-0 left-0' />
-            <Image src={SoundOn} alt='' width={40} height={40} />
-          </div>
-        }
-      </div>
-      <Image onClick={() => setTab('setting')} className={`active:scale-95 ${tab == 'setting' ? "scale-110 shadow" : ""}`} src={Settings} alt='' width={40} height={40} />
-      <Image src={Line} alt='' width={40} height={40} />
+    <div className="w-full flex flex-col items-center gap-2.5 py-1">
+      {/* 1. SOUND */}
       <button
-        onClick={handlePlayPause}
-        className='relative active:scale-95 active:shadow' disabled={isPauseLoading && mission.isActive}>
-
-        {isPauseLoading && <BarLoader />}
-        {isPause ? <Image src={PauseButton} alt='' width={40} height={40} /> : <Image src={ResumeButton} alt='' width={40} height={40} />}
+        type="button"
+        onClick={() => dispatch(toggleNotification(!isNotificationOn))}
+        title={isNotificationOn ? "Sound Alerts: ON" : "Sound Alerts: MUTED"}
+        className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all active:scale-95 cursor-pointer ${
+          isNotificationOn
+            ? "border border-[#856404]/80 bg-[#22241A] text-[#FBBF24] shadow-xs"
+            : "border border-[#2B333E] bg-[#1C2129] text-[#7E8691] hover:text-white hover:border-[#3D4755]"
+        }`}
+      >
+        {isNotificationOn ? (
+          <RxSpeakerLoud className="w-5 h-5 mb-0.5" />
+        ) : (
+          <RxSpeakerOff className="w-5 h-5 mb-0.5 opacity-60" />
+        )}
+        <span className="text-[9px] font-bold uppercase tracking-wider">SOUND</span>
       </button>
+
+      {/* 2. SETUP */}
+      <button
+        type="button"
+        onClick={() => setTab(tab === 'setting' ? 'dashboard' : 'setting')}
+        title="Settings"
+        className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all active:scale-95 cursor-pointer ${
+          tab === 'setting'
+            ? "border-2 border-[#1E90FF] bg-[#16273B] text-[#388AEB] shadow-xs"
+            : "border border-[#2B333E] bg-[#1C2129] text-[#8C939C] hover:text-white hover:border-[#3D4755]"
+        }`}
+      >
+        <RxGear className="w-5 h-5 mb-0.5" />
+        <span className="text-[9px] font-bold uppercase tracking-wider">SETUP</span>
+      </button>
+
+      {/* Divider */}
+      <div className="w-7 h-[1px] bg-[#2C3440] my-0.5" />
+
+      {/* 3. ALERTS (Active Dashboard Tab) */}
+      <button
+        type="button"
+        onClick={() => {
+          if (isMapOpen) dispatch(toggle_Mapview());
+          setTab('dashboard');
+        }}
+        title="Live Alerts Dashboard"
+        className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all active:scale-95 cursor-pointer ${
+          tab === 'dashboard' && !isMapOpen
+            ? "border-2 border-[#1E90FF] bg-[#16273B] text-[#388AEB] shadow-sm shadow-[#1E90FF]/20"
+            : "border border-[#2B333E] bg-[#1C2129] text-[#8C939C] hover:text-white hover:border-[#3D4755]"
+        }`}
+      >
+        <RxBell className="w-5 h-5 mb-0.5" />
+        <span className="text-[9px] font-bold tracking-wider">Alerts</span>
+      </button>
+
+      {/* 4. MAP */}
+      <button
+        type="button"
+        onClick={() => dispatch(toggle_Mapview())}
+        title="Map Overview"
+        className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all active:scale-95 cursor-pointer ${
+          isMapOpen
+            ? "border-2 border-[#1E90FF] bg-[#16273B] text-[#388AEB] shadow-sm shadow-[#1E90FF]/20"
+            : "border border-[#2B333E] bg-[#1C2129] text-[#8C939C] hover:text-white hover:border-[#3D4755]"
+        }`}
+      >
+        <HiOutlineMap className="w-5 h-5 mb-0.5" />
+        <span className="text-[9px] font-bold tracking-wider">Map</span>
+      </button>
+
+      {/* 5. REPORTS */}
+      <button
+        type="button"
+        onClick={() => {
+          setTab('setting');
+        }}
+        title="Mission Reports"
+        className="w-14 h-14 rounded-2xl flex flex-col items-center justify-center border border-[#2B333E] bg-[#1C2129] text-[#8C939C] hover:text-white hover:border-[#3D4755] transition-all active:scale-95 cursor-pointer"
+      >
+        <RxFileText className="w-5 h-5 mb-0.5" />
+        <span className="text-[9px] font-bold tracking-wider">Reports</span>
+      </button>
+
+      {/* Divider */}
+      <div className="w-7 h-[1px] bg-[#2C3440] my-0.5" />
+
+      {/* 6. PAUSE / RESUME */}
+      <button
+        type="button"
+        onClick={handlePlayPause}
+        disabled={!isCarLive || (isPauseLoading && mission.isActive)}
+        title={!isCarLive ? "Vehicle not in communication" : isPause ? "Resume scan" : "Pause scan"}
+        className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center border-2 border-[#F59E0B] bg-[#262115] text-[#F59E0B] hover:bg-[#332A18] transition-all active:scale-95 cursor-pointer relative ${
+          !isCarLive || (isPauseLoading && mission.isActive) ? "opacity-40 cursor-not-allowed" : ""
+        }`}
+      >
+        {isPauseLoading && <div className="absolute inset-0 flex items-center justify-center"><BarLoader /></div>}
+        {isPause ? (
+          <RxPlay className="w-5 h-5 mb-0.5" />
+        ) : (
+          <RxPause className="w-5 h-5 mb-0.5" />
+        )}
+        <span className="text-[9px] font-bold uppercase tracking-wider">{isPause ? "RESUME" : "PAUSE"}</span>
+      </button>
+
+      {/* 7. STOP */}
       {mission.isActive && (
-        <Image
-          className="active:scale-95 cursor-pointer"
-          src={Terminate}
-          alt="Stop Mission"
-          title="Stop Mission"
-          width={40}
-          height={40}
-          onClick={() => dispatch(terminateMission)}
-        />
+        <button
+          type="button"
+          disabled={!isCarLive}
+          title={!isCarLive ? "Vehicle not in communication" : "Stop Mission"}
+          onClick={() => {
+            if (isCarLive) {
+              dispatch(terminateMission);
+            }
+          }}
+          className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center border-2 border-[#EF4444] bg-[#2B171A] text-[#EF4444] hover:bg-[#381B1F] transition-all active:scale-95 cursor-pointer ${
+            !isCarLive ? "opacity-40 cursor-not-allowed" : ""
+          }`}
+        >
+          <RxStop className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold uppercase tracking-wider">STOP</span>
+        </button>
       )}
-      <Image
-        className="active:scale-95 cursor-pointer"
-        src={ExitMissionIcon}
-        alt="Exit Mission"
-        title="Exit Mission"
-        width={55}
-        height={40}
+
+      {/* 8. EXIT */}
+      <button
+        type="button"
         onClick={() => dispatch(exitMission)}
-      />
-      <Image src={Line} alt='' width={40} height={40} />
+        title="Exit Mission"
+        className="w-14 h-14 rounded-2xl flex flex-col items-center justify-center border border-[#2B333E] bg-[#1C2129] text-[#8C939C] hover:text-white hover:border-[#3D4755] transition-all active:scale-95 cursor-pointer"
+      >
+        <RxExit className="w-5 h-5 mb-0.5" />
+        <span className="text-[9px] font-bold uppercase tracking-wider">EXIT</span>
+      </button>
     </div>
   );
 };

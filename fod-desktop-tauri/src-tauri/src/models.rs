@@ -47,7 +47,6 @@ pub mod iso_millis_opt {
 }
 
 #[derive(sqlx::Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[sqlx(type_name = "MissionStatus")]
 pub enum MissionStatus {
     #[sqlx(rename = "ACTIVE")]
     #[serde(rename = "ACTIVE")]
@@ -61,7 +60,6 @@ pub enum MissionStatus {
 }
 
 #[derive(sqlx::Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[sqlx(type_name = "MissionScanStatus")]
 pub enum MissionScanStatus {
     #[sqlx(rename = "PLAY")]
     #[serde(rename = "PLAY")]
@@ -72,7 +70,6 @@ pub enum MissionScanStatus {
 }
 
 #[derive(sqlx::Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[sqlx(type_name = "FodGroupStatus")]
 pub enum FodGroupStatus {
     #[sqlx(rename = "NEW")]
     #[serde(rename = "NEW")]
@@ -100,7 +97,6 @@ impl std::fmt::Display for FodGroupStatus {
 }
 
 #[derive(sqlx::Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[sqlx(type_name = "ClearedFodStatus")]
 pub enum ClearedFodStatus {
     #[sqlx(rename = "found")]
     #[serde(rename = "found")]
@@ -114,7 +110,6 @@ pub enum ClearedFodStatus {
 }
 
 #[derive(sqlx::Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[sqlx(type_name = "Role")]
 pub enum Role {
     #[sqlx(rename = "ADMIN")]
     #[serde(rename = "ADMIN")]
@@ -198,7 +193,9 @@ pub struct Fod {
 pub struct ClearedFod {
     pub id: String,
     pub status: ClearedFodStatus,
+    #[sqlx(json)]
     pub before_clear_img: Vec<String>,
+    #[sqlx(json)]
     pub after_clear_img: Vec<String>,
     pub location: Value,
     pub group_id: i32,

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ServerBase } from '@/config/clientConfig';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import axiosClient from '@/utils/axios';
 
 interface HealthData {
   kafka_status: boolean;
@@ -68,43 +70,37 @@ export function useHealthData() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let eventSource: EventSource;
+    let disposed = false;
+    let unlistenFn: (() => void) | null = null;
 
-    const setupSSE = () => {
-      // Create EventSource connection
-      eventSource = new EventSource(`${ServerBase}/api/health/health-data`);
-
-      // Handle incoming messages
-      eventSource.onmessage = (event) => {
-        try {
-          const newData = JSON.parse(event.data);
-          setData(newData.data);
-          setError(null);
-          setLoading(false);
-        } catch (err) {
-          console.error('Error parsing SSE data:', err);
-          setError('Error processing data update');
+    listen('sse:health-data', (event: any) => {
+      if (disposed) return;
+      try {
+        const newData = typeof event.payload === 'string' ? JSON.parse(event.payload) : event.payload;
+        setData(newData?.data ?? newData);
+        setError(null);
+        setLoading(false);
+      } catch (err) {
+        console.error('Error parsing health IPC data:', err);
+        setError('Error processing data update');
+      }
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          unlistenFn = unlisten;
         }
-      };
-
-      // Handle connection errors
-      eventSource.onerror = (err) => {
-        console.error('SSE connection error:', err);
+      })
+      .catch((err) => {
+        console.error('IPC health connection error:', err);
         setError('Connection error');
-        eventSource.close();
-        
-        // Attempt to reconnect after a delay
-        setTimeout(setupSSE, 5000);
-      };
-    };
+      });
 
-    // Initial setup
-    setupSSE();
-
-    // Cleanup on unmount
     return () => {
-      if (eventSource) {
-        eventSource.close();
+      disposed = true;
+      if (unlistenFn) {
+        unlistenFn();
       }
     };
   }, []);
@@ -116,16 +112,21 @@ export function useHealthData() {
     refetch: async () => {
       setLoading(true);
       try {
-        const response = await fetch(`${ServerBase}/api/health/health-data`);
-        const body = await response.json();
-        setData(body.data);
+        const res: any = await invoke('get_health_bite_state');
+        setData(res?.data ?? res);
         setError(null);
       } catch (err) {
-        setError('Failed to refetch health data');
-        console.error('Error refetching data:', err);
+        try {
+          const response = await axiosClient({ method: 'GET', url: '/api/health/health-data' });
+          setData(response.data?.data ?? response.data);
+          setError(null);
+        } catch (innerErr) {
+          setError('Failed to refetch health data');
+          console.error('Error refetching data:', innerErr);
+        }
       } finally {
         setLoading(false);
       }
     }
   };
-} 
+}

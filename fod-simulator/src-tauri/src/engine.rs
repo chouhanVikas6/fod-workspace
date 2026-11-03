@@ -110,6 +110,9 @@ impl SimulatorEngine {
         tauri::async_runtime::spawn(async move {
             let start_time = Instant::now();
             let mut last_telemetry_tick = Instant::now();
+            let mut rate_epoch = Instant::now();
+            let mut epoch_dispatched: u64 = 0;
+            let mut last_target_rate: f64 = -1.0;
 
             while running_flag.load(Ordering::SeqCst) {
                 let is_paused = paused_flag.load(Ordering::SeqCst);
@@ -127,9 +130,15 @@ impl SimulatorEngine {
                     }
                 }
 
-                let hz = cfg.throughput_hz.clamp(0.1, 200.0);
-                let batch_size = cfg.batch_size.clamp(1, 50);
-                let interval_micros = ((1_000_000.0 / hz) as u64).max(500);
+                let hz = cfg.throughput_hz.clamp(0.1, 2000.0);
+                let batch_size = cfg.batch_size.clamp(1, 100);
+                let target_rate = hz * (batch_size as f64);
+
+                if is_paused || (target_rate - last_target_rate).abs() > 0.01 {
+                    rate_epoch = Instant::now();
+                    epoch_dispatched = 0;
+                    last_target_rate = target_rate;
+                }
 
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
                 let car_pos = geo_engine.get_position_at_time(elapsed_secs);
@@ -147,100 +156,144 @@ impl SimulatorEngine {
                 let custom_cfg = custom_arc.read().await.clone();
 
                 if !is_paused && !active_cameras.is_empty() {
-                    // Generate batch in scoped block so ThreadRng is dropped before any await
-                    let batch = {
-                        let mut rng = rand::thread_rng();
-                        let mut detections = Vec::with_capacity(batch_size);
+                    let epoch_elapsed = rate_epoch.elapsed().as_secs_f64();
+                    let expected_batches = (epoch_elapsed * hz).floor() as u64 + 1;
+                    let expected_detections = expected_batches.saturating_mul(batch_size as u64);
+                    let mut to_send = expected_detections.saturating_sub(epoch_dispatched) as usize;
 
-                        let weights = [
-                            rand_cfg.weight_metallic.max(1.0),
-                            rand_cfg.weight_non_metallic.max(1.0),
-                            rand_cfg.weight_organic.max(1.0),
-                            rand_cfg.weight_rock.max(1.0),
-                        ];
-                        let dist = WeightedIndex::new(&weights).unwrap_or_else(|_| WeightedIndex::new([1.0, 1.0, 1.0, 1.0]).unwrap());
-                        let class_names = ["Metallic", "Non-Metallic", "Organic", "Rocks/Asphalt"];
+                    if let Some(target) = cfg.total_target_count {
+                        let current_sent = total_sent_counter.load(Ordering::Relaxed);
+                        let remaining = target.saturating_sub(current_sent) as usize;
+                        to_send = to_send.min(remaining);
+                    }
 
-                        for _ in 0..batch_size {
-                            let cam = active_cameras.choose(&mut rng).unwrap();
-                            let class_name = if let Some(ref c) = custom_cfg.custom_class {
-                                c.clone()
-                            } else {
-                                class_names[dist.sample(&mut rng)].to_string()
-                            };
+                    // Cap catch-up burst per tick to avoid huge single allocations if paused/lagged
+                    let max_per_tick = (target_rate as usize).clamp(batch_size, 1800);
+                    to_send = to_send.min(max_per_tick);
 
-                            let size = rng.gen_range(rand_cfg.min_size_cm..=rand_cfg.max_size_cm);
-                            let confidence = rng.gen_range(rand_cfg.min_confidence..=rand_cfg.max_confidence);
+                    if to_send > 0 {
+                        let chunk_limit = batch_size.max(50);
+                        let mut remaining_to_build = to_send;
+                        let mut batches_to_send = Vec::new();
+                        let base_sent = total_sent_counter.load(Ordering::Relaxed) as usize;
+                        let mut built_offset = 0usize;
 
-                            let (det_lat, det_lon) = if custom_cfg.force_invalid_coords {
-                                (-1.0, -1.0)
-                            } else {
-                                let forward_jitter = rng.gen_range(-1.0..=4.0);
-                                let (cand_lat, cand_lon) = GeoEngine::offset_coordinate(
-                                    car_pos.lat,
-                                    car_pos.lon,
-                                    car_pos.heading_deg,
-                                    cam.lateral_offset_m,
-                                    forward_jitter,
-                                );
-                                if geo_engine.is_inside_boundary(cand_lat, cand_lon) {
-                                    (cand_lat, cand_lon)
-                                } else {
-                                    geo_engine.clamp_to_boundary(cand_lat, cand_lon, car_pos.lat, car_pos.lon)
+                        {
+                            let mut rng = rand::thread_rng();
+                            let weights = [
+                                rand_cfg.weight_metallic.max(1.0),
+                                rand_cfg.weight_non_metallic.max(1.0),
+                                rand_cfg.weight_organic.max(1.0),
+                                rand_cfg.weight_rock.max(1.0),
+                            ];
+                            let dist = WeightedIndex::new(&weights)
+                                .unwrap_or_else(|_| WeightedIndex::new([1.0, 1.0, 1.0, 1.0]).unwrap());
+                            let class_names = ["Metallic", "Non-Metallic", "Organic", "Rocks/Asphalt"];
+                            let captured_at_ms = chrono::Utc::now().timestamp_millis();
+
+                            while remaining_to_build > 0 {
+                                let this_chunk = remaining_to_build.min(chunk_limit);
+                                remaining_to_build -= this_chunk;
+                                let mut detections = Vec::with_capacity(this_chunk);
+
+                                for _ in 0..this_chunk {
+                                    let cam = active_cameras.choose(&mut rng).unwrap();
+                                    let class_name = if let Some(ref c) = custom_cfg.custom_class {
+                                        c.clone()
+                                    } else {
+                                        class_names[dist.sample(&mut rng)].to_string()
+                                    };
+
+                                    let size = rng.gen_range(rand_cfg.min_size_cm..=rand_cfg.max_size_cm);
+                                    let confidence =
+                                        rng.gen_range(rand_cfg.min_confidence..=rand_cfg.max_confidence);
+
+                                    let (det_lat, det_lon) = if custom_cfg.force_invalid_coords {
+                                        (-1.0, -1.0)
+                                    } else {
+                                        let forward_jitter = rng.gen_range(-1.0..=4.0);
+                                        let (cand_lat, cand_lon) = GeoEngine::offset_coordinate(
+                                            car_pos.lat,
+                                            car_pos.lon,
+                                            car_pos.heading_deg,
+                                            cam.lateral_offset_m,
+                                            forward_jitter,
+                                        );
+                                        if geo_engine.is_inside_boundary(cand_lat, cand_lon) {
+                                            (cand_lat, cand_lon)
+                                        } else {
+                                            geo_engine.clamp_to_boundary(
+                                                cand_lat,
+                                                cand_lon,
+                                                car_pos.lat,
+                                                car_pos.lon,
+                                            )
+                                        }
+                                    };
+
+                                    let sample_idx = base_sent + built_offset;
+                                    built_offset += 1;
+                                    let (crop_jpeg, _sha) =
+                                        feeder.get_sample_frame(sample_idx, custom_cfg.corrupt_image);
+
+                                    let uid = if let Some(ref dup) = custom_cfg.duplicate_uuid {
+                                        dup.clone()
+                                    } else {
+                                        Uuid::new_v4().to_string()
+                                    };
+
+                                    detections.push(Detection {
+                                        uid,
+                                        cam_id: cam.cam_id.clone(),
+                                        lat: det_lat,
+                                        lon: det_lon,
+                                        sd: 0.015,
+                                        confidence,
+                                        class_name,
+                                        velocity: car_pos.speed_kmh,
+                                        size,
+                                        captured_at_ms,
+                                        crop_jpeg,
+                                        sysid: cfg.sysid.clone(),
+                                    });
                                 }
-                            };
 
-                            let sample_idx = total_sent_counter.load(Ordering::Relaxed) as usize;
-                            let (crop_jpeg, _sha) = feeder.get_sample_frame(sample_idx, custom_cfg.corrupt_image);
-
-                            let uid = if let Some(ref dup) = custom_cfg.duplicate_uuid {
-                                dup.clone()
-                            } else {
-                                Uuid::new_v4().to_string()
-                            };
-
-                            detections.push(Detection {
-                                uid,
-                                cam_id: cam.cam_id.clone(),
-                                lat: det_lat,
-                                lon: det_lon,
-                                sd: 0.015,
-                                confidence,
-                                class_name,
-                                velocity: car_pos.speed_kmh,
-                                size,
-                                captured_at_ms: chrono::Utc::now().timestamp_millis(),
-                                crop_jpeg,
-                                sysid: cfg.sysid.clone(),
-                            });
+                                batches_to_send.push(DetectionBatch {
+                                    producer_id: cfg.sysid.clone(),
+                                    batch_seq: batch_seq_counter.fetch_add(1, Ordering::Relaxed),
+                                    detections,
+                                });
+                            }
                         }
 
-                        DetectionBatch {
-                            producer_id: cfg.sysid.clone(),
-                            batch_seq: batch_seq_counter.fetch_add(1, Ordering::Relaxed),
-                            detections,
-                        }
-                    };
+                        let handle_opt = {
+                            let guard = grpc_lock.lock().await;
+                            guard.clone()
+                        };
 
-                    let count = batch.detections.len() as u64;
-                    let handle_opt = {
-                        let guard = grpc_lock.lock().await;
-                        guard.clone()
-                    };
-
-                    if let Some(handle) = handle_opt {
-                        if handle.send_detection_batch(batch).await.is_ok() {
-                            total_sent_counter.fetch_add(count, Ordering::Relaxed);
+                        if let Some(handle) = handle_opt {
+                            let mut stream_ok = true;
+                            for batch in batches_to_send {
+                                let count = batch.detections.len() as u64;
+                                if handle.send_detection_batch(batch).await.is_ok() {
+                                    total_sent_counter.fetch_add(count, Ordering::Relaxed);
+                                    epoch_dispatched += count;
+                                } else {
+                                    stream_ok = false;
+                                    break;
+                                }
+                            }
+                            if !stream_ok {
+                                let endpoint = cfg.grpc_endpoint.clone();
+                                if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
+                                    *grpc_lock.lock().await = Some(new_handle);
+                                }
+                            }
                         } else {
                             let endpoint = cfg.grpc_endpoint.clone();
                             if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
                                 *grpc_lock.lock().await = Some(new_handle);
                             }
-                        }
-                    } else {
-                        let endpoint = cfg.grpc_endpoint.clone();
-                        if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
-                            *grpc_lock.lock().await = Some(new_handle);
                         }
                     }
                 }
@@ -355,7 +408,8 @@ impl SimulatorEngine {
                     let _ = app.emit("simulator-telemetry", telemetry_ui);
                 }
 
-                tokio::time::sleep(Duration::from_micros(interval_micros)).await;
+                let sleep_micros = ((1_000_000.0 / hz) as u64).clamp(2_000, 50_000);
+                tokio::time::sleep(Duration::from_micros(sleep_micros)).await;
             }
         });
 
@@ -494,13 +548,16 @@ impl SimulatorEngine {
     }
 
     pub async fn step_single_fod(&self) -> Result<(), String> {
-        let handle_opt = {
-            let guard = self.grpc_handle.lock().await;
-            guard.clone()
-        };
-        let handle = handle_opt.ok_or_else(|| "gRPC stream is not connected. Start simulator first.".to_string())?;
-
         let cfg = self.config.read().await.clone();
+        let handle = {
+            let mut guard = self.grpc_handle.lock().await;
+            if guard.is_none() {
+                let new_handle = GrpcClientManager::start_streams(&cfg.grpc_endpoint).await?;
+                *guard = Some(new_handle);
+            }
+            guard.clone().ok_or_else(|| "gRPC stream is not connected.".to_string())?
+        };
+
         let loc_cfg = self.location_config.read().await.clone();
         let geo_engine = GeoEngine::new(&loc_cfg);
         let car_pos = geo_engine.get_position_at_time(0.0);
@@ -534,17 +591,21 @@ impl SimulatorEngine {
 
         handle.send_detection_batch(batch).await?;
         self.total_sent.fetch_add(1, Ordering::Relaxed);
+        self.emit_current_telemetry().await;
         Ok(())
     }
 
     pub async fn burst_fods(&self, count: u32) -> Result<(), String> {
-        let handle_opt = {
-            let guard = self.grpc_handle.lock().await;
-            guard.clone()
-        };
-        let handle = handle_opt.ok_or_else(|| "gRPC stream is not connected. Start simulator first.".to_string())?;
-
         let cfg = self.config.read().await.clone();
+        let handle = {
+            let mut guard = self.grpc_handle.lock().await;
+            if guard.is_none() {
+                let new_handle = GrpcClientManager::start_streams(&cfg.grpc_endpoint).await?;
+                *guard = Some(new_handle);
+            }
+            guard.clone().ok_or_else(|| "gRPC stream is not connected.".to_string())?
+        };
+
         let loc_cfg = self.location_config.read().await.clone();
         let geo_engine = GeoEngine::new(&loc_cfg);
         let car_pos = geo_engine.get_position_at_time(0.0);
@@ -555,42 +616,59 @@ impl SimulatorEngine {
             return Err("No active cameras enabled for burst".to_string());
         }
 
-        // Generate batch in scoped block
-        let batch = {
-            let mut detections = Vec::with_capacity(count as usize);
+        // Generate chunked batches in scoped block so RNG doesn't cross await
+        let batches = {
+            let chunk_size = 50usize;
+            let total = count as usize;
+            let mut batches = Vec::with_capacity((total + chunk_size - 1) / chunk_size);
             let mut rng = rand::thread_rng();
+            let captured_at_ms = chrono::Utc::now().timestamp_millis();
+            let base_idx = self.total_sent.load(Ordering::Relaxed) as usize;
+            let mut idx = 0usize;
 
-            for i in 0..count {
-                let cam = active_cams.choose(&mut rng).unwrap();
-                let (crop_jpeg, _) = self.image_feeder.get_sample_frame(i as usize, false);
+            while idx < total {
+                let this_chunk = (total - idx).min(chunk_size);
+                let mut detections = Vec::with_capacity(this_chunk);
 
-                let (burst_lat, burst_lon) = geo_engine.random_point_in_boundary(&mut rng);
+                for _ in 0..this_chunk {
+                    let cam = active_cams.choose(&mut rng).unwrap();
+                    let (crop_jpeg, _) = self.image_feeder.get_sample_frame(base_idx + idx, false);
+                    idx += 1;
 
-                detections.push(Detection {
-                    uid: Uuid::new_v4().to_string(),
-                    cam_id: cam.cam_id.clone(),
-                    lat: burst_lat,
-                    lon: burst_lon,
-                    sd: 0.01,
-                    confidence: rng.gen_range(0.85..=0.99),
-                    class_name: "Metallic".to_string(),
-                    velocity: car_pos.speed_kmh,
-                    size: rng.gen_range(2.0..=15.0),
-                    captured_at_ms: chrono::Utc::now().timestamp_millis(),
-                    crop_jpeg,
-                    sysid: cfg.sysid.clone(),
+                    let (burst_lat, burst_lon) = geo_engine.random_point_in_boundary(&mut rng);
+
+                    detections.push(Detection {
+                        uid: Uuid::new_v4().to_string(),
+                        cam_id: cam.cam_id.clone(),
+                        lat: burst_lat,
+                        lon: burst_lon,
+                        sd: 0.01,
+                        confidence: rng.gen_range(0.85..=0.99),
+                        class_name: "Metallic".to_string(),
+                        velocity: car_pos.speed_kmh,
+                        size: rng.gen_range(2.0..=15.0),
+                        captured_at_ms,
+                        crop_jpeg,
+                        sysid: cfg.sysid.clone(),
+                    });
+                }
+
+                batches.push(DetectionBatch {
+                    producer_id: cfg.sysid.clone(),
+                    batch_seq: self.batch_seq.fetch_add(1, Ordering::Relaxed),
+                    detections,
                 });
             }
 
-            DetectionBatch {
-                producer_id: cfg.sysid.clone(),
-                batch_seq: self.batch_seq.fetch_add(1, Ordering::Relaxed),
-                detections,
-            }
+            batches
         };
 
-        handle.send_detection_batch(batch).await?;
-        self.total_sent.fetch_add(count as u64, Ordering::Relaxed);
+        for batch in batches {
+            let len = batch.detections.len() as u64;
+            handle.send_detection_batch(batch).await?;
+            self.total_sent.fetch_add(len, Ordering::Relaxed);
+        }
+        self.emit_current_telemetry().await;
         Ok(())
     }
 

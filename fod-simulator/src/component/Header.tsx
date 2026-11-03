@@ -202,6 +202,15 @@ export default function Header() {
             <FastForward className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
             Burst 50
           </button>
+
+          <button
+            onClick={() => burstFods(1800)}
+            title="Instantly burst 1800 FOD detections"
+            className="flex items-center gap-1 px-3 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 dark:bg-[#182133] dark:hover:bg-[#212c44] dark:border-[#27354f] dark:text-slate-200 text-xs font-medium cursor-pointer transition-colors shadow-2xs"
+          >
+            <FastForward className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            Burst 1800
+          </button>
         </div>
 
         {/* Live Counters */}
@@ -254,7 +263,10 @@ export default function Header() {
               Rate
             </div>
             <div className="font-mono font-bold text-cyan-700 dark:text-cyan-300">
-              {config.throughput_hz.toFixed(1)} Hz
+              {Math.round(config.throughput_hz * config.batch_size).toLocaleString()} FOD/s{' '}
+              <span className="text-slate-400 dark:text-slate-500 font-normal">
+                ({config.throughput_hz.toFixed(1)} Hz)
+              </span>
             </div>
           </div>
 

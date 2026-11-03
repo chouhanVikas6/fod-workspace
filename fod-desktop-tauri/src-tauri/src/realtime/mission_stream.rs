@@ -71,25 +71,26 @@ pub fn spawn(state: AppState) {
 
 async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::Result<()> {
     let mid = event.mission_id;
+    let now = crate::services::now_naive();
     match event.event {
         Some(proto_defination::mission_control::mission_event::Event::RawCommand(cmd)) => {
             if cmd.starts_with("terminate") {
                 tracing::info!(mission_id = mid, cmd = %cmd, "Streamed terminate command received");
                 let _ = sqlx::query(
-                    r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = now() WHERE "id" = $1 OR "status" = 'ACTIVE'"#,
+                    r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = $2 WHERE "id" = $1 OR "status" = 'ACTIVE'"#,
                 )
                 .bind(mid)
+                .bind(now)
                 .execute(&state.db)
                 .await;
 
-                if let Some(io) = state.io() {
-                    if let Some(gui_ns) = io.of("/gui") {
-                        let _ = gui_ns.emit("update", &json!({
-                            "type": "terminate",
-                            "missionNumber": mid
-                        })).await;
-                    }
-                }
+                state.emit_gui(
+                    "update",
+                    &json!({
+                        "type": "terminate",
+                        "missionNumber": mid
+                    }),
+                );
             }
         }
         Some(proto_defination::mission_control::mission_event::Event::StatusChanged(st)) => {
@@ -100,46 +101,47 @@ async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::
             if is_terminated {
                 tracing::info!(mission_id = mid, status = st, "Streamed mission status changed to terminated");
                 let _ = sqlx::query(
-                    r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = now() WHERE "id" = $1 OR "status" = 'ACTIVE'"#,
+                    r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = $2 WHERE "id" = $1 OR "status" = 'ACTIVE'"#,
                 )
                 .bind(mid)
+                .bind(now)
                 .execute(&state.db)
                 .await;
 
-                if let Some(io) = state.io() {
-                    if let Some(gui_ns) = io.of("/gui") {
-                        let _ = gui_ns.emit("update", &json!({
-                            "type": "terminate",
-                            "missionNumber": mid
-                        })).await;
-                    }
-                }
+                state.emit_gui(
+                    "update",
+                    &json!({
+                        "type": "terminate",
+                        "missionNumber": mid
+                    }),
+                );
             } else if is_active {
                 tracing::info!(mission_id = mid, "Streamed mission status changed to active");
                 let _ = sqlx::query(
-                    r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = now() WHERE "id" != $1 AND "status" = 'ACTIVE'"#,
+                    r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = $2 WHERE "id" != $1 AND "status" = 'ACTIVE'"#,
                 )
                 .bind(mid)
+                .bind(now)
                 .execute(&state.db)
                 .await;
 
                 let _ = sqlx::query(
                     r#"INSERT INTO "Mission" ("id", "status", "scanStatus", "createdAt", "updatedAt")
-                       VALUES ($1, 'ACTIVE', 'PAUSE', now(), now())
-                       ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = now()"#,
+                       VALUES ($1, 'ACTIVE', 'PAUSE', $2, $2)
+                       ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = $2"#,
                 )
                 .bind(mid)
+                .bind(now)
                 .execute(&state.db)
                 .await;
 
-                if let Some(io) = state.io() {
-                    if let Some(gui_ns) = io.of("/gui") {
-                        let _ = gui_ns.emit("update", &json!({
-                            "type": "mission",
-                            "data": { "id": mid, "status": "ACTIVE" }
-                        })).await;
-                    }
-                }
+                state.emit_gui(
+                    "update",
+                    &json!({
+                        "type": "mission",
+                        "data": { "id": mid, "status": "ACTIVE" }
+                    }),
+                );
             }
         }
         Some(proto_defination::mission_control::mission_event::Event::ScanChanged(sc)) => {
@@ -148,10 +150,11 @@ async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::
                 _ => "PAUSE",
             };
             let _ = sqlx::query(
-                r#"UPDATE "Mission" SET "scanStatus" = $1::"MissionScanStatus", "updatedAt" = now() WHERE "id" = $2"#,
+                r#"UPDATE "Mission" SET "scanStatus" = $1, "updatedAt" = $3 WHERE "id" = $2"#,
             )
             .bind(scan_str)
             .bind(mid)
+            .bind(now)
             .execute(&state.db)
             .await;
         }

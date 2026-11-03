@@ -30,7 +30,7 @@ const FodDetail = ({ }) => {
   const { isFodFinalReviewOpen } = useSelector((state: RootState) => state.WebCam);
 
   const fodStatusStyle = (val: number) => {
-    let background = 'bg-[#EBEBEB]', textColor = 'text-black';
+    let background = 'bg-[#202632]', textColor = 'text-slate-300';
     if (val === FodStatus) {
       background = 'bg-[#017ED7]';
       textColor = 'text-white';
@@ -59,36 +59,36 @@ const FodDetail = ({ }) => {
   }, [safeFod]);
 
   return (
-    <div className={`h-full w-full px-3 py-3 flex flex-col justify-between bg-[#FCFCFC] text-[#696972] font-semibold overflow-y-auto`}>
+    <div className={`h-full w-full px-3 py-3 flex flex-col justify-between bg-[#181C23] text-slate-300 font-semibold overflow-y-auto`}>
       <div className="w-full flex flex-col gap-2">
-        <div className="w-full flex justify-between items-center text-xl flex-shrink-0">
+        <div className="w-full flex justify-between items-center text-xl flex-shrink-0 text-white">
           <div className="flex items-center gap-1">
-            {!isFodFinalReviewOpen && <MdKeyboardArrowLeft className="text-2xl cursor-pointer" onClick={() => dispatch(close_SideBarFodDetail())} />}
-            <div>
+            {!isFodFinalReviewOpen && <MdKeyboardArrowLeft className="text-2xl cursor-pointer hover:text-blue-400 transition-colors" onClick={() => dispatch(close_SideBarFodDetail())} />}
+            <div className="font-bold">
               {Fod_FodId(fod)}
             </div>
           </div>
           {`${origin}` == 'backend' ?
-            <div className="w-[70px] h-[26px] bg-green-500 rounded"></div> :
-            <div className="w-[70px] h-[26px] bg-yellow-500 rounded"></div>
+            <div className="w-[70px] h-[26px] bg-emerald-500 rounded"></div> :
+            <div className="w-[70px] h-[26px] bg-amber-500 rounded"></div>
           }
         </div>
         <FodGrid />
         <div className="w-full flex flex-col gap-1.5 text-xs flex-shrink-0">
-          <div className="w-full bg-[#F7F7F7] rounded-md flex justify-between items-center px-2 py-1.5">
-            <span>Cam Id</span><span>{!!selectedFrame ? (selectedFrame as any).sysid : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? safeFod.FodPoint[0]?.sysid : "")}</span>
+          <div className="w-full bg-[#202632] border border-[#2B3542] rounded-md flex justify-between items-center px-2.5 py-1.5">
+            <span className="text-[#7E8691]">Cam Id</span><span className="text-white font-medium">{!!selectedFrame ? (selectedFrame as any).sysid : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? safeFod.FodPoint[0]?.sysid : "")}</span>
           </div>
-          <div className="w-full bg-[#F7F7F7] rounded-md flex justify-between items-center px-2 py-1.5">
-            <span>Size</span><span>{!!selectedFrame ? Math.floor((selectedFrame as any).size) : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? Math.floor(safeFod.FodPoint[0]?.size ?? 0) : "")}mm</span>
+          <div className="w-full bg-[#202632] border border-[#2B3542] rounded-md flex justify-between items-center px-2.5 py-1.5">
+            <span className="text-[#7E8691]">Size</span><span className="text-white font-medium">{!!selectedFrame ? Math.floor((selectedFrame as any).size) : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? Math.floor(safeFod.FodPoint[0]?.size ?? 0) : "")}mm</span>
           </div>
-          <div className="w-full bg-[#F7F7F7] rounded-md flex justify-between items-center px-2 py-1.5">
-            <span>Class</span><span>{!!selectedFrame ? (selectedFrame as any).class : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? safeFod.FodPoint[0]?.class : "")}</span>
+          <div className="w-full bg-[#202632] border border-[#2B3542] rounded-md flex justify-between items-center px-2.5 py-1.5">
+            <span className="text-[#7E8691]">Class</span><span className="text-white font-medium">{!!selectedFrame ? (selectedFrame as any).class : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? safeFod.FodPoint[0]?.class : "")}</span>
           </div>
-          <div className="w-full bg-[#F7F7F7] rounded-md flex justify-between items-center px-2 py-1.5">
-            <span>Velocity</span><span>{!!selectedFrame ? Math.floor((selectedFrame as any).velocity) : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? Math.floor(safeFod.FodPoint[0]?.velocity ?? 0) : "")}Km/h</span>
+          <div className="w-full bg-[#202632] border border-[#2B3542] rounded-md flex justify-between items-center px-2.5 py-1.5">
+            <span className="text-[#7E8691]">Velocity</span><span className="text-white font-medium">{!!selectedFrame ? Math.floor((selectedFrame as any).velocity) : (!!safeFod?.FodPoint && Array.isArray(safeFod.FodPoint) ? Math.floor(safeFod.FodPoint[0]?.velocity ?? 0) : "")}Km/h</span>
           </div>
-          <div className="w-full bg-[#F7F7F7] rounded-md flex justify-between items-center px-2 py-1.5">
-            <span>Distance</span><span><Distance /></span>
+          <div className="w-full bg-[#202632] border border-[#2B3542] rounded-md flex justify-between items-center px-2.5 py-1.5">
+            <span className="text-[#7E8691]">Distance</span><span className="text-white font-medium"><Distance /></span>
           </div>
         </div>
       </div>

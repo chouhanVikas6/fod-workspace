@@ -4,7 +4,15 @@ import { Gauge, ShieldAlert, Sparkles } from 'lucide-react';
 export default function ThroughputTab() {
   const { config, random, custom, updateConfig, updateRandom, updateCustom } = useSimulatorStore();
 
-  const presetFrequencies = [0.5, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 150.0, 200.0];
+  const presetFrequencies = [0.5, 1.0, 5.0, 10.0, 20.0, 50.0, 60.0, 100.0, 200.0, 360.0, 1800.0];
+  const presetFodPerSec = [
+    { label: '10 FOD/s', hz: 2.0, batch: 5 },
+    { label: '100 FOD/s', hz: 20.0, batch: 5 },
+    { label: '500 FOD/s', hz: 50.0, batch: 10 },
+    { label: '1000 FOD/s', hz: 50.0, batch: 20 },
+    { label: '1800 FOD/s', hz: 60.0, batch: 30 },
+  ];
+  const currentFodPerSec = Math.round(config.throughput_hz * config.batch_size);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 select-none transition-colors">
@@ -12,42 +20,68 @@ export default function ThroughputTab() {
       <div className="flex flex-col gap-6">
         {/* Card: Throughput Rate */}
         <div className="bg-white border border-slate-200 dark:bg-[#0f1422] dark:border-[#1e293b] rounded-xl p-5 shadow-xs dark:shadow-md transition-colors">
-          <div className="flex items-center gap-2 mb-4 text-cyan-600 dark:text-cyan-400 font-semibold text-sm">
-            <Gauge className="w-4 h-4" />
-            <span>FOD THROUGHPUT FREQUENCY</span>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2 text-cyan-600 dark:text-cyan-400 font-semibold text-sm">
+              <Gauge className="w-4 h-4" />
+              <span>FOD THROUGHPUT FREQUENCY</span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-50 text-cyan-700 border border-cyan-300 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-700">
+              {currentFodPerSec.toLocaleString()} FOD/s
+            </span>
           </div>
 
           <div className="flex flex-col gap-4">
+            {/* Target FOD/s Quick Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap pb-3 border-b border-slate-100 dark:border-[#1a2333]">
+              <span className="text-xs text-slate-600 dark:text-slate-300 font-semibold mr-1">Target Speed:</span>
+              {presetFodPerSec.map((p) => {
+                const isActive = currentFodPerSec === Math.round(p.hz * p.batch);
+                return (
+                  <button
+                    key={p.label}
+                    onClick={() => updateConfig({ throughput_hz: p.hz, batch_size: p.batch })}
+                    className={`px-2.5 py-1 rounded text-xs font-mono font-semibold border cursor-pointer transition-colors ${
+                      isActive
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-500 dark:text-emerald-300'
+                        : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200 dark:bg-[#161f30] dark:border-[#243147] dark:text-slate-300 dark:hover:bg-[#1e2a40]'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+
             <div>
               <div className="flex justify-between items-center mb-1.5 text-xs">
-                <span className="text-slate-600 dark:text-slate-300 font-medium">Throughput Rate:</span>
+                <span className="text-slate-600 dark:text-slate-300 font-medium">Throughput Rate (Batches/s):</span>
                 <div className="flex items-center gap-2">
                   <div className="flex items-center bg-slate-50 dark:bg-[#141b29] border border-slate-300 dark:border-[#253248] rounded px-2 py-0.5 focus-within:border-cyan-500">
                     <input
                       type="number"
                       min="0.1"
-                      max="200"
+                      max="2000"
                       step="0.5"
                       value={config.throughput_hz}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
                         if (!isNaN(val)) {
-                          updateConfig({ throughput_hz: Math.min(200, Math.max(0.1, val)) });
+                          updateConfig({ throughput_hz: Math.min(2000, Math.max(0.1, val)) });
                         }
                       }}
-                      className="w-14 bg-transparent font-mono text-xs font-bold text-cyan-700 dark:text-cyan-300 text-right outline-none"
+                      className="w-16 bg-transparent font-mono text-xs font-bold text-cyan-700 dark:text-cyan-300 text-right outline-none"
                     />
                     <span className="font-mono text-xs text-slate-400 ml-1">Hz</span>
                   </div>
                   <span className="font-mono font-medium text-slate-500 dark:text-slate-400 text-xs">
-                    ({Math.round(config.throughput_hz * config.batch_size)} det/s)
+                    ({currentFodPerSec} det/s)
                   </span>
                 </div>
               </div>
               <input
                 type="range"
                 min="0.1"
-                max="200.0"
+                max="1800.0"
                 step="0.5"
                 value={config.throughput_hz}
                 onChange={(e) => updateConfig({ throughput_hz: parseFloat(e.target.value) })}
@@ -55,16 +89,16 @@ export default function ThroughputTab() {
               />
               <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-1">
                 <span>0.1 Hz</span>
-                <span>50 Hz</span>
-                <span>100 Hz</span>
-                <span>150 Hz</span>
-                <span>200 Hz (Max)</span>
+                <span>60 Hz</span>
+                <span>360 Hz</span>
+                <span>900 Hz</span>
+                <span>1800 Hz</span>
               </div>
             </div>
 
             {/* Frequency Quick Presets */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium mr-1">Presets:</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium mr-1">Hz Presets:</span>
               {presetFrequencies.map((f) => (
                 <button
                   key={f}
@@ -84,19 +118,32 @@ export default function ThroughputTab() {
             <div className="pt-3 border-t border-slate-100 dark:border-[#1a2333]">
               <div className="flex justify-between items-center mb-1 text-xs">
                 <span className="text-slate-600 dark:text-slate-300 font-medium">Detections per Batch:</span>
-                <span className="font-mono font-bold text-slate-800 dark:text-slate-100">{config.batch_size}</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={config.batch_size}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val)) {
+                      updateConfig({ batch_size: Math.min(100, Math.max(1, val)) });
+                    }
+                  }}
+                  className="w-16 bg-slate-50 dark:bg-[#141b29] border border-slate-300 dark:border-[#253248] rounded px-2 py-0.5 font-mono text-xs font-bold text-slate-800 dark:text-slate-100 text-right outline-none"
+                />
               </div>
               <input
                 type="range"
                 min="1"
-                max="25"
+                max="50"
                 step="1"
                 value={config.batch_size}
                 onChange={(e) => updateConfig({ batch_size: parseInt(e.target.value) })}
                 className="w-full accent-blue-500 cursor-pointer"
               />
               <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                Packs {config.batch_size} detections into each gRPC DetectionBatch message.
+                Packs {config.batch_size} detections into each gRPC DetectionBatch message ({currentFodPerSec} FOD/s total).
               </span>
             </div>
 

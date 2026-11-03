@@ -182,6 +182,11 @@ impl SyncClient {
                             tracing::warn!("Replication session handshake failed: {}", e);
                         }
                     }
+
+                    if let Ok(Some(active)) = self.db.get_active_mission().await {
+                        tracing::warn!("Car is down — terminating active mission {} on ATC replica", active.id);
+                        let _ = self.db.terminate_mission(active.id).await;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -190,6 +195,11 @@ impl SyncClient {
                         e,
                         backoff_secs
                     );
+
+                    if let Ok(Some(active)) = self.db.get_active_mission().await {
+                        tracing::warn!("Car is down — terminating active mission {} on ATC replica", active.id);
+                        let _ = self.db.terminate_mission(active.id).await;
+                    }
                 }
             }
 

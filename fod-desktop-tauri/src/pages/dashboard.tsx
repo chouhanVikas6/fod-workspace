@@ -25,9 +25,10 @@ const MissionControl = () => {
     const isSidebarVisible = useSelector((store: RootState) => store.SelectedFod.isSidebarVisible);
     const isOpen = useSelector((store: RootState) => store.FodDetailedView.isOpen);
     const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
+    const isDark = useSelector((store: RootState) => store.theme.theme === 'dark');
     const { width, background } = {
         width: 96,
-        background: "#F8F8F8",
+        background: isDark ? "#22262B" : "#F8F8F8",
     }
     const { isWebCamOpen, isFodFinalReviewOpen } = webCamState;
     const handleTab = (name:string) => {
@@ -35,7 +36,7 @@ const MissionControl = () => {
     }
     console.log("Spinning Dashboard")
     return (
-        <div className='relative h-full w-full bg-white overflow-hidden '>
+        <div className={`relative h-full w-full overflow-hidden transition-colors duration-200 ${isDark ? 'bg-[#22262B]' : 'bg-white'}`}>
             {
                 !!(missionState?.missionNumber) ?
                     <>
@@ -51,9 +52,8 @@ const MissionControl = () => {
                         </div>
                         <div className='flex relative h-[92%] z-0' style={{ background }}>
                             <OperationSideBar tab={tab} setTab={handleTab} />
-                            <div className='h-[100%]' style={{ width: isSidebarVisible ? `calc(${width}% - 250px)` : `${width}%` }}>
+                            <div className='h-full flex-1 min-w-0 relative overflow-hidden'>
                                 <FodPanel open={tab == 'dashboard'} />
-                                {/* //need to refactor */}
                                 <Setting open={tab == 'setting'} />
                                 {isMapOpen && <Map />}
                             </div>

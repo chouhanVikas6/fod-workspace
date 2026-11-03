@@ -1,395 +1,318 @@
-//! Zoid FOD Desktop — Tauri v2 shell.
+//! Zoid FOD Desktop — Tauri v2 library with integrated Rust backend & SQLite DB.
 //!
-//! Responsibilities of this thin Rust shell (see
-//! `docs/electron-to-tauri-migration-plan.md`, Phase 3 + Phase 4.2/4.3):
-//!   * create the single 1200x800 window and load the renderer,
-//!   * enforce a single running instance (focus the existing window instead),
-//!   * spawn + supervise the `fod-backend` Rust sidecar (axum on :7985) —
-//!     adopt an already-running backend, otherwise spawn, health-check, and
-//!     restart-with-backoff on unexpected exit; kill it on our own exit but
-//!     only if *we* started it.
-//!
-//! All product logic lives in the sidecar (backend-rs, a separate crate) and in
-//! the React renderer; this file deliberately stays small.
+//! All backend services, schedulers, gRPC telemetry streams, and SQLite persistence
+//! run directly inside this process and communicate with the React frontend via
+//! Tauri IPC commands and events.
 
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod imagewriter;
+pub mod models;
+pub mod realtime;
+pub mod routes;
+pub mod scheduler;
+pub mod services;
+pub mod state;
+pub mod upstream;
 
-use tauri::{AppHandle, Manager, RunEvent};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Fixed internal GUI/backend port — other components in the stack assume :7985.
-const BACKEND_PORT: u16 = 7985;
-/// Seconds to wait for the backend to report healthy before surfacing an error.
-const HEALTH_TIMEOUT_SECS: u64 = 30;
-/// Maximum automatic restarts after an *unexpected* sidecar exit.
-const MAX_RESTARTS: usize = 3;
-/// Name of the sidecar binary (dev: backend-rs target dir; prod: Tauri externalBin).
-const SIDECAR_NAME: &str = "fod-backend";
+use axum::body::Body;
+use axum::http::{HeaderName, HeaderValue, Method, Request};
+use base64::Engine;
+use serde::Serialize;
+use serde_json::{Value, json};
+use tauri::Manager;
+use tower::ServiceExt;
 
-/// Supervises the backend sidecar. Stored as Tauri managed state.
-struct SidecarSupervisor {
-    /// Handle to the spawned child (None when adopted, not running, or reaped).
-    child: Mutex<Option<CommandChild>>,
-    /// True only if *we* spawned the sidecar — the gate for killing/restarting it.
-    we_spawned: AtomicBool,
-    /// Set during app shutdown so the monitor does not treat exit as a crash.
-    shutting_down: AtomicBool,
-    /// Ensures at most one error dialog is shown.
-    error_surfaced: AtomicBool,
-    /// Count of automatic restarts performed so far.
-    restart_attempts: AtomicUsize,
-    /// Log file (in the app log dir) that also captures sidecar stdout/stderr.
-    log_path: PathBuf,
+use crate::config::Config;
+use crate::state::AppState;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpcResponse {
+    pub status: u16,
+    pub ok: bool,
+    pub status_text: String,
+    pub data: Value,
+    pub text: String,
 }
 
-impl SidecarSupervisor {
-    fn new(log_path: PathBuf) -> Self {
-        Self {
-            child: Mutex::new(None),
-            we_spawned: AtomicBool::new(false),
-            shutting_down: AtomicBool::new(false),
-            error_surfaced: AtomicBool::new(false),
-            restart_attempts: AtomicUsize::new(0),
-            log_path,
+fn normalize_path_and_query(raw_url: &str) -> String {
+    let trimmed = raw_url.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        if let Some(idx) = trimmed.find("://") {
+            let after_scheme = &trimmed[idx + 3..];
+            if let Some(slash_idx) = after_scheme.find('/') {
+                return after_scheme[slash_idx..].to_string();
+            }
+            return "/".to_string();
         }
     }
-
-    /// Append a line to the shell log file and mirror it to stderr.
-    fn log(&self, msg: &str) {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let line = format!("{ts} [shell] {msg}\n");
-        eprint!("{line}");
-        if let Ok(mut f) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)
-        {
-            let _ = f.write_all(line.as_bytes());
-        }
+    if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
     }
+}
 
-    /// Show a single error dialog (idempotent). Non-blocking to the caller: the
-    /// blocking dialog runs on its own thread.
-    fn surface_error(&self, app: &AppHandle, msg: &str) {
-        if self.error_surfaced.swap(true, Ordering::SeqCst) {
-            return;
-        } 
-        self.log(&format!("ERROR surfaced to user: {msg}"));
-        let app = app.clone();
-        let msg = msg.to_string();
-        std::thread::spawn(move || {
-            app.dialog()
-                .message(msg)
-                .kind(MessageDialogKind::Error)
-                .title("Zoid FOD Desktop — Backend Error")
-                .blocking_show();
-        });
-    }
+/// Dispatch any frontend API call in-process through the Axum router without HTTP/TCP.
+#[tauri::command]
+async fn api_request(
+    state: tauri::State<'_, AppState>,
+    method: String,
+    url: String,
+    headers: Option<HashMap<String, String>>,
+    body: Option<Value>,
+) -> Result<IpcResponse, String> {
+    let path_and_query = normalize_path_and_query(&url);
+    let http_method = Method::from_bytes(method.trim().to_uppercase().as_bytes())
+        .unwrap_or(Method::GET);
 
-    /// Kill the sidecar on shutdown, but only if we own it (adopted backends are
-    /// left running for whoever started them).
-    fn shutdown(&self) {
-        self.shutting_down.store(true, Ordering::SeqCst);
-        if self.we_spawned.load(Ordering::SeqCst) {
-            if let Some(child) = self.child.lock().unwrap().take() {
-                self.log("shutdown — killing sidecar child");
-                let _ = child.kill();
+    let mut req_builder = Request::builder()
+        .method(http_method.clone())
+        .uri(&path_and_query);
+
+    if let Some(hdrs) = headers {
+        for (k, v) in hdrs {
+            if let (Ok(name), Ok(val)) = (
+                HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(&v),
+            ) {
+                req_builder = req_builder.header(name, val);
             }
         }
     }
-}
 
-/// Liveness probe: raw HTTP GET /healthz on :7985, true iff we get `200`.
-/// Kept dependency-free (std TCP) on purpose — we only need liveness, not the
-/// JSON body ({ok,version,port,startedBy}).
-fn is_backend_healthy() -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], BACKEND_PORT));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
-        return false;
+    let body_bytes = match body {
+        None | Some(Value::Null) if http_method == Method::GET || http_method == Method::HEAD => {
+            Vec::new()
+        }
+        None => Vec::new(),
+        Some(Value::String(s)) => s.into_bytes(),
+        Some(v) => {
+            req_builder = req_builder.header("content-type", "application/json");
+            serde_json::to_vec(&v).unwrap_or_default()
+        }
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
-    let req = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:7985\r\nConnection: close\r\n\r\n";
-    if stream.write_all(req).is_err() {
-        return false;
-    }
-    let mut buf = [0u8; 256];
-    match stream.read(&mut buf) {
-        Ok(n) if n > 0 => {
-            let head = String::from_utf8_lossy(&buf[..n]);
-            head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200")
-        }
-        _ => false,
-    }
-}
 
-/// Poll `/healthz` until healthy or the timeout elapses.
-fn wait_until_healthy(timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if is_backend_healthy() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-}
+    let req = req_builder
+        .body(Body::from(body_bytes))
+        .map_err(|e| format!("Failed to construct IPC request: {e}"))?;
 
-/// Project root — `CARGO_MANIFEST_DIR` is `<project>/src-tauri`; its parent is
-/// the project root. Baked in at compile time; only meaningful for dev builds.
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
+    let router = routes::app_router((*state).clone());
+    let resp = router
+        .oneshot(req)
+        .await
+        .map_err(|e| format!("Router dispatch error: {e}"))?;
 
-/// Dev-mode path to the `fod-backend` binary produced by the backend-rs crate:
-/// prefer target/debug, fall back to target/release. Returns the debug path even
-/// when missing so `spawn()` fails with a clear error.
-fn resolve_dev_backend() -> PathBuf {
-    let base = project_root().join("backend-rs").join("target");
-    let bin_name = if cfg!(windows) {
-        format!("{}.exe", SIDECAR_NAME)
+    let status = resp.status();
+    let status_code = status.as_u16();
+    let ok = status.is_success();
+    let status_text = status
+        .canonical_reason()
+        .unwrap_or("OK")
+        .to_string();
+
+    let resp_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+
+    let text = String::from_utf8_lossy(&resp_bytes).into_owned();
+    let data = if text.trim().is_empty() {
+        Value::Null
     } else {
-        SIDECAR_NAME.to_string()
+        serde_json::from_str::<Value>(&text).unwrap_or_else(|_| Value::String(text.clone()))
     };
-    let debug = base.join("debug").join(&bin_name);
-    if debug.exists() {
-        return debug;
-    }
-    let release = base.join("release").join(&bin_name);
-    if release.exists() {
-        return release;
-    }
-    debug
+
+    Ok(IpcResponse {
+        status: status_code,
+        ok,
+        status_text,
+        data,
+        text,
+    })
 }
 
-/// Working directory for the sidecar so that `.env` and `./fod-images` resolve.
-fn resolve_cwd(app: &AppHandle) -> PathBuf {
-    if cfg!(debug_assertions) {
-        project_root()
-    } else {
-        // 1. If running beside .env or the sidecar executable, use the exe folder
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                if dir.join(".env").exists()
-                    || dir.join(SIDECAR_NAME).exists()
-                    || dir.join(format!("{}.exe", SIDECAR_NAME)).exists()
+/// Resolve a FOD image or ClearedFod sha256 image via Tauri IPC and return a `data:image/jpeg;base64,...` URI.
+#[tauri::command]
+async fn get_fod_image(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Option<String>, String> {
+    let clean = normalize_image_path(&path);
+    if clean.is_empty() || clean.contains("..") {
+        return Ok(None);
+    }
+
+    // 1. Check local fod-images/mission/<clean>
+    let file = std::path::Path::new("fod-images/mission").join(&clean);
+    if let Ok(bytes) = tokio::fs::read(&file).await {
+        return Ok(Some(bytes_to_data_url(&bytes)));
+    }
+
+    // 2. If it's a 64-char hex sha256 (e.g. ClearedFod beforeClearImg / afterClearImg)
+    let stem = clean.trim_end_matches(".jpg");
+    if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Some(bytes) = services::fetch_image_from_car(&state, stem, false).await {
+            return Ok(Some(bytes_to_data_url(&bytes)));
+        }
+    }
+
+    // 3. On-demand fetch from Car backend: "<mission>/<group>/<fod>.jpg"
+    let parts: Vec<&str> = clean.split('/').collect();
+    if parts.len() >= 3 {
+        let mission_seg = parts[0];
+        let group_seg = parts[1];
+        let fod_seg = parts[2].trim_end_matches(".jpg");
+
+        if let Some(fod) = services::fetch_fod_from_car(&state, fod_seg).await {
+            if !fod.image_sha256.is_empty() {
+                if let Some(bytes) =
+                    services::fetch_image_from_car(&state, &fod.image_sha256, false).await
                 {
-                    return dir.to_path_buf();
+                    let _ =
+                        imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes).await;
+                    return Ok(Some(bytes_to_data_url(&bytes)));
                 }
             }
         }
-
-        // 2. Otherwise use app_data_dir, ensuring the directory exists on disk
-        let dir = app
-            .path()
-            .app_data_dir()
-            .unwrap_or_else(|_| std::env::temp_dir());
-        let _ = std::fs::create_dir_all(&dir);
-        dir
     }
+
+    Ok(None)
 }
 
-/// Spawn the sidecar and attach a monitor task that pipes its output to the log
-/// and restarts it (bounded) on unexpected exit.
-fn spawn_sidecar(app: &AppHandle, state: &Arc<SidecarSupervisor>) -> Result<(), String> {
-    let cwd = resolve_cwd(app);
+fn normalize_image_path(raw: &str) -> String {
+    let s = raw.trim();
+    if let Some(idx) = s.find("/images/") {
+        return s[idx + "/images/".len()..].trim_start_matches('/').to_string();
+    }
+    s.trim_start_matches('/').to_string()
+}
 
-    // Command resolution differs by build:
-    //   dev  -> absolute path to backend-rs/target/{debug,release}/fod-backend
-    //   prod -> Tauri sidecar mechanism (externalBin "binaries/fod-backend-<triple>")
-    let command = if cfg!(debug_assertions) {
-        let bin = resolve_dev_backend();
-        state.log(&format!(
-            "spawning sidecar (dev): {} (cwd {})",
-            bin.display(),
-            cwd.display()
-        ));
-        app.shell().command(bin.to_string_lossy().to_string())
-    } else {
-        // TODO(phase-4.1): ship `fod-backend` as a Tauri externalBin/sidecar
-        // (binaries/fod-backend-<target-triple>); config already declares
-        // bundle.externalBin = ["binaries/fod-backend"].
-        state.log("spawning sidecar (prod): externalBin fod-backend");
-        app.shell()
-            .sidecar(SIDECAR_NAME)
-            .map_err(|e| format!("failed to resolve sidecar '{SIDECAR_NAME}': {e}"))?
-    };
-
-    let (mut rx, child) = command
-        .env("GUI_SERVER_PORT", BACKEND_PORT.to_string())
-        .current_dir(cwd)
-        .spawn()
-        .map_err(|e| format!("failed to spawn sidecar '{SIDECAR_NAME}': {e}"))?;
-
-    *state.child.lock().unwrap() = Some(child);
-    state.we_spawned.store(true, Ordering::SeqCst);
-
-    // Pipe stdout/stderr into the log; watch for termination.
-    let app = app.clone();
-    let state = state.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(bytes) => {
-                    state.log(&format!(
-                        "[sidecar] {}",
-                        String::from_utf8_lossy(&bytes).trim_end()
-                    ));
-                }
-                CommandEvent::Stderr(bytes) => {
-                    state.log(&format!(
-                        "[sidecar!] {}",
-                        String::from_utf8_lossy(&bytes).trim_end()
-                    ));
-                }
-                CommandEvent::Error(err) => {
-                    state.log(&format!("[sidecar error] {err}"));
-                }
-                CommandEvent::Terminated(payload) => {
-                    state.log(&format!(
-                        "sidecar terminated (code={:?}, signal={:?})",
-                        payload.code, payload.signal
-                    ));
-                    *state.child.lock().unwrap() = None;
-                    if !state.shutting_down.load(Ordering::SeqCst) {
-                        restart_with_backoff(app.clone(), state.clone());
-                    }
-                    break;
-                }
-                _ => {}
-            }
+fn bytes_to_data_url(bytes: &[u8]) -> String {
+    // Handle both raw JPEG bytes and legacy base64-encoded UTF-8 files
+    if let Ok(as_str) = std::str::from_utf8(bytes) {
+        let trimmed = as_str.trim();
+        if trimmed.starts_with("data:image/") {
+            return trimmed.to_string();
         }
-    });
+        if trimmed.starts_with("/9j/") {
+            return format!("data:image/jpeg;base64,{trimmed}");
+        }
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:image/jpeg;base64,{encoded}")
+}
 
+/// Replace Socket.IO client `.emit(...)` with Tauri IPC command.
+#[tauri::command]
+async fn socket_emit(
+    state: tauri::State<'_, AppState>,
+    namespace: Option<String>,
+    event: String,
+    payload: Option<Value>,
+) -> Result<(), String> {
+    realtime::socketio::handle_socket_event(&state, namespace.as_deref(), &event, payload).await;
     Ok(())
 }
 
-/// Restart the sidecar after an exponential backoff, up to `MAX_RESTARTS` times.
-fn restart_with_backoff(app: AppHandle, state: Arc<SidecarSupervisor>) {
-    std::thread::spawn(move || {
-        let attempt = state.restart_attempts.fetch_add(1, Ordering::SeqCst) + 1;
-        if attempt > MAX_RESTARTS {
-            state.surface_error(
-                &app,
-                "The backend service crashed repeatedly and could not be recovered. Please restart the application.",
-            );
-            return;
-        }
-        let backoff = Duration::from_secs(1u64 << (attempt - 1)); // 1s, 2s, 4s
-        state.log(&format!(
-            "restarting sidecar (attempt {attempt}/{MAX_RESTARTS}) after {backoff:?}"
-        ));
-        std::thread::sleep(backoff);
-        if state.shutting_down.load(Ordering::SeqCst) {
-            return;
-        }
-        if let Err(e) = spawn_sidecar(&app, &state) {
-            state.log(&format!("respawn failed: {e}"));
-            state.surface_error(&app, &format!("Failed to restart the backend service: {e}"));
-        }
-    });
+/// Replace `/api/sse/health-data` initial fetch with a direct Tauri IPC command.
+#[tauri::command]
+async fn get_health_bite_state(state: tauri::State<'_, AppState>) -> Result<Value, String> {
+    Ok(realtime::sse::get_bite_state_once(&state)
+        .await
+        .unwrap_or_else(|| json!({})))
 }
 
-/// Backend bring-up, run on a background thread so the window can render.
-fn start_supervision(app: AppHandle, state: Arc<SidecarSupervisor>) {
-    std::thread::spawn(move || {
-        // 1. Adopt an already-healthy backend. This covers the dev loop
-        //    (`npm run dev:backend` under concurrently) and the second-instance
-        //    case — we neither spawn nor own it, so we never kill it.
-        if is_backend_healthy() {
-            state.we_spawned.store(false, Ordering::SeqCst);
-            state.log("backend already healthy on :7985 — adopting (not spawning)");
-            return;
-        }
-
-        // 2. Escape hatch: never spawn when asked not to.
-        let no_sidecar = std::env::var("FOD_NO_SIDECAR")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        if no_sidecar {
-            state.log("FOD_NO_SIDECAR=1 — not spawning; waiting for an external backend");
-        } else if let Err(e) = spawn_sidecar(&app, &state) {
-            state.surface_error(&app, &format!("Failed to start the backend service: {e}"));
-            return;
-        }
-
-        // 3. Wait for health; surface an error on timeout.
-        if wait_until_healthy(Duration::from_secs(HEALTH_TIMEOUT_SECS)) {
-            state.log("backend is healthy");
-        } else {
-            state.surface_error(
-                &app,
-                "The backend service did not become healthy within 30 seconds. Check the application log for details.",
-            );
-        }
-    });
+/// Start a Tauri IPC stream replacing `EventSource('/api/sse/retrive-data?id=...')`.
+#[tauri::command]
+async fn start_retrive_stream(
+    state: tauri::State<'_, AppState>,
+    sub_id: String,
+    mission_id: Option<i64>,
+) -> Result<(), String> {
+    realtime::sse::start_retrive_ipc_stream((*state).clone(), sub_id, mission_id).await;
+    Ok(())
 }
 
-/// Entry point invoked from `main.rs`.
+/// Stop an active `retrive-data` Tauri IPC stream.
+#[tauri::command]
+async fn stop_retrive_stream(
+    state: tauri::State<'_, AppState>,
+    sub_id: String,
+) -> Result<(), String> {
+    realtime::sse::stop_retrive_ipc_stream(&state, &sub_id).await;
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // WebKitGTK DMABUF renderer on Linux causes protocol and loader crashes (especially with NVIDIA/Mesa/Wayland).
-    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-    std::env::set_var("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1");
-    if std::env::var("GDK_BACKEND").is_err() {
-        std::env::set_var("GDK_BACKEND", "x11");
-    }
+    dotenvy::dotenv().ok();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "fod_desktop_lib=info,tower_http=info".into()),
+        )
+        .try_init();
 
-    let app = tauri::Builder::default()
-        // single-instance MUST be registered first so a second launch is caught
-        // before the rest of the app initialises.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
+    let cfg = Arc::new(Config::load());
+    let db = tauri::async_runtime::block_on(async {
+        db::init_db(&cfg.database_url)
+            .await
+            .expect("Failed to initialize SQLite database")
+    });
+
+    let app_state = AppState::new(cfg, db);
+
+    tauri::Builder::default()
+        .manage(app_state.clone())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
             }
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let log_dir = app
-                .path()
-                .app_log_dir()
-                .unwrap_or_else(|_| std::env::temp_dir());
-            let _ = std::fs::create_dir_all(&log_dir);
-            let supervisor = Arc::new(SidecarSupervisor::new(log_dir.join("sidecar.log")));
-            app.manage(supervisor.clone());
+        .invoke_handler(tauri::generate_handler![
+            api_request,
+            get_fod_image,
+            socket_emit,
+            get_health_bite_state,
+            start_retrive_stream,
+            stop_retrive_stream,
+        ])
+        .setup(move |app| {
+            app_state.set_app_handle(app.handle().clone());
 
-            // DevTools available in debug builds (matches the old Electron dev UX).
-            // #[cfg(debug_assertions)]
-            // if let Some(window) = app.get_webview_window("main") {
-            //     window.open_devtools();
-            // }
+            let st = app_state.clone();
+            tauri::async_runtime::spawn(async move {
+                // Ensure no dangling active mission on startup when car is not verified live yet
+                let _ = sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = $1 WHERE "status" = 'ACTIVE'"#)
+                    .bind(crate::services::now_naive())
+                    .execute(&st.db)
+                    .await;
 
-            start_supervision(app.handle().clone(), supervisor);
+                if let Err(e) = realtime::setup(st.clone()).await {
+                    tracing::error!("realtime::setup error: {e}");
+                }
+                realtime::car_telemetry::spawn(st.clone());
+                realtime::group_stream::spawn(st.clone());
+                realtime::mission_stream::spawn(st.clone());
+                scheduler::spawn_primary_schedular(st.clone());
+                scheduler::spawn_sync_service(st.clone());
+                scheduler::spawn_user_sync_service(st);
+            });
+
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.maximize();
+            }
             Ok(())
         })
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application");
-
-    app.run(|app_handle, event| match event {
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-            if let Some(state) = app_handle.try_state::<Arc<SidecarSupervisor>>() {
-                state.shutdown();
-            }
-        }
-        _ => {}
-    });
+        .run(tauri::generate_context!())
+        .expect("error while running Zoid FOD Desktop");
 }

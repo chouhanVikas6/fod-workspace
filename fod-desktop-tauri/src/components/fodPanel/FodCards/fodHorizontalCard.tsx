@@ -17,33 +17,36 @@ const FodHorizontalcard = ({ fod,selectedMission,openMapAndSelectFod,actionOnCar
 
   return (
     <div className="h-40 w-full p-2.5">
-      <div className="h-full w-full flex overflow-hidden rounded-lg bg-[#FBFBFC] active:scale-95" onClick={() => actionOnCard(fod)}>
+      <div
+        className="h-full w-full flex overflow-hidden rounded-lg bg-[#FBFBFC] dark:bg-[#22262B] border border-slate-200/80 dark:border-[#373C43] active:scale-95 cursor-pointer transition-colors"
+        onClick={() => actionOnCard(fod)}
+      >
         <div className="relative h-full w-1/2">
           <Image src={`${config.ImagesBase}/${selectedMission.id}/${fod.groupId}/${fod.id}.jpg`} className="h-full w-full object-cover object-center" draggable={false} alt={""} width={100} height={100}/>
           <div className="absolute top-1.5 w-full h-7 px-1.5 flex justify-between items-center">
             <div className="text-white font-bold text-xl px-2 bg-gray-600 rounded-full bg-opacity-30">{fod.groupId}</div>
             {canUndo ? 
-              <ImUndo2 className="cursor-pointer h-5 w-5 mr-1" onClick={() => dispatch(undoFod(fod))} /> : 
+              <ImUndo2 className="cursor-pointer h-5 w-5 mr-1 text-white drop-shadow" onClick={() => dispatch(undoFod(fod))} /> : 
               <Image src={MapMode} onClick={() => openMapAndSelectFod()} className="cursor-pointer" alt={""} width={35} height={35} />
             }
           </div>
         </div>
-        <div className="h-full w-1/2 flex flex-col justify-between items-center p-2.5">
-          <div className="w-full h-1/5 flex justify-between text-[#696972]">
+        <div className="h-full w-1/2 flex flex-col justify-between items-center p-2.5 text-xs">
+          <div className="w-full h-1/5 flex justify-between text-[#696972] dark:text-[#8C939C]">
             <span>CAM ID</span>
-            <span>{fod.sysid}</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{fod.sysid}</span>
           </div>
-          <div className="w-full h-1/5 flex justify-between text-[#696972]">
+          <div className="w-full h-1/5 flex justify-between text-[#696972] dark:text-[#8C939C]">
             <span>Size</span>
-            <span>{fod.size}</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{fod.size}</span>
           </div>
           {/* <div className="w-full h-1/5 flex justify-between text-[#696972]">
             <span>Risk</span>
             <span>{Fod_Riskfactor(fod)}</span>
           </div> */}
-          <div className="w-full h-1/5 flex justify-between text-[#696972]">
+          <div className="w-full h-1/5 flex justify-between text-[#696972] dark:text-[#8C939C]">
             <span>Vel</span>
-            <span>{(fod.velocity)}</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{(fod.velocity)}</span>
           </div>
         </div>
       </div>

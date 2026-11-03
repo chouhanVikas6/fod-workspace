@@ -10,13 +10,16 @@ export default defineConfig(({ mode }) => ({
     svgr(),
     nodePolyfills({
       globals: {
-        Buffer: true,
-        global: true,
-        process: true,
+        Buffer: false,
+        global: false,
+        process: false,
       },
       protocolImports: true,
     }),
   ],
+  define: {
+    global: 'globalThis',
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -32,6 +35,9 @@ export default defineConfig(({ mode }) => ({
     port: 5174,
     strictPort: true,
     cors: true,
+    headers: {
+      'Cache-Control': 'no-store',
+    },
     hmr: {
       host: '127.0.0.1',
       port: 5174,
@@ -62,12 +68,23 @@ export default defineConfig(({ mode }) => ({
       'react-icons/bs',
       'react-icons/gi',
       'react-icons/hi',
+      'react-icons/hi2',
       'react-icons/im',
       'react-icons/md',
       'react-icons/pi',
       'react-icons/rx',
-      'vite-plugin-node-polyfills/shims/process',
-      'vite-plugin-node-polyfills/shims/buffer',
+      '@tauri-apps/api/core',
+      '@tauri-apps/api/event',
+      '@turf/turf',
+      'geolib',
+      'geolib/es/getDistance',
+      'react-input-slider',
+      'react-slick',
+      'react-window',
+      'redux-persist/integration/react',
+      'redux-persist/lib/storage',
+      'supercluster',
+      'buffer',
     ],
   },
   // Base is '/' in dev server to avoid path resolution errors, and './' in production builds for Tauri webview.

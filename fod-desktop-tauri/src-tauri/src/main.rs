@@ -2,8 +2,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if let Ok(cwd) = std::env::current_dir() {
+        if cwd.file_name().and_then(|n| n.to_str()) == Some("src-tauri") {
+            if let Some(parent) = cwd.parent() {
+                let _ = std::env::set_current_dir(parent);
+            }
+        }
+    }
+
     #[cfg(target_os = "linux")]
-    {
+    unsafe {
         // Fix WebKitGTK DMABUF renderer & compositing internal errors on Linux/Wayland
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");

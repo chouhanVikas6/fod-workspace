@@ -53,13 +53,13 @@ const CommunicationInfo = () => {
             onMouseLeave={() => handleHover(false)}
             onClick={() => setShowTooltip(prev => !prev)}
         >
-            <div className="flex items-center active:scale-95 space-x-2   p-2">
+            <div className="flex items-center active:scale-95 space-x-2 p-2 text-slate-700 dark:text-slate-200">
                 <Image src={getCommBarImage} alt="Communication Bar" width={30} height={30} />
                 <AtcIcon/>
-                {comms?.map((ele) => (
-                            <div key={`${ele.type}-${ele.sysId}`} className="flex items-center">
+                {comms?.filter((ele) => ele.type !== 'atc').map((ele) => (
+                            <div key={`${ele.type}-${ele.sysId}`} className="flex items-center gap-1">
                                 <Image src={getImage(ele.type)} alt={ele.type} width={15} height={15} />
-                                <span>{`${ele.type} `}</span>
+                                <span className="text-xs font-semibold">{`${ele.type} `}</span>
                             </div>
                         ))}
             </div>

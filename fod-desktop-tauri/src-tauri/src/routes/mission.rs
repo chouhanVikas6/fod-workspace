@@ -258,7 +258,7 @@ async fn toggle_scan(method: Method, State(s): State<AppState>, Query(q): Query<
                 .or_else(|| v.as_str())
                 .unwrap_or("PAUSE");
             let _ = sqlx::query(
-                "UPDATE \"Mission\" SET \"scanStatus\" = $1::\"MissionScanStatus\", \"updatedAt\" = $2 WHERE \"status\" = 'ACTIVE'",
+                "UPDATE \"Mission\" SET \"scanStatus\" = $1, \"updatedAt\" = $2 WHERE \"status\" = 'ACTIVE'",
             )
             .bind(status)
             .bind(svc::now_naive())
@@ -875,7 +875,7 @@ async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<
     // ::text on the enum column so the driver returns it as a string, which
     // is what Prisma produced.
     let sql = r#"
-      SELECT DISTINCT ON ("f"."groupId")
+      SELECT
             "f"."id",
             "f"."size",
             "f"."groupId",
@@ -885,24 +885,26 @@ async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<
             "f"."velocity",
             "f"."sysid",
             "maxFod"."maxSize" AS "biggestSize",
-            fg."status"::text AS "groupStatus"
+            fg."status" AS "groupStatus"
         FROM
-            Public."Fod" f
+            "Fod" f
         INNER JOIN (
             SELECT
                 "groupId",
                 MAX("size") AS "maxSize"
             FROM
-                Public."Fod"
+                "Fod"
             WHERE
                 "missionId" = $1
             GROUP BY
                 "groupId"
         ) AS "maxFod" ON f."groupId" = "maxFod"."groupId" AND f."size" = "maxFod"."maxSize"
         LEFT JOIN
-            Public."FodGroup" fg ON f."groupId" = fg."groupId" AND f."missionId" = fg."missionId"
+            "FodGroup" fg ON f."groupId" = fg."groupId" AND f."missionId" = fg."missionId"
         WHERE
             f."missionId" = $1
+        GROUP BY
+            f."groupId"
         ORDER BY
             f."groupId" DESC
       "#;
@@ -961,7 +963,7 @@ async fn scan_status(method: Method, State(s): State<AppState>) -> Response {
         return mna(&method, None);
     }
     let local_scan: Option<String> = sqlx::query_scalar(
-        "SELECT \"scanStatus\"::text FROM \"Mission\" WHERE \"status\" = 'ACTIVE' LIMIT 1",
+        "SELECT \"scanStatus\" FROM \"Mission\" WHERE \"status\" = 'ACTIVE' LIMIT 1",
     )
     .fetch_optional(&s.db)
     .await

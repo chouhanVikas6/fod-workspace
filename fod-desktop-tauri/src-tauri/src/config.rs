@@ -37,7 +37,7 @@ impl Config {
         Self {
             database_url: env_or(
                 "DATABASE_URL",
-                "postgresql://postgres:1234@localhost:5432/zoid_client",
+                "sqlite://zoid_client.db?mode=rwc",
             ),
             atc_backend_url: env_or("NEXT_PUBLIC_SECONDARY_SERVER_URL", "http://127.0.0.1:50052"),
             socketserver: std::env::var("SOCKETSERVER").unwrap_or_else(|_| car.clone()),

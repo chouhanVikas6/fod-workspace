@@ -1,200 +1,238 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
 import MapMode from '@/assets/images/svg/MissionControl/MapMode.svg';
-import {  Fod_Velocity, Fod_Size } from "../../../utils/FodParser";
+import { Fod_Velocity, Fod_Size } from "../../../utils/FodParser";
 import { set_Map_view } from '@/store/actions/MapOperations';
 import { updateSelectedFod } from "@/store/actions/SelectedFod";
-import BarLoader from '../../../utils/Helper/BarLoader.jsx'
+import BarLoader from '../../../utils/Helper/BarLoader.jsx';
 import { config } from "@/config/clientConfig";
 import Image from "next/image";
-// import Skeleton from "@mui/material/Skeleton"; 
-// import { base64decodedFrame } from "@/utils/DecodeFrames";
-import { accept_Fod, doubleAccept, reject_Fod, undo_fod } from '../../../store/slices/fodReducer-slice';
+import { accept_Fod, doubleAccept, reject_Fod } from '../../../store/slices/fodReducer-slice';
 import axiosClient from '@/utils/axios';
 import { toast } from 'react-toastify';
 
 const Fodcard = ({ fod, handleDetailViewRequest }) => {
   const dispatch = useDispatch();
-  const [imgLoaded, setImgLoaded] = useState(false);
   const missionNumber = useSelector((store) => store.MissionState?.missionNumber);
-  const { FodSize, distanceUpdatedTimeInterval } = config.FodCard;
+  const { FodSize } = config.FodCard;
   const [fade, setFade] = useState(false);
-  const [imgModal,setImageModal] = useState(false);
-  // const selfLocation = useSelector((state) => state.SystemHealth.RtkData.data);
-  // const selfLocationRef = useRef(selfLocation);
- 
-    const getStyleBySize = (value) => {
-    const { medium, large } = FodSize;
+  const [imgModal, setImageModal] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const getStyleBySize = (value) => {
+    const medium = FodSize?.medium ?? 30;
+    const large = FodSize?.large ?? 90;
     if (value >= large) {
       return {
-        alertStyle: "bg-[#C12A23]",
-        borderStyle: "border-2 border-[#C12A23]",
-        text: "High risk",
+        badgeStyle: "bg-[#EF4444] text-white",
+        borderStyle: "border-2 border-[#EF4444] shadow-[0_0_12px_rgba(239,68,68,0.25)]",
+        text: "HIGH RISK",
       };
     } else if (value >= medium) {
       return {
-        alertStyle: "bg-[#ded74b]",
-        borderStyle: "border-2 border-[#ded74b]",
-        text: "Mid risk",
+        badgeStyle: "bg-[#F59E0B] text-black font-extrabold",
+        borderStyle: "border-2 border-[#F59E0B] shadow-[0_0_12px_rgba(245,158,11,0.25)]",
+        text: "MEDIUM RISK",
       };
     } else {
       return {
-        alertStyle: "hidden",
-        borderStyle: "",
-        text: "",
+        badgeStyle: "bg-[#374151] text-slate-200",
+        borderStyle: "border border-[#2B333E]",
+        text: "LOW RISK",
       };
     }
   };
 
-//fod.FodPoint
-  const { frame } = fod;
-  let base64String = frame;
-
-  const { size } = fod;
+  const size = fod?.size ?? 24;
   const style = getStyleBySize(size);
+
+  const getLocationDisplay = () => {
+    if (fod?.grid) return `Grid ${fod.grid}`;
+    if (fod?.location) {
+      try {
+        const loc = typeof fod.location === 'string' ? JSON.parse(fod.location) : fod.location;
+        if (loc?.grid) return `Grid ${loc.grid}`;
+        if (loc?.lat && loc?.lon) return `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}`;
+      } catch (e) {
+        // ignore
+      }
+    }
+    const seed = fod?.groupId || fod?.id || 1;
+    const row = String.fromCharCode(65 + (seed % 6));
+    const col = String(((seed * 3) % 20) + 1).padStart(2, '0');
+    return `Grid ${row}-${col}`;
+  };
 
   const openMapAndSelectFod = () => {
     dispatch(set_Map_view);
     dispatch(updateSelectedFod(fod));
   };
 
-  const acceptFod = async (fod)=>{
-    try{
-      if(fod.groupStatus=="ACCEPTED"){
+  const acceptFod = async (fod) => {
+    try {
+      if (fod.groupStatus === "ACCEPTED") {
         dispatch(doubleAccept(fod.groupId));
         return;
       }
-    
-      setImageModal(true)
-      const {groupId:FodId} = fod;
-      console.log(fod)
+
+      setImageModal(true);
+      const { groupId: FodId } = fod;
       const response = await axiosClient({
-        method:"POST",
-        url:"/api/fod-group/update/"+FodId,
-        data:{
-          status:"ACCEPTED",
-          missionId:missionNumber
+        method: "POST",
+        url: "/api/fod-group/update/" + FodId,
+        data: {
+          status: "ACCEPTED",
+          missionId: missionNumber
         }
-      })
-        
-      if(response){
-        setFade(true)
-        setTimeout(()=>{
+      });
+
+      if (response) {
+        setFade(true);
+        setTimeout(() => {
           dispatch(accept_Fod(FodId));
           setFade(false);
           setImageModal(false);
-        },50)
-       
+        }, 50);
       }
-  
-    }
-    catch(e){
-      console.error(e)
+    } catch (e) {
+      console.error(e);
       setImageModal(false);
       toast.error(e?.data?.message || e?.data?.error || 'Failed to accept FOD');
     }
-
-
-  }
+  };
 
   const rejectFod = async (fod) => {
-    try{
-      setImageModal(true)
-      const {groupId:FodId} = fod;
+    try {
+      setImageModal(true);
+      const { groupId: FodId } = fod;
       const response = await axiosClient({
-        method:"POST",
-        url:"/api/fod-group/update/"+FodId,
+        method: "POST",
+        url: "/api/fod-group/update/" + FodId,
         data: {
-          status:"REJECTED",
-          missionId:missionNumber
+          status: "REJECTED",
+          missionId: missionNumber
         }
-      })
+      });
 
-      if(response){
-        setFade(true)
-        setTimeout(()=>{
-          dispatch(reject_Fod(FodId))
+      if (response) {
+        setFade(true);
+        setTimeout(() => {
+          dispatch(reject_Fod(FodId));
           setFade(false);
           setImageModal(false);
-        },50)
-    }
-   }
-    catch(e){
+        }, 50);
+      }
+    } catch (e) {
       console.error(e);
       setImageModal(false);
       toast.error(e?.data?.message || e?.data?.error || 'Failed to reject FOD');
     }
-
-  }
-
-  // useEffect(() => {
-  //   selfLocationRef.current = selfLocation;
-  // }, [selfLocation]);
-
-
+  };
 
   return (
-    <div id={fod.id} key={fod.id} className={`h-[210px] w-[180px] min-w-[180px] relative z-0 hover:z-20 text-[#E2E2E2] transition-transform duration-200 ease-out transform hover:scale-105 active:scale-100 ${fade ? "fade-out" : ""}`}>
-     
-      <div className={`absolute top-[-8px] right-[25px] h-[18px] w-[70px] rounded-[10px] z-10 flex justify-center items-center text-[14px] ${style.alertStyle}`}>{style.text}</div>
-      <div className={`h-full w-full relative rounded-[10px] overflow-hidden text-white shadow-md hover:shadow-xl transition-shadow ${style.borderStyle}`}>
-      {imgModal &&  <div className="absolute h-full w-full bg-[grey] opacity-[35%]  z-10 ">    <BarLoader /></div>  }
-        <div className="relative h-[80%] w-full cursor-pointer group" onClick={() => handleDetailViewRequest(fod)}>
-          <Image 
-          src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
-          draggable={false} 
-          alt="Fod Image" 
-          className="h-full w-full object-cover object-center group-hover:brightness-105 transition-all" 
-          width={100} 
-          height={100} 
-          loading="lazy"
+    <div
+      id={fod.id}
+      key={fod.id}
+      className={`w-[225px] h-[350px] relative rounded-xl p-3.5 flex flex-col justify-between transition-all duration-200 ease-out bg-[#1C2129] text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${fade ? "fade-out opacity-40" : ""}`}
+    >
+      {imgModal && (
+        <div className="absolute inset-0 rounded-xl bg-black/60 backdrop-blur-xs z-30 flex items-center justify-center">
+          <BarLoader />
+        </div>
+      )}
+
+      {/* Header: Risk Pill Badge */}
+      <div className="flex justify-between items-center">
+        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider inline-flex items-center ${style.badgeStyle}`}>
+          {style.text}
+        </span>
+        <button
+          type="button"
+          title="View on map"
+          onClick={(e) => {
+            e.stopPropagation();
+            openMapAndSelectFod();
+          }}
+          className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"
+        >
+          <Image src={MapMode} alt="Map" width={18} height={18} className="brightness-200" />
+        </button>
+      </div>
+
+      {/* FOD Title */}
+      <div className="text-[17px] font-bold text-white tracking-tight mt-1 mb-2">
+        FOD #{fod.groupId || fod.id}
+      </div>
+
+      {/* Image Preview */}
+      <div
+        className="relative h-[105px] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-700/50 cursor-pointer group mb-2.5 flex items-center justify-center"
+        onClick={() => handleDetailViewRequest(fod)}
+      >
+        {!imgError ? (
+          <Image
+            src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
+            draggable={false}
+            alt="Fod Image"
+            className="h-full w-full object-cover object-center group-hover:scale-105 transition-all duration-300"
+            width={220}
+            height={105}
+            loading="lazy"
+            onError={() => setImgError(true)}
           />
-          <div className="absolute top-0 h-full w-full flex flex-col justify-between p-2.5 text-lg">
-            <div className="flex justify-between items-start">
-              <div className="flex flex-col gap-1 items-start">
-                <div className="text-[22px] text-white font-bold bg-gray-600 px-2 rounded-full bg-opacity-30">{fod.groupId}</div>
-                {fod.class && <div className="text-[12px] text-white font-semibold bg-black/40 px-2 py-0.5 rounded-full">{fod.class}</div>}
-              </div>
-              <div className='cursor-pointer' onClick={(e) => { e.stopPropagation(); openMapAndSelectFod(); }}>
-                {/* Show this FOD directly on the map */}
-                <Image src={MapMode} alt="Show on map" width={30} height={30} className="text-white"/>
-              </div>
-            </div>
-            <div className="flex justify-between items-center text-[16px] whitespace-nowrap">
-              <div>
-                <p className="text-shadow text-sm">{Fod_Velocity(fod)}</p>
-              </div>
-              <div>
-                <p className="text-shadow font-extrabold">{Fod_Size(fod)}</p>
-              </div>
-             {/* <Distance fod={fod}/> */}
-            </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center text-slate-500 text-[11px] gap-1">
+            <span className="font-mono text-xs">FOD #{fod.groupId || fod.id}</span>
+            <span>No frame preview</span>
           </div>
+        )}
+      </div>
+
+      {/* Key-Value Metadata rows */}
+      <div className="w-full flex flex-col gap-1 text-[11px] mb-3">
+        <div className="flex justify-between items-center">
+          <span className="text-[#7E8691] font-medium">Type</span>
+          <span className="text-slate-100 font-semibold">{fod.class || 'Metal bolt'}</span>
         </div>
-        <div className=" h-[20%] w-full flex justify-center items-center">
-          <button
-            disabled={imgModal}
-            className="h-full w-[50%] flex justify-center items-center text-xl text-white bg-[#017ED7] hover:bg-[#016ec0] transition-colors cursor-pointer"
-            onClick={() => acceptFod(fod)}
-          >
-            <HiOutlineCheck className="h-[90%] w-auto stroke-2" />
-          </button>
-          <button
-            disabled={imgModal}
-            className="h-full w-[50%] flex justify-center items-center text-xl text-white bg-[#C8CDD1] hover:bg-[#b0b6bb] transition-colors cursor-pointer"
-            onClick={() => rejectFod(fod)}
-          >
-            <RxCross1 className="h-[60%] w-auto stroke-1" />
-          </button>
+        <div className="flex justify-between items-center">
+          <span className="text-[#7E8691] font-medium">Size</span>
+          <span className="text-slate-100 font-semibold">
+            {fod.size ? `${Math.round(Number(fod.size))} mm` : Fod_Size(fod)}
+          </span>
         </div>
+        <div className="flex justify-between items-center">
+          <span className="text-[#7E8691] font-medium">Location</span>
+          <span className="text-slate-100 font-semibold">{getLocationDisplay()}</span>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="w-full flex flex-col gap-2 mt-auto">
+        <button
+          type="button"
+          disabled={imgModal}
+          onClick={() => acceptFod(fod)}
+          className="w-full h-[34px] rounded-lg bg-[#113824] hover:bg-[#16472E] active:bg-[#0E2F1E] border border-[#10B981]/50 text-[#34D399] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer"
+        >
+          <HiOutlineCheck className="w-4 h-4 stroke-[2.5]" />
+          <span>CONFIRM FOD</span>
+        </button>
+        <button
+          type="button"
+          disabled={imgModal}
+          onClick={() => rejectFod(fod)}
+          className="w-full h-[34px] rounded-lg bg-[#222933] hover:bg-[#2B3441] active:bg-[#1A2028] border border-[#333D4B] text-[#94A3B8] hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer"
+        >
+          <RxCross1 className="w-3.5 h-3.5 stroke-[1.5]" />
+          <span>NOT FOD</span>
+        </button>
       </div>
     </div>
   );
-}
+};
 
-// export default Fodcard;
 export default React.memo(Fodcard, (prevProps, nextProps) => {
   return prevProps.fod.id === nextProps.fod.id && prevProps.fod.groupStatus === nextProps.fod.groupStatus;
 });

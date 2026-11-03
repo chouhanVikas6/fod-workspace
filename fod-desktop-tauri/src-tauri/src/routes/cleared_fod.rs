@@ -79,19 +79,21 @@ async fn response(
             };
             let created_by = entity.created_by;
 
+            let now = svc::now_naive();
             let _ = sqlx::query(
                 r#"INSERT INTO "ClearedFod" ("id", "missionId", "groupId", "status", "beforeClearImg", "afterClearImg", "location", "createdAt", "updatedAt", "createdBy", "dirty")
-                   VALUES ($1, $2, $3, $4::"ClearedFodStatus", $5, $6, $7, $8, now(), $9, false)
-                   ON CONFLICT ("groupId", "missionId") DO NOTHING"#
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
+                   ON CONFLICT ("groupId", "missionId") DO NOTHING"#,
             )
             .bind(&entity.id)
             .bind(mission_id)
             .bind(group_id)
-            .bind(format!("{st:?}").to_uppercase())
-            .bind(&before_img)
-            .bind(&after_img)
+            .bind(st)
+            .bind(sqlx::types::Json(&before_img))
+            .bind(sqlx::types::Json(&after_img))
             .bind(&loc)
             .bind(created)
+            .bind(now)
             .bind(&created_by)
             .execute(&s.db)
             .await;

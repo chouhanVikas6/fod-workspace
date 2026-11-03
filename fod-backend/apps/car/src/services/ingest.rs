@@ -87,9 +87,9 @@ impl IngestService for IngestServiceImpl {
                     }
                 };
 
-                let mut accepted_count = 0;
-                let mut dup_count = 0;
                 let mut rej_count = 0;
+                let mut fod_rows = Vec::with_capacity(batch.detections.len());
+                let created_at = Utc::now();
 
                 for det in batch.detections {
                     let fod_id = if let Ok(u) = Uuid::parse_str(&det.uid) {
@@ -97,12 +97,6 @@ impl IngestService for IngestServiceImpl {
                     } else {
                         Uuid::new_v4()
                     };
-
-                    // Check if already processed
-                    if let Ok(Some(_)) = db.get_fod(fod_id).await {
-                        dup_count += 1;
-                        continue;
-                    }
 
                     // Save crop jpeg to CAS
                     let (sha256, frame_size) = if !det.crop_jpeg.is_empty() {
@@ -134,7 +128,7 @@ impl IngestService for IngestServiceImpl {
                     let captured_at = DateTime::from_timestamp_millis(now_ms)
                         .unwrap_or_else(Utc::now);
 
-                    let fod_row = FodRow {
+                    fod_rows.push(FodRow {
                         id: fod_id,
                         mission_id: active_mission.id,
                         group_id,
@@ -151,29 +145,27 @@ impl IngestService for IngestServiceImpl {
                         image_size: frame_size,
                         frame_missing: det.crop_jpeg.is_empty(),
                         captured_at,
-                        created_at: Utc::now(),
-                    };
-
-                    if let Err(e) = db.insert_fod(&fod_row).await {
-                        tracing::error!("Failed to insert FOD {}: {}", fod_id, e);
-                        rej_count += 1;
-                        continue;
-                    }
-
-                    // Upsert group with largest FOD
-                    let group_res = db
-                        .upsert_fod_group(active_mission.id, group_id, Some(fod_id), Some(det.size))
-                        .await;
-
-                    if let Ok(group) = group_res {
-                        let proto_g = group.to_proto();
-                        let _ = db.append_change(2, &format!("{}:{}", active_mission.id, group_id)).await;
-                        let _ = group_tx.send(proto_g);
-                    }
-
-                    let _ = db.append_change(3, &format!("{}:{}", active_mission.id, fod_id)).await;
-                    accepted_count += 1;
+                        created_at,
+                    });
                 }
+
+                let (accepted_count, dup_count) = if fod_rows.is_empty() {
+                    (0, 0)
+                } else {
+                    match db.ingest_fod_batch(active_mission.id, &fod_rows).await {
+                        Ok((acc, dup, updated_groups)) => {
+                            for group in updated_groups {
+                                let _ = group_tx.send(group.to_proto());
+                            }
+                            (acc, dup)
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to ingest FOD batch {}: {}", batch_seq, e);
+                            rej_count += fod_rows.len() as u32;
+                            (0, 0)
+                        }
+                    }
+                };
 
                 yield IngestAck {
                     batch_seq,

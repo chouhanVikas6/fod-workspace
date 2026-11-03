@@ -159,10 +159,11 @@ pub async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
                     == Some(200);
             if ok {
                 sqlx::query(
-                    r#"UPDATE "FodGroup" SET "dirty" = false, "updatedAt" = now() WHERE "groupId" = $1 AND "missionId" = $2"#,
+                    r#"UPDATE "FodGroup" SET "dirty" = false, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2"#,
                 )
                 .bind(row.group_id)
                 .bind(row.mission_id)
+                .bind(crate::services::now_naive())
                 .execute(&state.db)
                 .await?;
             }
@@ -252,32 +253,29 @@ pub async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
         };
         let ver = data.get("version").and_then(Value::as_i64).unwrap_or(0);
         if let Err(e) = sqlx::query(
-            r#"UPDATE "FodGroup" SET "status" = $1::"FodGroupStatus", "version" = $4, "dirty" = false, "updatedAt" = now() WHERE "groupId" = $2 AND "missionId" = $3"#,
+            r#"UPDATE "FodGroup" SET "status" = $1, "version" = $4, "dirty" = false, "updatedAt" = $5 WHERE "groupId" = $2 AND "missionId" = $3"#,
         )
         .bind(st)
         .bind(gid as i32)
         .bind(mid)
         .bind(ver)
+        .bind(crate::services::now_naive())
         .execute(&state.db)
         .await
         {
             tracing::warn!("FodGroup resolve-update failed (group {gid}/mission {mid}): {e}");
-        } else if let Some(io) = state.io() {
-            if let Some(gui_ns) = io.of("/gui") {
-                let _ = gui_ns
-                    .emit(
-                        "update",
-                        &json!({
-                            "type": "fodGroup",
-                            "message": {
-                                "groupId": gid,
-                                "missionId": mid,
-                                "status": st
-                            }
-                        }),
-                    )
-                    .await;
-            }
+        } else {
+            state.emit_gui(
+                "update",
+                &json!({
+                    "type": "fodGroup",
+                    "message": {
+                        "groupId": gid,
+                        "missionId": mid,
+                        "status": st
+                    }
+                }),
+            );
         }
     }
 
@@ -294,21 +292,26 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
     // GET /api/mission/exclude { missionList: [ids] } — car returns missions the
     // local DB does not yet have. Node uses `create`; excluded ⇒ non-existent, so
     // ON CONFLICT DO NOTHING is behaviourally identical and race-safe.
-    if let Some((status, data)) =
+    let exclude_res =
         car_call(state, reqwest::Method::GET, "/api/mission/exclude", Some(json!({ "missionList": ids })))
-            .await
-        && is_2xx(status)
-    {
-        if let Err(e) = reconcile_active_mission(state, &data).await {
-            tracing::warn!("activeMission reconciliation failed in sync_mission: {e}");
-        }
+            .await;
+    match exclude_res {
+        Some((status, data)) if is_2xx(status) => {
+            if let Err(e) = reconcile_active_mission(state, &data).await {
+                tracing::warn!("activeMission reconciliation failed in sync_mission: {e}");
+            }
 
-        if let Some(list) = data.get("missionList").and_then(Value::as_array) {
-            for m in list {
-                if let Err(e) = insert_mission_full(state, m).await {
-                    tracing::warn!("mission create failed: {e}");
+            if let Some(list) = data.get("missionList").and_then(Value::as_array) {
+                for m in list {
+                    if let Err(e) = insert_mission_full(state, m).await {
+                        tracing::warn!("mission create failed: {e}");
+                    }
                 }
             }
+        }
+        _ => {
+            // Car is unreachable/down!
+            crate::services::terminate_active_mission_if_car_down(state).await;
         }
     }
 
@@ -382,8 +385,15 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
 
         let id = uuid::Uuid::new_v4().to_string();
         let st = new_status.unwrap_or("NEW");
-        let created = g.get("createdAt").and_then(Value::as_str);
-        let updated_at = g.get("updatedAt").and_then(Value::as_str);
+        let now = crate::services::now_naive();
+        let created = g
+            .get("createdAt")
+            .and_then(crate::services::parse_js_date)
+            .unwrap_or(now);
+        let updated_at = g
+            .get("updatedAt")
+            .and_then(crate::services::parse_js_date)
+            .unwrap_or(now);
 
         let group_mission_id = g.get("missionId").and_then(Value::as_i64).unwrap_or(mission_id);
 
@@ -409,7 +419,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             None => {
                 let insert_res = sqlx::query(
                     r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","biggestFodId","biggestFodSize","createdAt","updatedAt")
-                       VALUES ($1,$2,$3,false,$4::"FodGroupStatus",$5,$6,$7, COALESCE($8::timestamp, now()), COALESCE($9::timestamp, now()))"#,
+                       VALUES ($1,$2,$3,false,$4,$5,$6,$7,$8,$9)"#,
                 )
                 .bind(id)
                 .bind(gid)
@@ -436,11 +446,12 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
 
                 if incoming_is_cleared {
                     let _ = sqlx::query(
-                        r#"UPDATE "FodGroup" SET "status" = 'CLEARED'::"FodGroupStatus", "version" = $1, "dirty" = false, "updatedAt" = now() WHERE "groupId" = $2 AND "missionId" = $3"#,
+                        r#"UPDATE "FodGroup" SET "status" = 'CLEARED', "version" = $1, "dirty" = false, "updatedAt" = $4 WHERE "groupId" = $2 AND "missionId" = $3"#,
                     )
                     .bind(incoming_ver)
                     .bind(gid)
                     .bind(group_mission_id)
+                    .bind(now)
                     .execute(&state.db)
                     .await;
 
@@ -454,12 +465,12 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                     let status_changed = local_g.status.to_string() != st;
                     let _ = sqlx::query(
                         r#"UPDATE "FodGroup" SET
-                            "status" = $1::"FodGroupStatus",
+                            "status" = $1,
                             "version" = $2,
                             "dirty" = false,
                             "biggestFodId" = COALESCE($3, "FodGroup"."biggestFodId"),
                             "biggestFodSize" = COALESCE($4, "FodGroup"."biggestFodSize"),
-                            "updatedAt" = now()
+                            "updatedAt" = $7
                         WHERE "groupId" = $5 AND "missionId" = $6"#,
                     )
                     .bind(st)
@@ -468,6 +479,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                     .bind(biggest_fod_size)
                     .bind(gid)
                     .bind(group_mission_id)
+                    .bind(now)
                     .execute(&state.db)
                     .await;
 
@@ -495,23 +507,17 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         }
 
         if should_emit {
-            if let Some(io) = state.io() {
-                if let Some(gui_ns) = io.of("/gui") {
-                    let _ = gui_ns
-                        .emit(
-                            "update",
-                            &json!({
-                                "type": "fodGroup",
-                                "message": {
-                                    "groupId": gid,
-                                    "missionId": group_mission_id,
-                                    "status": st
-                                }
-                            }),
-                        )
-                        .await;
-                }
-            }
+            state.emit_gui(
+                "update",
+                &json!({
+                    "type": "fodGroup",
+                    "message": {
+                        "groupId": gid,
+                        "missionId": group_mission_id,
+                        "status": st
+                    }
+                }),
+            );
         }
     }
 
@@ -529,18 +535,19 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             .map(|dt| dt.naive_utc())
             .unwrap_or(ts);
 
+        let now = crate::services::now_naive();
         let res = sqlx::query(
             r#"INSERT INTO "Fod" (
                 "id", "missionId", "groupId", "sysid", "location", "confidence",
                 "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), false)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false)
             ON CONFLICT ("id") DO UPDATE SET
                 "location" = EXCLUDED."location",
                 "confidence" = EXCLUDED."confidence",
                 "class" = EXCLUDED."class",
                 "velocity" = EXCLUDED."velocity",
                 "size" = EXCLUDED."size",
-                "updatedAt" = now()"#,
+                "updatedAt" = $12"#,
         )
         .bind(&f.id)
         .bind(f.mission_id)
@@ -553,6 +560,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         .bind(f.size)
         .bind(ts)
         .bind(created)
+        .bind(now)
         .execute(&state.db)
         .await;
 
@@ -560,14 +568,15 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             tracing::warn!("Failed to upsert FOD {}: {e}", f.id);
         } else {
             let _ = sqlx::query(
-                r#"UPDATE "FodGroup" SET "biggestFodId" = $1, "biggestFodSize" = $2, "updatedAt" = now()
+                r#"UPDATE "FodGroup" SET "biggestFodId" = $1, "biggestFodSize" = $2, "updatedAt" = $5
                    WHERE "groupId" = $3 AND "missionId" = $4
-                     AND ("biggestFodId" IS DISTINCT FROM $1 OR "biggestFodSize" IS DISTINCT FROM $2)"#
+                     AND ("biggestFodId" IS NOT $1 OR "biggestFodSize" IS NOT $2)"#,
             )
             .bind(&f.id)
             .bind(f.size as i32)
             .bind(f.group_id as i32)
             .bind(f.mission_id)
+            .bind(now)
             .execute(&state.db)
             .await;
         }
@@ -602,9 +611,11 @@ async fn sync_mission_list(state: &AppState) -> anyhow::Result<()> {
         car_call(state, reqwest::Method::GET, "/api/mission/exclude", Some(json!({ "missionList": ids })))
             .await
     else {
+        crate::services::terminate_active_mission_if_car_down(state).await;
         return Ok(()); // Node catches the error, logs, returns.
     };
     if !is_2xx(status) {
+        crate::services::terminate_active_mission_if_car_down(state).await;
         return Ok(());
     }
 
@@ -644,35 +655,60 @@ pub async fn reconcile_active_mission(state: &AppState, data: &Value) -> anyhow:
         .and_then(Value::as_str)
         .unwrap_or("ACTIVE");
 
+    let now = crate::services::now_naive();
     match (current_active_id, upstream_active_id) {
         (Some(cur), Some(aid)) if cur != aid || upstream_status != "ACTIVE" => {
             // Local active differs or upstream active mission is no longer ACTIVE
-            sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = now() WHERE "id" = $1"#)
+            sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = $2 WHERE "id" = $1"#)
                 .bind(cur)
+                .bind(now)
                 .execute(&state.db)
                 .await?;
+            state.emit_gui(
+                "update",
+                &json!({
+                    "type": "terminate",
+                    "missionNumber": cur,
+                    "missionId": cur,
+                    "message": { "missionId": cur }
+                }),
+            );
         }
         (Some(cur), None) => {
             // Upstream has NO active mission (e.g. terminated from another instance),
             // demote any local active mission.
-            sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = now() WHERE "id" = $1"#)
+            sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "updatedAt" = $2 WHERE "id" = $1"#)
                 .bind(cur)
+                .bind(now)
                 .execute(&state.db)
                 .await?;
+            state.emit_gui(
+                "update",
+                &json!({
+                    "type": "terminate",
+                    "missionNumber": cur,
+                    "missionId": cur,
+                    "message": { "missionId": cur }
+                }),
+            );
         }
         _ => {}
     }
 
     if let (Some(am), Some(aid)) = (upstream_active, upstream_active_id) {
         if upstream_status == "ACTIVE" {
-            let created = am.get("createdAt").and_then(Value::as_str);
+            let created = am
+                .get("createdAt")
+                .and_then(crate::services::parse_js_date)
+                .unwrap_or(now);
             sqlx::query(
                 r#"INSERT INTO "Mission" ("id","createdAt","updatedAt")
-                   VALUES ($1, COALESCE($2::timestamp, now()), now())
-                   ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = now()"#,
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = $3"#,
             )
             .bind(aid)
             .bind(created)
+            .bind(now)
             .execute(&state.db)
             .await?;
         }
@@ -687,23 +723,32 @@ async fn insert_mission_full(state: &AppState, m: &Value) -> anyhow::Result<()> 
     let Some(id) = m.get("id").and_then(Value::as_i64) else {
         return Ok(());
     };
+    let now = crate::services::now_naive();
     let status = m.get("status").and_then(Value::as_str).unwrap_or("ACTIVE");
     let scan_status = m.get("scanStatus").and_then(Value::as_str).unwrap_or("PAUSE");
     let timer = m.get("timer").and_then(Value::as_f64).unwrap_or(0.0);
     let pass = m.get("pass").and_then(Value::as_i64).map(|v| v as i32);
     let speed = m.get("speed").and_then(Value::as_i64).map(|v| v as i32);
-    let created_at = m.get("createdAt").and_then(Value::as_str);
-    let updated_at = m.get("updatedAt").and_then(Value::as_str);
+    let created_at = m
+        .get("createdAt")
+        .and_then(crate::services::parse_js_date)
+        .unwrap_or(now);
+    let updated_at = m
+        .get("updatedAt")
+        .and_then(crate::services::parse_js_date)
+        .unwrap_or(now);
     let created_by = m.get("createdBy").and_then(Value::as_str);
     let updated_by = m.get("updatedBy").and_then(Value::as_str);
     let dirty = m.get("dirty").and_then(Value::as_bool).unwrap_or(false);
-    let previous_time = m.get("previousTime").and_then(Value::as_str);
+    let previous_time = m
+        .get("previousTime")
+        .and_then(crate::services::parse_js_date)
+        .unwrap_or(now);
 
     sqlx::query(
         r#"INSERT INTO "Mission"
            ("id","status","timer","scanStatus","pass","speed","createdAt","updatedAt","createdBy","updatedBy","dirty","previousTime")
-           VALUES ($1, $2::"MissionStatus", $3, $4::"MissionScanStatus", $5, $6,
-                   COALESCE($7::timestamp, now()), COALESCE($8::timestamp, now()), $9, $10, $11, COALESCE($12::timestamp, now()))
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT ("id") DO NOTHING"#,
     )
     .bind(id)
@@ -764,24 +809,29 @@ async fn upsert_cleared_fod(state: &AppState, cf: &Value) -> anyhow::Result<()> 
         .unwrap_or(Value::Object(Default::default()));
     let before: Vec<String> = str_array(cf.get("beforeClearImg"));
     let after: Vec<String> = str_array(cf.get("afterClearImg"));
-    let created_at = cf.get("createdAt").and_then(Value::as_str);
+    let now = crate::services::now_naive();
+    let created_at = cf
+        .get("createdAt")
+        .and_then(crate::services::parse_js_date)
+        .unwrap_or(now);
     let created_by = cf.get("createdBy").and_then(Value::as_str);
     let updated_by = cf.get("updatedBy").and_then(Value::as_str);
 
     sqlx::query(
         r#"INSERT INTO "ClearedFod"
            ("id","status","beforeClearImg","afterClearImg","location","groupId","missionId","createdAt","updatedAt","createdBy","updatedBy","dirty")
-           VALUES ($1, $2::"ClearedFodStatus", $3, $4, $5, $6, $7, COALESCE($8::timestamp, now()), now(), $9, $10, false)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false)
            ON CONFLICT ("groupId","missionId") DO NOTHING"#,
     )
     .bind(id)
     .bind(status)
-    .bind(&before)
-    .bind(&after)
+    .bind(sqlx::types::Json(&before))
+    .bind(sqlx::types::Json(&after))
     .bind(location)
     .bind(gid as i32)
     .bind(mid)
     .bind(created_at)
+    .bind(now)
     .bind(created_by)
     .bind(updated_by)
     .execute(&state.db)
@@ -844,7 +894,7 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
     // Prune users identified as deleted in delta sync
     for del in incoming.deleted_usernames {
         let _ = sqlx::query(
-            r#"DELETE FROM "User" WHERE ("username" = $1 OR LOWER("username") = LOWER($1)) AND ("dirty" IS NOT TRUE)"#,
+            r#"DELETE FROM "User" WHERE ("username" = $1 OR LOWER("username") = LOWER($1)) AND COALESCE("dirty", 0) = 0"#,
         )
         .bind(&del)
         .execute(&state.db)
@@ -852,9 +902,9 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
     }
 
     // Full reconciliation: prune any local non-dirty user missing from upstream active users
-    if let Some(active_names) = incoming.all_active_usernames {
+    if let Some(active_names) = incoming.all_active_usernames.filter(|names| !names.is_empty()) {
         let local_users = sqlx::query_as::<_, (String, String)>(
-            r#"SELECT "id", "username" FROM "User" WHERE "dirty" IS NOT TRUE"#,
+            r#"SELECT "id", "username" FROM "User" WHERE COALESCE("dirty", 0) = 0"#,
         )
         .fetch_all(&state.db)
         .await
@@ -905,7 +955,7 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
         let _ = sqlx::query(
             r#"
             INSERT INTO "User" ("id", "username", "firstName", "lastName", "password", "isActive", "role", "dirty", "createdAt", "updatedAt")
-            VALUES ($1, $2, $3, $4, $5, $6, $7::"Role", false, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9)
             ON CONFLICT ("username") DO UPDATE
             SET "firstName" = EXCLUDED."firstName",
                 "lastName" = EXCLUDED."lastName",
@@ -913,7 +963,7 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
                 "isActive" = EXCLUDED."isActive",
                 "role" = EXCLUDED."role",
                 "updatedAt" = EXCLUDED."updatedAt"
-            WHERE "User"."updatedAt" <= EXCLUDED."updatedAt" AND ("User"."dirty" IS NOT TRUE)
+            WHERE "User"."updatedAt" <= EXCLUDED."updatedAt" AND COALESCE("User"."dirty", 0) = 0
             "#,
         )
         .bind(id)

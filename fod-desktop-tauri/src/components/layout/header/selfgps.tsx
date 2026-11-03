@@ -30,7 +30,7 @@ const SelfGpsInfo = ({ isToolTipVisible }) => {
             onMouseLeave={() => handleHover(false)}
             onClick={handleClick}
         >
-            <span className="text-sm my-auto">Tablet </span>
+            <span className="text-sm my-auto text-slate-700 dark:text-slate-200 font-medium">Tablet </span>
             <div className="healthbar-icon active:scale-95">
                 <Image src={GpsIcon} alt="" />
                 <div className={`health-Status ${allGpsStatus}`}></div>

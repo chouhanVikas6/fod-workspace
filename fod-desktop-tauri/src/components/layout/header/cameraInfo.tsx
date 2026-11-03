@@ -69,7 +69,7 @@ const CamerasInfo = ({ isToolTipVisible }) => {
             onMouseLeave={() => setShowTooltipOnHover(false)} 
             onClick={() => setShowTooltipOnClick(prev => !prev)}
         >
-            <span className="text-sm font-semibold text-slate-700">Camera & AI</span>
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Camera & AI</span>
             <div className='healthbar-icon active:scale-95'>
                 <Image src={CameraIcon} alt="Camera Icon" />
                 <div className={`health-Status ${camStatus}`}></div>
@@ -77,20 +77,20 @@ const CamerasInfo = ({ isToolTipVisible }) => {
             {(showTooltipOnHover || showTooltipOnClick) && (
                 <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute top-full mt-2.5 right-0 w-[320px] bg-white rounded-2xl shadow-2xl border border-slate-200/90 p-4 z-[100] cursor-default animate-in fade-in slide-in-from-top-2 duration-150 select-none"
+                    className="absolute top-full mt-2.5 right-0 w-[320px] bg-white dark:bg-[#0E1626] rounded-2xl shadow-2xl border border-slate-200/90 dark:border-[#1E293B] p-4 z-[100] cursor-default animate-in fade-in slide-in-from-top-2 duration-150 select-none"
                 >
                     {/* Header */}
-                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-[#1E293B]">
                         <div>
-                            <h4 className="text-xs font-bold text-slate-800 tracking-tight">Camera & Vision BITE</h4>
-                            <p className="text-[11px] text-slate-400">26-Camera Array Status</p>
+                            <h4 className="text-xs font-bold text-slate-800 dark:text-white tracking-tight">Camera & Vision BITE</h4>
+                            <p className="text-[11px] text-slate-400 dark:text-slate-400">26-Camera Array Status</p>
                         </div>
                         <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                             onlineCount === 26 
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                                ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/50'
                                 : onlineCount > 0 
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-200/60'
-                                    : 'bg-rose-50 text-rose-700 border border-rose-200/60'
+                                    ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/50'
+                                    : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200/60 dark:border-rose-800/50'
                         }`}>
                             {onlineCount}/26 Online
                         </span>
@@ -104,7 +104,7 @@ const CamerasInfo = ({ isToolTipVisible }) => {
                             const hasLowFPS = (e?.INTR_FPS ?? 100) < AI_THRESHOLD;
                             const isConnected = Boolean(e && e.CAMERA_CONNECTION);
 
-                            let badgeBg = 'bg-slate-200 text-slate-500 hover:bg-slate-300';
+                            let badgeBg = 'bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700';
                             let statusDesc = 'No Signal / Unconfigured';
                             if (e) {
                                 if (!isConnected) {
@@ -142,29 +142,29 @@ const CamerasInfo = ({ isToolTipVisible }) => {
 
                     {/* Selected Camera Details */}
                     {selectedCam && (
-                        <div className="mt-3 p-3 bg-slate-50 border border-slate-200/90 rounded-xl animate-in fade-in duration-150">
+                        <div className="mt-3 p-3 bg-slate-50 dark:bg-[#131D31] border border-slate-200/90 dark:border-[#1E293B] rounded-xl animate-in fade-in duration-150">
                             <div className="flex items-center justify-between mb-1.5">
-                                <span className="font-bold text-xs text-slate-800">
+                                <span className="font-bold text-xs text-slate-800 dark:text-white">
                                     Camera #{selectedCam.index + 1}
                                 </span>
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                     selectedCam.data?.CAMERA_CONNECTION 
-                                        ? 'bg-emerald-100 text-emerald-800' 
-                                        : 'bg-rose-100 text-rose-800'
+                                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' 
+                                        : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
                                 }`}>
                                     {selectedCam.data?.CAMERA_CONNECTION ? 'CONNECTED' : 'DISCONNECTED'}
                                 </span>
                             </div>
-                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-600">
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-600 dark:text-slate-300">
                                 <div>
                                     <span className="text-slate-400">CAM ID: </span>
-                                    <span className="font-mono font-semibold text-slate-700">
+                                    <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">
                                         {(selectedCam.data as any)?.CAM_ID || (selectedCam.data as any)?.sysid || `CAM-${selectedCam.index + 1}`}
                                     </span>
                                 </div>
                                 <div>
                                     <span className="text-slate-400">FPS: </span>
-                                    <span className="font-mono font-semibold text-slate-700">
+                                    <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">
                                         {selectedCam.data?.INTR_FPS ?? '—'}
                                     </span>
                                 </div>
@@ -173,7 +173,7 @@ const CamerasInfo = ({ isToolTipVisible }) => {
                     )}
 
                     {/* Legend */}
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500 font-medium">
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-[#1E293B] flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-medium">
                         <div className="flex items-center space-x-1.5">
                             <span className="w-2 h-2 rounded-full bg-emerald-500" />
                             <span>Normal</span>

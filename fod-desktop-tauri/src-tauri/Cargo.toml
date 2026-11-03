@@ -1,13 +1,10 @@
 [package]
 name = "fod-desktop"
 version = "1.0.0"
-description = "Zoid FOD Desktop — Tauri v2 shell (supervises the fod-backend Rust sidecar)"
+description = "Zoid FOD Desktop — Tauri v2 desktop application with integrated Rust backend"
 authors = ["Zoid"]
-edition = "2021"
-rust-version = "1.77.2"
-
-# Standalone crate on purpose: NOT part of any cargo workspace, and its target/
-# dir is independent of backend-rs/. Do not add a [workspace] table here.
+edition = "2024"
+rust-version = "1.85.0"
 
 [lib]
 name = "fod_desktop_lib"
@@ -17,10 +14,33 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["macros"] }
+base64 = "0.23.1"
+bcrypt = "0.19.3"
+chrono = "0.4.45"
+dotenvy = "0.15.7"
+futures = "0.3.34"
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+prost = "0.13"
+proto-defination = { path = "../../fod-backend/crates/proto-defination" }
+rand = "0.10.2"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls", "sqlite", "chrono", "uuid", "json"] }
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
-tauri-plugin-dialog = "2"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-stream = "0.1.19"
+tonic = { version = "0.12", features = ["gzip"] }
+tower = "0.5.3"
+tower-http = { version = "0.7.0", features = ["cors", "fs", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1.24.0", features = ["v4"] }
 
 [profile.release]
 panic = "abort"

@@ -2,178 +2,189 @@ import React, { useState, useEffect } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
+import { FiThumbsUp } from "react-icons/fi";
 import FodListcard from "./fodListCard";
 import FodDetail from "./fodDetail";
 import { close_SideBarFodDetail, setSideBarVisibility } from "@/store/slices/selectedFod-slice";
 import { RootState } from "@/store";
-import { GiCardPickup } from "react-icons/gi";
 
 const FodCategoryAndDetail = () => {
-    const dispatch = useDispatch();
-    const [touchStartX, setTouchStartX] = useState<number | null>(null);
-    const [mouseStartX, setMouseStartX] = useState<number | null>(null);
-    const [selectedList, setSelectedList] = useState<string>("ACCEPTED");
-    const [swipeRange, setSwipeRange] = useState(100); // Range for swipes
-    const fods = useSelector((state: RootState) => state.FodReducer.fods);
-    const selectedFod = useSelector((state: RootState) => state.SelectedFod);
-    const { isSidebarVisible, isSidebarFodDetailVisible } = selectedFod;
+  const dispatch = useDispatch();
+  const [selectedList, setSelectedList] = useState<string>("ACCEPTED");
+  const fods = useSelector((state: RootState) => state.FodReducer.fods);
+  const selectedFod = useSelector((state: RootState) => state.SelectedFod);
+  const { isSidebarVisible, isSidebarFodDetailVisible } = selectedFod;
 
-    //opening and closing right side bar (categories)
-    useEffect(() => {
-        const handleTouchStart = (event: TouchEvent) => {
-            // Only detect the swipe if the touch starts within the swipe range on the right side of the screen
-            const touchX = event.touches[0].clientX;
-            if (!isSidebarVisible && touchX >= window.innerWidth - swipeRange) {
-                setTouchStartX(touchX);
-            } else if (isSidebarVisible) {
-                setTouchStartX(touchX);
-            }
-        };
+  const setList = (listName: string) => {
+    setSelectedList(listName);
+  };
 
-        const handleTouchEnd = (event: TouchEvent) => {
-            if (touchStartX !== null) {
-                const touchEndX = event.changedTouches[0].clientX;
-                const swipeDistance = touchStartX - touchEndX;
+  const padZero = (n: number | string) => {
+    const num = Number(n);
+    if (!isNaN(num) && num < 10) return `0${num}`;
+    return String(n);
+  };
 
-                if (swipeDistance > 150 && !isSidebarVisible) {
-                    // Swipe left to open
-                    dispatch(setSideBarVisibility(true));
-                } else if (swipeDistance < -150 && isSidebarVisible) {
-                    // Swipe right to close
-                    dispatch(setSideBarVisibility(false));
-                }
-            }
-            setTouchStartX(null);
-        };
+  const listLengthFn = () => {
+    let total = {
+      NEW: 0,
+      ACCEPTED: 0,
+      REJECTED: 0,
+      CLEARED: 0
+    };
 
-        const handleMouseDown = (event: MouseEvent) => {
-            const mouseX = event.clientX;
-            if (!isSidebarVisible && mouseX >= window.innerWidth - swipeRange) {
-                setMouseStartX(mouseX);
-            } else if (isSidebarVisible) {
-                setMouseStartX(mouseX);
-            }
-        };
+    fods.forEach((ele) => {
+      if (ele.groupStatus === "ACCEPTED") {
+        total.ACCEPTED++;
+      } else if (ele.groupStatus === "REJECTED") {
+        total.REJECTED++;
+      } else if (ele.groupStatus === "CLEARED") {
+        total.CLEARED++;
+      } else {
+        total.NEW++;
+      }
+    });
 
-        const handleMouseUp = (event: MouseEvent) => {
-            if (mouseStartX !== null) {
-                const mouseEndX = event.clientX;
-                const swipeDistance = mouseStartX - mouseEndX;
+    return total;
+  };
 
-                if (swipeDistance > 150 && !isSidebarVisible) {
-                    // Swipe left to open
-                    dispatch(setSideBarVisibility(true));
-                } else if (swipeDistance < -150 && isSidebarVisible) {
-                    // Swipe right to close
-                    dispatch(setSideBarVisibility(false));
-                }
-            }
-            setMouseStartX(null);
-        };
+  const listLength = listLengthFn();
 
-        document.addEventListener("touchstart", handleTouchStart);
-        document.addEventListener("touchend", handleTouchEnd);
-        document.addEventListener("mousedown", handleMouseDown);
-        document.addEventListener("mouseup", handleMouseUp);
+  const selectedListTitle = () => {
+    if (selectedList === "ACCEPTED") return `Accepted FODs (${padZero(listLength.ACCEPTED)})`;
+    if (selectedList === "REJECTED") return `Rejected FODs (${padZero(listLength.REJECTED)})`;
+    if (selectedList === "CLEARED") return `Cleared FODs (${padZero(listLength.CLEARED)})`;
+    if (selectedList === "NEW") return `Pending FODs (${padZero(listLength.NEW)})`;
+    return "FOD List";
+  };
 
-        return () => {
-            document.removeEventListener("touchstart", handleTouchStart);
-            document.removeEventListener("touchend", handleTouchEnd);
-            document.removeEventListener("mousedown", handleMouseDown);
-            document.removeEventListener("mouseup", handleMouseUp);
-        };
-    }, [isSidebarVisible, touchStartX, mouseStartX]);
-
-    const setList = (listName: string) => {
-        setSelectedList(listName);
+  const currentItems = fods.filter((fod) => {
+    if (selectedList === "NEW") {
+      return !fod.groupStatus || fod.groupStatus === "NEW";
     }
+    return fod.groupStatus === selectedList;
+  });
 
-    const formatLargeNumber = (input) => {
-        let val = input;
-
-        if (val < 10000) {
-            val = String(val);
-        } else if (val < 100000) {
-            val = (val / 1000).toFixed(1) + 'K';
-        } else if (val < 10000000) {
-            val = (val / 100000).toFixed(1) + 'L';
-        } else {
-            val = (val / 10000000).toFixed(1) + 'C';
-        }
-
-        return val;
-    }
-
-    const listLengthFn = () => {
-        let total = {
-            ACCEPTED: 0,
-            REJECTED: 0,
-            CLEARED: 0
-        };
-
-        fods.forEach((ele) => {
-            if (ele.groupStatus == "ACCEPTED") {
-                total.ACCEPTED++;
-            } else if (ele.groupStatus == "REJECTED") {
-                total.REJECTED++;
-            } else if (ele.groupStatus == "CLEARED") {
-                total.CLEARED++;
+  return (
+    <div
+      className={`fixed top-[52px] bottom-0 right-0 flex z-30 pointer-events-none transition-transform duration-300 ease-in-out ${
+        isSidebarVisible ? "translate-x-0" : "translate-x-[320px]"
+      }`}
+    >
+      {/* Floating vertical pill counter on the left side of the drawer */}
+      <div className="h-full flex items-center pr-2">
+        <div
+          className="w-[48px] py-4 rounded-2xl bg-[#181D25] border border-[#2B3542] shadow-2xl flex flex-col items-center gap-3.5 pointer-events-auto select-none cursor-pointer"
+          onDoubleClick={() => dispatch(setSideBarVisibility(!isSidebarVisible))}
+          onClick={() => {
+            if (!isSidebarVisible) {
+              dispatch(setSideBarVisibility(true));
             }
-        });
+            dispatch(close_SideBarFodDetail());
+          }}
+        >
+          {/* Pending / Unreviewed */}
+          <button
+            type="button"
+            title="Pending Review"
+            className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
+              selectedList === "NEW" ? "text-blue-400 scale-105" : "text-slate-400 hover:text-white"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setList("NEW");
+              dispatch(setSideBarVisibility(true));
+              dispatch(close_SideBarFodDetail());
+            }}
+          >
+            <FiThumbsUp className="w-4 h-4 stroke-[2]" />
+            <span className="text-[11px] font-mono font-bold">{padZero(listLength.NEW)}</span>
+          </button>
 
-        // Apply formatLargeNumber to each value in the total object
-        total.ACCEPTED = formatLargeNumber(total.ACCEPTED);
-        total.REJECTED = formatLargeNumber(total.REJECTED);
-        total.CLEARED = formatLargeNumber(total.CLEARED);
+          <div className="w-5 h-[1px] bg-[#2B3542]" />
 
-        return total;
-    }
+          {/* Accepted */}
+          <button
+            type="button"
+            title="Accepted FODs"
+            className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
+              selectedList === "ACCEPTED" ? "text-emerald-400 scale-105" : "text-slate-400 hover:text-emerald-400"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setList("ACCEPTED");
+              dispatch(setSideBarVisibility(true));
+              dispatch(close_SideBarFodDetail());
+            }}
+          >
+            <HiOutlineCheck className="w-4 h-4 stroke-[2.5] text-emerald-400" />
+            <span className="text-[11px] font-mono font-bold text-emerald-400">
+              {padZero(listLength.ACCEPTED)}
+            </span>
+          </button>
 
-    const selectedListTitle = () => {
+          <div className="w-5 h-[1px] bg-[#2B3542]" />
 
-        if (selectedList == "none") return "";
-        if (selectedList == "ACCEPTED") return "Alert Marker's";
-        let string = selectedList.toLowerCase();
-        return string.charAt(0).toUpperCase() + string.slice(1) + " Fod's";
-    }
-    const listLength = listLengthFn();
-
-    return (
-        <div className={`absolute  h-full w-[350px] flex justify-end items-center overflow-x-hidden transition-all  duration-300 z-10  font-bold text-white ${isSidebarVisible ? "right-[0px]" : "right-[-320px]"}`}>
-            <div className="w-[35px] h-[200px] rounded-l-md bg-[#017ED7] flex flex-col justify-center items-center overflow-hidden" onDoubleClick={() => dispatch(setSideBarVisibility(!isSidebarVisible))} onClick={() => dispatch(close_SideBarFodDetail())}>
-                <button className={`h-[33.33%] w-full flex flex-col-reverse items-center justify-center z-3 ${selectedList === 'CLEARED' ? 'bg-[#002756]' : ''} rotate`} onClick={() => setList('CLEARED')}>
-                    <GiCardPickup className="w-5 h-auto stroke-1" />
-                    <span>{listLength.CLEARED}</span>
-                </button>
-                <div className="h-[1px] w-[80%] bg-white"></div>
-                <button className={`h-[33.33%] w-full flex flex-col-reverse items-center justify-center z-3 ${selectedList === 'REJECTED' ? 'bg-[#002756]' : ''} rotate`} onClick={() => setList('REJECTED')}>
-                    <RxCross1 className="w-50% h-auto stroke-1" />
-                    <span>{listLength.REJECTED}</span>
-                </button>
-                <div className="h-[1px] w-[80%] bg-white"></div>
-                <button className={`h-[33.33%] w-full flex flex-col-reverse items-center justify-center z-3 ${selectedList === 'ACCEPTED' ? 'bg-[#002756]' : ''} rotate`} onClick={() => setList('ACCEPTED')}>
-                    <HiOutlineCheck className="transform rotate-[-90deg] w-5 h-5 stroke-2" />
-                    <span>{listLength.ACCEPTED}</span>
-                </button>
-            </div>
-
-            <div className={`h-full w-full bg-[#EBEBEB] overflow-y-auto transition ease duration-300  ${isSidebarVisible ? "right-0" : ""}`}>
-                {isSidebarFodDetailVisible ?
-                    <FodDetail /> :
-                    <>
-                        <div className="ml-3 mt-2 text-[grey]">{selectedListTitle()}</div>
-                        {selectedList !== 'none' && fods.map((fod, index) => {
-
-                            if (fod.groupStatus == selectedList) {
-                                return <FodListcard key={index} fod={fod} />
-                            };
-                        }
-                        )}
-                    </>
-                }
-            </div>
+          {/* Rejected */}
+          <button
+            type="button"
+            title="Rejected FODs"
+            className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
+              selectedList === "REJECTED" ? "text-rose-400 scale-105" : "text-slate-400 hover:text-rose-400"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setList("REJECTED");
+              dispatch(setSideBarVisibility(true));
+              dispatch(close_SideBarFodDetail());
+            }}
+          >
+            <RxCross1 className="w-3.5 h-3.5 stroke-[1.5] text-rose-400" />
+            <span className="text-[11px] font-mono font-bold text-rose-400">
+              {padZero(listLength.REJECTED)}
+            </span>
+          </button>
         </div>
-    )
+      </div>
+
+      {/* Slideout Content Drawer */}
+      <div className="w-[320px] h-full bg-[#181C23] border-l border-[#2B3542] flex flex-col pointer-events-auto shadow-2xl">
+        {isSidebarFodDetailVisible ? (
+          <FodDetail />
+        ) : (
+          <div className="h-full flex flex-col">
+            {/* Drawer Header */}
+            <div className="h-12 px-4 flex items-center justify-between border-b border-[#252B35] shrink-0">
+              <span className="text-xs font-bold text-white tracking-wide uppercase">
+                {selectedListTitle()}
+              </span>
+              <button
+                type="button"
+                title="Close drawer"
+                className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                onClick={() => dispatch(setSideBarVisibility(false))}
+              >
+                <RxCross1 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto py-2">
+              {currentItems.length === 0 ? (
+                <div className="h-40 flex items-center justify-center text-slate-500 text-xs font-medium">
+                  No FODs in this category
+                </div>
+              ) : (
+                currentItems.map((fod, index) => (
+                  <FodListcard key={fod.id ?? index} fod={fod} />
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default FodCategoryAndDetail;

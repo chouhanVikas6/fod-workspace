@@ -1,19 +1,21 @@
 import React from "react";
 import HealthBar from "./healthBar";
 import LoginInfo from "./loginInfo";
-
-
+import Zoid_logo from "@/assets/images/zoid_logo.png";
 
 const Header = () => {
-
   return (
-    <div className="relative flex items-center justify-between px-6 py-0 w-full h-full bg-white/95 backdrop-blur-sm border-b border-slate-200/90 shadow-sm z-50 select-none">
-      <div className="flex items-center h-full flex-shrink-0 space-x-2.5 mr-4">
-        {/* <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-sm shadow-blue-500/20">
-          <span className="text-white font-black text-base tracking-tighter">Z</span>
-        </div> */}
-        <p className="text-slate-900 font-extrabold text-xl tracking-wider font-sans">ZOID</p>
+    <div className="header-native-theme relative flex items-center justify-between px-6 py-0 w-full h-full bg-[#181C23] border-b border-[#252B35] transition-colors duration-200 select-none">
+      {/* Brand logo & title */}
+      <div className="flex items-center h-full flex-shrink-0">
+        <div className="flex items-center space-x-2.5 cursor-pointer">
+          <img src={Zoid_logo} alt="ZOID Logo" className="w-6 h-6 object-contain" />
+          <p className="text-white font-serif font-bold text-lg tracking-[0.22em]">ZOID</p>
+        </div>
+        <div className="h-4 w-[1px] bg-[#373C43] mx-3" />
       </div>
+
+      {/* Health status & User info */}
       <div className="flex items-center justify-end flex-1 h-full space-x-4">
         <HealthBar />
         <LoginInfo />

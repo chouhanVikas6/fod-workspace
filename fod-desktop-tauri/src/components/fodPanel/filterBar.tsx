@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useSelector, useDispatch } from 'react-redux';
 import InputRange from 'react-input-slider';
-// import FilterIcon from "@/assets/images/svg/Filter/filter.svg";
 import { config } from "@/config/clientConfig";
 import { set_Class_Size, remove_Class, set_SortBy, setDashboardStatus } from "@/store/slices/fodReducer-slice";
-import Image from "next/image";
 import FilterIcon from "@/assets/images/svgr/filterIcon";
 import { RootState } from "@/store";
+import { RxChevronDown } from "react-icons/rx";
 
 const FilterBar = () => {
     return (
-        <div className="w-full h-[6%] bg-[#F8F8F8] flex items-center justify-between mb-2 text-gray-600">
-            <SortBy />
+        <div className="w-full flex items-center justify-between mb-4 text-slate-200 select-none shrink-0">
+            <div className="flex items-center gap-4">
+                <SortBy />
+                <FodStatusTabs />
+            </div>
             <Filters />
         </div>
     );
@@ -21,46 +23,64 @@ export default FilterBar;
 
 const SortBy = () => {
     const dispatch = useDispatch();
-    const [isOpen, setIsOpen] = useState(false);
-    const { sortby } = useSelector((state:RootState) => state.FodReducer.filters);
-    const dropdownRef = useRef(null);
-
-    const toggleDropdown = () => setIsOpen(!isOpen);
-
-    const handleSelect = (e) => {
-        dispatch(set_SortBy(e.target.value));
-        setIsOpen(false);
-    };
-
-    //listen for clicking
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                setIsOpen(false);
-            }
-        };
-
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-        };
-    }, []);
+    const { sortby } = useSelector((state: RootState) => state.FodReducer.filters);
 
     return (
-        <div className="relative flex items-center gap-2" ref={dropdownRef}>
-            <span className="font-medium">Sort By:</span>
-            <select
-                onClick={toggleDropdown}
-                onChange={handleSelect}
-                value={sortby}
-                className="bg-gray-50 border border-gray-300 ring-gray-300 rounded-lg focus:ring-blue-400 focus:border-blue-400 block p-2.5 active:scale-95"
+        <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-[#7E8691]">Sort By:</span>
+            <div className="relative">
+                <select
+                    onChange={(e) => dispatch(set_SortBy(e.target.value))}
+                    value={sortby}
+                    className="bg-[#181D24] text-white border border-[#2B323D] hover:border-[#3E4755] rounded-lg pl-3 pr-7 py-1.5 text-xs font-semibold appearance-none cursor-pointer shadow-xs focus:outline-none focus:border-[#388AEB] transition-colors"
+                >
+                    <option value="latest">Latest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="biggestTosmallest">Size: Largest</option>
+                    <option value="smallestTobiggest">Size: Smallest</option>
+                    <option value="nearestFirst">Distance: Nearest</option>
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#7E8691]">
+                    <RxChevronDown className="w-3.5 h-3.5" />
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const FodStatusTabs = () => {
+    const dispatch = useDispatch();
+    const { groupStatus } = useSelector((state: RootState) => state.FodReducer.filters);
+    const fods = useSelector((state: RootState) => state.FodReducer.fods);
+
+    const foundCount = fods.filter((f) => f.groupStatus === 'NEW').length;
+    const acceptedCount = fods.filter((f) => f.groupStatus === 'ACCEPTED' || f.groupStatus === 'CLEARED').length;
+    const isFoundActive = groupStatus === 'NEW' || !groupStatus;
+
+    return (
+        <div className="flex items-center gap-2">
+            <button
+                type="button"
+                onClick={() => dispatch(setDashboardStatus('NEW'))}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    isFoundActive
+                        ? 'border-2 border-[#1E90FF] bg-[#13273D] text-[#4CA5FF] shadow-xs'
+                        : 'border border-transparent text-[#7E8691] hover:text-white'
+                }`}
             >
-                <option value="latest">Latest</option>
-                <option value="oldest">Oldest</option>
-                <option value="biggestTosmallest">Size: Biggest to Smallest</option>
-                <option value="smallestTobiggest">Size: Smallest to Biggest</option>
-                <option value="nearestFirst">Distance: Nearest First</option>
-            </select>
+                FOD Found({String(foundCount).padStart(2, '0')})
+            </button>
+            <button
+                type="button"
+                onClick={() => dispatch(setDashboardStatus('ACCEPTED'))}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    !isFoundActive
+                        ? 'border-2 border-[#1E90FF] bg-[#13273D] text-[#4CA5FF] shadow-xs'
+                        : 'border border-transparent text-[#7E8691] hover:text-white'
+                }`}
+            >
+                FOD Left ({acceptedCount || 0})
+            </button>
         </div>
     );
 };
@@ -83,19 +103,14 @@ const Filters = () => {
         { name: 'Non-metallic objects', value: 'Non-Metallic' },
     ];
 
-    const handleRangeChange = (newValue) => setRangeValue(newValue.x);
+    const handleRangeChange = (newValue: any) => setRangeValue(newValue.x);
 
-    const handleChange = (e) => {
+    const handleChange = (e: any) => {
         const { value, checked } = e.target;
         setFormData((prevState) => ({ ...prevState, [value]: checked }));
     };
 
-    const handleRemoveOption = (keyToRemove) => {
-        setFormData((prevState) => ({ ...prevState, [keyToRemove]: false }));
-        dispatch(remove_Class(keyToRemove));
-    };
-
-    const handleApply = (e) => {
+    const handleApply = (e: any) => {
         e.preventDefault();
         const selectedClasses = Object.entries(formData)
             .filter(([_, value]) => value)
@@ -106,13 +121,23 @@ const Filters = () => {
     };
 
     return (
-        <div className="relative w-[75%] flex justify-end items-center gap-4">
-            <FilterIcon className={`${isToolTipOpen ? "text-blue-500" : "text-gray-500"}`} onClick={() => setToolTipVisibility(!isToolTipOpen)} />
-            {/* <Image className="text-blue-500 relative cursor-pointer"  src={FilterIcon} alt="Filter" onClick={() => setToolTipVisibility(!isToolTipOpen)} /> */}
+        <div className="relative">
+            <button
+                type="button"
+                onClick={() => setToolTipVisibility(!isToolTipOpen)}
+                className={`bg-[#181D24] border rounded-lg px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
+                    isToolTipOpen
+                        ? 'border-[#1E90FF] text-[#4CA5FF]'
+                        : 'border-[#2B323D] hover:border-[#3E4755] text-slate-300'
+                }`}
+            >
+                <FilterIcon className="w-3.5 h-3.5" />
+                <span>Filter</span>
+            </button>
             {isToolTipOpen && (
-                <div className="absolute right-6 top-full w-64 bg-white rounded-lg shadow-lg p-4 z-10">
+                <div className="absolute right-0 top-full mt-2 w-72 bg-[#1C222A] border border-[#2B323D] text-white rounded-xl shadow-2xl p-4 z-30 animate-in fade-in duration-150">
                     <ClassForm
-                        {...{ classes, formData, setFormData, handleApply, handleChange, handleRemoveOption, rangeValue, handleRangeChange, setToolTipVisibility }}
+                        {...{ classes, formData, setFormData, handleApply, handleChange, rangeValue, handleRangeChange, setToolTipVisibility }}
                     />
                 </div>
             )}
@@ -120,7 +145,7 @@ const Filters = () => {
     );
 };
 
-const ClassForm = ({ rangeValue, handleRangeChange, classes, formData, setFormData, handleChange, handleApply, setToolTipVisibility }) => {
+const ClassForm = ({ rangeValue, handleRangeChange, classes, formData, setFormData, handleChange, handleApply, setToolTipVisibility }: any) => {
     const dispatch = useDispatch();
     const { groupStatus } = useSelector((state: RootState) => state.FodReducer.filters);
     const { size } = config.filters;
@@ -128,48 +153,41 @@ const ClassForm = ({ rangeValue, handleRangeChange, classes, formData, setFormDa
         const selectedClasses = Object.entries({ Metallic: true, 'Rocks/Ashpalt': true, Organic: true, 'Non-Metallic': true })
             .filter(([_, value]) => value)
             .map(([key]) => key);
-        // setFormData();
         const filter = { classes: selectedClasses, minSize: rangeValue };
         dispatch(set_Class_Size(filter));
         setToolTipVisibility(false);
     };
 
-    const toggleAccept=(e)=>{
-        e.preventDefault();
-        if(groupStatus=='NEW'){
-            dispatch(setDashboardStatus('ACCEPTED'))
-        }else{
-            dispatch(setDashboardStatus('NEW'))
-        }
-    }
     return (
-        <form onSubmit={handleApply} className="w-full">
-            <h3 className="text-lg font-semibold mb-2">Class</h3>
-            <InputRange
-                axis="x"
-                xmin={size.min}
-                xmax={size.max}
-                x={rangeValue}
-                onChange={handleRangeChange}
-                styles={{
-                    track: { background: '#60a5fa', height: '6px' },
-                    active: { background: '#CCCCD6' },
-                    thumb: {
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '50%',
-                        backgroundColor: 'white',
-                        border: '2px solid #60a5fa',
-                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
-                    },
-                }}
-            />
-            <div className="flex justify-between text-sm mt-2">
-                <span>Min: {rangeValue} mm</span>
+        <form onSubmit={handleApply} className="w-full space-y-3">
+            <div className="flex items-center justify-between pb-1.5 border-b border-[#2B323D]">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Filter FOD Classes</h3>
+                <span className="text-xs font-mono font-semibold text-[#4CA5FF]">Min: {rangeValue} mm</span>
             </div>
-            <ul className="list-none m-0 p-0 my-4">
-                {classes.map((classData, index) => (
-                    <li key={index} className={`flex items-center rounded-md py-2 px-2 mb-2 ${formData[classData.value] ? 'bg-blue-100' : 'bg-gray-100'}`}>
+            <div className="py-1">
+                <InputRange
+                    axis="x"
+                    xmin={size.min}
+                    xmax={size.max}
+                    x={rangeValue}
+                    onChange={handleRangeChange}
+                    styles={{
+                        track: { background: '#1E90FF', height: '5px' },
+                        active: { background: '#353A42' },
+                        thumb: {
+                            width: '16px',
+                            height: '16px',
+                            borderRadius: '50%',
+                            backgroundColor: 'white',
+                            border: '2px solid #1E90FF',
+                            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.4)',
+                        },
+                    }}
+                />
+            </div>
+            <ul className="list-none m-0 p-0 space-y-1.5">
+                {classes.map((classData: any, index: number) => (
+                    <li key={index} className={`flex items-center rounded-lg py-2 px-2.5 text-xs font-medium cursor-pointer transition-colors ${formData[classData.value] ? 'bg-[#13273D] text-[#4CA5FF] border border-[#1E90FF]/40' : 'bg-[#222832] text-[#7E8691] border border-transparent'}`}>
                         <input
                             id={classData.value}
                             type="checkbox"
@@ -178,29 +196,26 @@ const ClassForm = ({ rangeValue, handleRangeChange, classes, formData, setFormDa
                             onChange={handleChange}
                             className="hidden"
                         />
-                        <label htmlFor={classData.value} className="flex items-center cursor-pointer pl-4">
-                            <span className={`w-5 h-5 border border-gray-500 rounded-md mr-2 ${formData[classData.value] ? 'bg-blue-400' : ''}`}></span>
-                            {classData.name}
+                        <label htmlFor={classData.value} className="flex items-center cursor-pointer w-full">
+                            <span className={`w-3.5 h-3.5 border rounded mr-2 flex items-center justify-center ${formData[classData.value] ? 'bg-[#1E90FF] border-[#1E90FF] text-white text-[9px] font-bold' : 'border-slate-500'}`}>
+                                {formData[classData.value] ? '✓' : ''}
+                            </span>
+                            <span>{classData.name}</span>
                         </label>
                     </li>
                 ))}
             </ul>
-            <label className="inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={groupStatus=='ACCEPTED'} value="" className="sr-only peer" onChange={toggleAccept}/>
-                <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300  rounded-full peer  peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all  peer-checked:bg-blue-600"></div>
-                <span className="ms-3 text-sm font-medium">Accepted</span>
-            </label>
-            <div className="flex gap-2 justify-center">
+            <div className="flex gap-2 justify-end pt-2 border-t border-[#2B323D]">
                 <button
                     type="button"
-                    className="border-2 border-blue-500 text-blue-border-blue-500 rounded-md py-1.5 px-4"
+                    className="border border-[#384250] text-[#7E8691] hover:text-white hover:bg-[#252C36] rounded-lg py-1.5 px-3 text-xs font-semibold transition-all active:scale-95"
                     onClick={handleReset}
                 >
                     Reset
                 </button>
                 <button
                     type="submit"
-                    className="bg-blue-900 text-white rounded-md py-1.5 px-4"
+                    className="bg-[#1E90FF] hover:bg-[#187bcd] text-white font-bold rounded-lg py-1.5 px-3.5 text-xs shadow transition-all active:scale-95"
                 >
                     Apply
                 </button>

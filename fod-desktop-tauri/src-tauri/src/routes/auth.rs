@@ -269,10 +269,11 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
     // id: Prisma @default(uuid()) is app-side; role GUEST/specified; isActive default true;
     // createdAt = new Date(); updatedAt (@updatedAt) = now() on create.
     let id = uuid::Uuid::new_v4().to_string();
+    let now = crate::services::now_naive();
     let inserted = sqlx::query_as::<_, User>(
         r#"INSERT INTO "User"
              ("id","username","password","firstName","lastName","isActive","role","dirty","createdAt","updatedAt")
-           VALUES ($1,$2,$3,$4,$5,$6,$7::"Role",true,now(),now())
+           VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8,$8)
            RETURNING *"#,
     )
     .bind(&id)
@@ -282,6 +283,7 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
     .bind(last_name)
     .bind(is_active)
     .bind(role)
+    .bind(now)
     .fetch_one(&state.db)
     .await;
     let user = match inserted {
@@ -426,9 +428,10 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
         user.password.clone()
     };
 
+    let now = crate::services::now_naive();
     let updated = sqlx::query_as::<_, User>(
         r#"UPDATE "User"
-           SET "firstName" = $1, "lastName" = $2, "isActive" = $3, "role" = $4::"Role", "password" = $5, "dirty" = true, "updatedAt" = now()
+           SET "firstName" = $1, "lastName" = $2, "isActive" = $3, "role" = $4, "password" = $5, "dirty" = true, "updatedAt" = $7
            WHERE "id" = $6
            RETURNING *"#,
     )
@@ -438,6 +441,7 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
     .bind(role)
     .bind(password_hash)
     .bind(id)
+    .bind(now)
     .fetch_one(&state.db)
     .await;
 
@@ -500,7 +504,7 @@ async fn delete_user_body(State(state): State<AppState>, body: Bytes) -> Respons
 
     if user.role == Role::Admin {
         let admin_count: Option<i64> = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM "User" WHERE "role" = 'ADMIN'::"Role""#,
+            r#"SELECT COUNT(*) FROM "User" WHERE "role" = 'ADMIN'"#,
         )
         .fetch_one(&state.db)
         .await

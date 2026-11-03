@@ -95,11 +95,10 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = {}) =>
         }
       } else if (data.type == 'terminate') {
         const currentMissionId = missionRef.current?.missionNumber;
-        if (currentMissionId && String(data.missionNumber) === String(currentMissionId)) {
-          toast("This mission is stopped by admin, exit in 3 sec.");
-          setTimeout(() => {
-            dispatch(set_Terminate());
-          }, 3000);
+        const termId = data.missionNumber || data.missionId || data.message?.missionId;
+        if (!termId || (currentMissionId && String(termId) === String(currentMissionId))) {
+          toast.warn("Mission terminated.");
+          dispatch(set_Terminate());
         }
       }
     };

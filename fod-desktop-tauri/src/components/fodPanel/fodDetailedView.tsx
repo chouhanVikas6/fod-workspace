@@ -1,23 +1,11 @@
 import React, { useRef, useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
-import { PiCheckBold } from "react-icons/pi";
-import { Fod_FodId } from "@/utils/FodParser";
-import leftArrowImg from "@/assets/images/svg/left-arrow.svg";
-import rightArowImg from "@/assets/images/svg/right-arrow.svg";
-const OperationSideBarStyle = {
-    width: 6,
-    background: '#FCFCFC',
-    borderColor: '#DDDDE7'
-}
-const FodPanelStyle = {
-    width: 100 - (OperationSideBarStyle.width || 0),
-    background: "#F8F8F8",
-}
+import { HiOutlineCheck } from "react-icons/hi";
+import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
 import { FiltersCheck, sortByFilter } from "@/utils/FiltersCheck";
 import { removeDetailedViewFod } from "@/store/actions/FodDetailedView";
-import { update_DetailViewFod } from "@/store/slices/fodDetailesView-slice";
-import { reset_DetailedViewFod } from "@/store/slices/fodDetailesView-slice";
+import { update_DetailViewFod, reset_DetailedViewFod } from "@/store/slices/fodDetailesView-slice";
 import { acceptFod, rejectFod } from "@/store/actions/FodActions";
 import Image from "next/image";
 import { RootState, AppDispatch } from "@/store";
@@ -28,71 +16,103 @@ import { doubleAccept } from "@/store/slices/fodReducer-slice";
 import { toast } from "react-toastify";
 import { config } from "@/config/clientConfig";
 
-
 const DetailedView = () => {
     const dispatch = useDispatch<AppDispatch>();
     const missionState = useSelector((store: RootState) => store.MissionState);
     const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
-    const [selectedFrame, setselectedFrame] = useState(null);
-    const { width } = FodPanelStyle;
+    const [selectedFrame, setselectedFrame] = useState<any>(null);
+    const [zoom, setZoom] = useState(1);
     const [fade, setfade] = useState(false);
-    const detailedViewRef = useRef(null);
+    const detailedViewRef = useRef<HTMLDivElement | null>(null);
     const [isAcceptDisabled, setAcceptButtonStatus] = useState(false);
     const [isRejectDisabled, setRejectButtonStatus] = useState(false);
-    const { isOpen, isFilteredFod, fod, origin } = useSelector((state: RootState) => state.FodDetailedView);
+    const { isOpen, isFilteredFod, fod } = useSelector((state: RootState) => state.FodDetailedView);
     const { fods: alertQueue, doubleAccepted } = useSelector((state: RootState) => state.FodReducer);
     const filters = useSelector((state: RootState) => state.FodReducer.filters);
 
-    const getFrames = (fod) => {
-        const { FodPoints } = fod;
-        let frames = [];
-        frames = FodPoints || [];
-        return frames;
-    }
+    const getFrames = (fodItem: any) => {
+        if (!fodItem) return [];
+        const { FodPoints } = fodItem;
+        if (Array.isArray(FodPoints) && FodPoints.length > 0) {
+            return FodPoints;
+        }
+        return [fodItem];
+    };
 
     const frames = getFrames(fod);
-    function handleButtonClick(event) {
-        // Prevent clicks on buttons from bubbling up to the document level
+    const activeFrame = selectedFrame || frames[selectedFrameIdx] || (fod as any);
+
+    function handleButtonClick(event: React.MouseEvent) {
         event.stopPropagation();
     }
+
+    const getRiskBadge = (value: number) => {
+        const { FodSize } = config.FodCard;
+        const medium = FodSize?.medium ?? 30;
+        const large = FodSize?.large ?? 90;
+        if (value >= large) {
+            return {
+                badgeStyle: "bg-[#DC2626] text-white",
+                text: "HIGH RISK",
+            };
+        } else if (value >= medium) {
+            return {
+                badgeStyle: "bg-[#F59E0B] text-black font-extrabold",
+                text: "MEDIUM RISK",
+            };
+        } else {
+            return {
+                badgeStyle: "bg-[#374151] text-slate-200",
+                text: "LOW RISK",
+            };
+        }
+    };
+
+    const formatTimestamp = (ts: any) => {
+        try {
+            const date = ts ? new Date(ts) : new Date();
+            if (isNaN(date.getTime())) {
+                return new Date().toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            }
+            return date.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        } catch {
+            return "13:35:12";
+        }
+    };
 
     const getNextFod = (idx?: number) => {
         const providedFodId = (fod as any).groupId;
         let queue = alertQueue.filter(fod => fod.groupStatus == filters.groupStatus);
         const initFilteredArray = queue.filter((fod) => isFilteredFod ? !FiltersCheck(fod, filters) : FiltersCheck(fod, filters));
         const sortedArray = sortByFilter(filters, initFilteredArray);
-        const filteredArray = sortedArray.filter(fod => !doubleAccepted.hasOwnProperty(fod.groupId))
+        const filteredArray = sortedArray.filter(fod => !doubleAccepted.hasOwnProperty(fod.groupId));
         if (filteredArray.length <= 1) return null;
         const filteredIndex = filteredArray.findIndex(item => item.groupId === providedFodId);
         let result = typeof idx == 'number' ? filteredArray[idx] : filteredArray[filteredIndex + 1] || filteredArray[0];
-        if (result.groupId == (fod as any).groupId) {
+        if (result && result.groupId == (fod as any).groupId) {
             result = typeof idx == 'number' ? filteredArray[idx + 1] : filteredArray[filteredIndex + 1] || filteredArray[1];
         }
         return result;
     };
 
     const fetchNextFodDetailedView = async () => {
-        setfade(true)
+        setfade(true);
         const nextFod = getNextFod();
         const listFod = await getAllFrames(nextFod);
         if (nextFod) {
-            console.log({ listFod })
-            const fod = { ...nextFod, FodPoints: listFod.data };
-            dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: listFod.origin }));
+            const updatedFod = { ...nextFod, FodPoints: listFod.data };
+            dispatch(update_DetailViewFod({ fod: updatedFod, isFilteredFod, origin: listFod.origin }));
             getAllFramesFromServer(nextFod, missionState.missionNumber).then((res: any) => {
-                console.log({ res })
-                const fod = { ...nextFod, FodPoints: res.data };
-                dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: res.origin }));
+                const serverFod = { ...nextFod, FodPoints: res.data };
+                dispatch(update_DetailViewFod({ fod: serverFod, isFilteredFod, origin: res.origin }));
             });
         } else {
             dispatch(reset_DetailedViewFod());
         }
         setTimeout(() => {
-            setfade(false)
-        }, 200)
-
-
-    }
+            setfade(false);
+        }, 200);
+    };
 
     const getPreviousFod = () => {
         const providedFodId = (fod as any).groupId;
@@ -105,31 +125,30 @@ const DetailedView = () => {
     };
 
     const fetchPreviousFodDetailedView = async () => {
-        setfade(true)
+        setfade(true);
         const prevFod = getPreviousFod();
         const listFod = await getAllFrames(prevFod);
         if (prevFod) {
-            const fod = { ...prevFod, FodPoints: listFod.data };
-            dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: listFod.origin }));
+            const updatedFod = { ...prevFod, FodPoints: listFod.data };
+            dispatch(update_DetailViewFod({ fod: updatedFod, isFilteredFod, origin: listFod.origin }));
             getAllFramesFromServer(prevFod, missionState.missionNumber).then((res: any) => {
-                console.log({ res })
-                const fod = { ...prevFod, FodPoints: res.data };
-                dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: res.origin }));
+                const serverFod = { ...prevFod, FodPoints: res.data };
+                dispatch(update_DetailViewFod({ fod: serverFod, isFilteredFod, origin: res.origin }));
             });
         } else {
             dispatch(reset_DetailedViewFod());
         }
         setTimeout(() => {
-            setfade(false)
-        }, 200)
-    }
+            setfade(false);
+        }, 200);
+    };
 
     const handleAccept = async () => {
         setAcceptButtonStatus(true);
         setAcceptButtonStatus(false);
         setfade(true);
         if ((fod as any).groupStatus == "ACCEPTED") {
-            dispatch(doubleAccept((fod as any).groupId))
+            dispatch(doubleAccept((fod as any).groupId));
         } else {
             dispatch(acceptFod({ ...(fod as any), missionId: missionState.missionNumber }));
         }
@@ -138,8 +157,8 @@ const DetailedView = () => {
                 const nextFod = getNextFod(0);
                 const listFod = await getAllFrames(nextFod);
                 if (nextFod) {
-                    const fod = { ...nextFod, FodPoints: listFod.data };
-                    dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: listFod.origin }));
+                    const updatedFod = { ...nextFod, FodPoints: listFod.data };
+                    dispatch(update_DetailViewFod({ fod: updatedFod, isFilteredFod, origin: listFod.origin }));
                 } else {
                     dispatch(reset_DetailedViewFod());
                 }
@@ -148,11 +167,10 @@ const DetailedView = () => {
             } finally {
                 setfade(false);
             }
-        }, 200)
-    }
+        }, 200);
+    };
 
     const handleReject = async () => {
-        console.log("Reject start");
         setRejectButtonStatus(true);
         setRejectButtonStatus(false);
         setfade(true);
@@ -162,8 +180,8 @@ const DetailedView = () => {
                 const nextFod = getNextFod(0);
                 const listFod = await getAllFrames(nextFod);
                 if (nextFod) {
-                    const fod = { ...nextFod, FodPoints: listFod.data };
-                    dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: listFod.origin }));
+                    const updatedFod = { ...nextFod, FodPoints: listFod.data };
+                    dispatch(update_DetailViewFod({ fod: updatedFod, isFilteredFod, origin: listFod.origin }));
                 } else {
                     dispatch(reset_DetailedViewFod());
                 }
@@ -173,40 +191,34 @@ const DetailedView = () => {
             } finally {
                 setfade(false);
             }
-        }, 200)
-    }
+        }, 200);
+    };
 
-    const keyboardPointersAction = (count) => {
+    const stepFrame = (delta: number) => {
+        if (!frames.length) return;
         setSelectedFrameIdx((prevIdx) => {
-            let currentIdx = prevIdx + count;
-
-            if (currentIdx < 0 || currentIdx >= frames.length) {
-                return prevIdx;
-            }
-
-            setselectedFrame(frames[currentIdx]);
-
-            const ele = document.getElementById(`selectedFrame${currentIdx}`);
+            const nextIdx = Math.max(0, Math.min(frames.length - 1, prevIdx + delta));
+            setselectedFrame(frames[nextIdx]);
+            setZoom(1);
+            const ele = document.getElementById(`selectedFrame${nextIdx}`);
             if (ele) {
                 ele.scrollIntoView({
-                    behavior: 'smooth', // Smooth scrolling animation
-                    block: 'center',    // Align the element vertically in the center of the viewport
-                    inline: 'nearest'   // Align the element horizontally (if needed)
+                    behavior: 'smooth',
+                    block: 'nearest',
+                    inline: 'center'
                 });
             }
-
-            return currentIdx; // Return the new index
+            return nextIdx;
         });
     };
 
-
-    // Reset selected frame when fod changes
     useEffect(() => {
         setSelectedFrameIdx(0);
         setselectedFrame(null);
+        setZoom(1);
     }, [fod?.id, (fod as any)?.groupId]);
 
-    const handleAcceptRejectKeyDown = async (event) => {
+    const handleAcceptRejectKeyDown = async (event: KeyboardEvent) => {
         if (event.key === 'Escape' || event.keyCode === 27) {
             dispatch(removeDetailedViewFod());
             return;
@@ -214,10 +226,12 @@ const DetailedView = () => {
 
         switch (event.keyCode) {
             case 87:
-                keyboardPointersAction(-3)
+            case 37:
+                stepFrame(-1);
                 break;
             case 83:
-                keyboardPointersAction(3)
+            case 39:
+                stepFrame(1);
                 break;
             case 65:
                 fetchPreviousFodDetailedView();
@@ -231,140 +245,271 @@ const DetailedView = () => {
             return;
         }
 
-        if (event.keyCode === 255 || event.keyCode === 81) { // F7
+        if (event.keyCode === 255 || event.keyCode === 81) {
             await handleAccept();
-        } else if (event.keyCode === 115 || event.keyCode === 69) { // F4
+        } else if (event.keyCode === 115 || event.keyCode === 69) {
             await handleReject();
         }
-    }
+    };
 
-
-    //adding event for listening keyboard
     useEffect(() => {
         window.addEventListener('keydown', handleAcceptRejectKeyDown);
         return () => {
             window.removeEventListener('keydown', handleAcceptRejectKeyDown);
         };
-    }, [isOpen, fod, isAcceptDisabled, isRejectDisabled]);
+    }, [isOpen, fod, isAcceptDisabled, isRejectDisabled, frames.length]);
 
-    //adding event to closing modal
     useEffect(() => {
-        function handleClickOutside(event) {
-            if (detailedViewRef.current && !detailedViewRef.current.contains(event.target)) {
+        function handleClickOutside(event: MouseEvent | TouchEvent) {
+            if (detailedViewRef.current && !detailedViewRef.current.contains(event.target as Node)) {
                 dispatch(removeDetailedViewFod());
             }
         }
         document.addEventListener("mousedown", handleClickOutside);
-        document.addEventListener("touchstart", handleClickOutside); // Add touchstart event listener
+        document.addEventListener("touchstart", handleClickOutside);
 
         return () => {
             document.removeEventListener("mousedown", handleClickOutside);
-            document.removeEventListener("touchstart", handleClickOutside); // Remove touchstart event listener
+            document.removeEventListener("touchstart", handleClickOutside);
         };
-    }, [dispatch, detailedViewRef]);
+    }, [dispatch]);
 
+    const currentSize = Number(activeFrame?.size ?? (fod as any)?.size ?? 24);
+    const risk = getRiskBadge(currentSize);
+    const fodNumber = (fod as any)?.groupId ?? fod?.id ?? '';
 
     return (
         <>
-            {isOpen && <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center text-[#696972] z-50 animate-fadeIn">
-                {fade && <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[999]">
-                    <CircleLoader />
-                </div>}
-                <div className={`h-[80%] w-[80%] max-w-[1200px] rounded-xl p-5 bg-white shadow-2xl flex justify-between items-center relative transition-all duration-300 ${fade ? "opacity-50 animate-shrinkFade" : "opacity-100 animate-expandFromCenter"}`} ref={detailedViewRef} onClick={handleButtonClick}>
-                    <div onClick={fetchPreviousFodDetailedView} className="absolute -left-28 top-1/2 transform -translate-y-1/2 z-20 active:scale-95 cursor-pointer">
-                        {/* <FaArrowLeft className="text-3xl text-gray-700 hover:text-gray-900" /> */}
-                        <Image src={leftArrowImg} width={100} height={100} alt={""} />
-                    </div>
-                    <div className="w-[55%] h-full rounded-md bg-[#EBEBEB] flex flex-wrap gap-2.5 pt-5 pl-5 overflow-y-auto overflow-x-hidden">
-                        <div className=" w-full grid grid-cols-2 2xl:grid-cols-3 gap-3 justify-center ">
-                            {frames.map((frame, index) => {
-                                const isSelected = selectedFrame ? frame?.id === selectedFrame?.id : index === selectedFrameIdx;
-                                return (
-                                    <div
-                                        id={`selectedFrame${index}`}
-                                        onClick={() => {
-                                            setSelectedFrameIdx(index);
-                                            setselectedFrame(frame);
-                                        }}
-                                        key={index}
-                                        className={`max-h-80 overflow-hidden cursor-pointer rounded-lg transition-all duration-150 ${
-                                            isSelected ? "border-2 border-[#017ED7] shadow-md ring-2 ring-blue-400/40 scale-[1.02]" : "border border-gray-300 opacity-80 hover:opacity-100"
-                                        } w-[220px] h-[220px]`}
-                                    >
-                                        <Image
-                                            src={`${config.ImagesBase}/${missionState.missionNumber}/${frame.groupId}/${frame.id}.jpg`}
-                                            className="w-full h-full object-cover object-center"
-                                            alt="FOD frame"
-                                            width={220}
-                                            height={220}
-                                        />
-                                    </div>
-                                );
-                            })}
+            {isOpen && (
+                <div className="fixed top-[8%] left-[78px] right-0 bottom-0 bg-[#181C23]/95 backdrop-blur-xs flex justify-center items-center z-40 select-none animate-fadeIn">
+                    {fade && (
+                        <div className="absolute inset-0 flex items-center justify-center z-[999]">
+                            <CircleLoader />
                         </div>
-                    </div>
-                    <div className="h-full w-[45%] flex flex-col justify-between items-center py-5 px-5">
-                        <div className="h-[65%] w-full flex flex-col justify-start items-center">
-                            <div className="flex justify-between items-center h-[20%] mb-2.5 w-full text-3xl font-black">
-                                <div className="flex items-center gap-3">
-                                    <span>Fod Id {Fod_FodId(fod)}</span>
-                                    {`${origin}` === 'backend' ? (
-                                        <span className="w-3.5 h-3.5 rounded-full bg-green-500 inline-block" title="Backend synced" />
-                                    ) : (
-                                        <span className="w-3.5 h-3.5 rounded-full bg-yellow-500 inline-block" title="Local detection" />
-                                    )}
-                                </div>
+                    )}
+
+                    <div
+                        ref={detailedViewRef}
+                        onClick={handleButtonClick}
+                        className={`w-[86%] max-w-[1140px] h-[88%] max-h-[680px] rounded-2xl p-3.5 bg-[#262B33] border border-[#353D49] shadow-2xl flex gap-3.5 relative transition-all duration-200 ${
+                            fade ? "opacity-50 scale-[0.99]" : "opacity-100 scale-100"
+                        }`}
+                    >
+                        {/* Outer Previous FOD Button */}
+                        <button
+                            type="button"
+                            onClick={fetchPreviousFodDetailedView}
+                            title="Previous FOD (A)"
+                            className="absolute -left-14 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-[#161A21] hover:bg-[#222832] border border-[#343C48] flex items-center justify-center text-slate-200 hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
+                        >
+                            <FiChevronLeft className="w-6 h-6 stroke-[2]" />
+                        </button>
+
+                        {/* Left Section: Main Frame Viewer + Overlays + Thumbnails */}
+                        <div className="w-[63%] h-full relative rounded-xl overflow-hidden bg-[#12161B] border border-[#333B46] flex items-center justify-center">
+                            {/* Top-Left Camera Timestamp Pill */}
+                            <div className="absolute top-3.5 left-3.5 z-20 px-4 py-2 rounded-lg bg-[#1A1F26]/85 backdrop-blur-md border border-[#3B4452] text-slate-100 text-xs font-medium tracking-wide shadow-md">
+                                Camera · {formatTimestamp(activeFrame?.timestamp || (fod as any)?.timestamp)}
+                            </div>
+
+                            {/* Top-Right Zoom Controls */}
+                            <div className="absolute top-3.5 right-3.5 z-20 flex items-center gap-2">
                                 <button
-                                    onClick={() => dispatch(removeDetailedViewFod())}
-                                    className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-800 cursor-pointer"
-                                    title="Close (Esc)"
+                                    type="button"
+                                    onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}
+                                    className="px-3.5 py-2 rounded-lg bg-[#1A1F26]/85 hover:bg-[#262D37] backdrop-blur-md border border-[#3B4452] text-white text-xs font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
                                 >
-                                    <RxCross1 className="text-2xl" />
+                                    + ZOOM IN
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setZoom((z) => Math.max(1, +(z - 0.25).toFixed(2)))}
+                                    className="px-3.5 py-2 rounded-lg bg-[#1A1F26]/85 hover:bg-[#262D37] backdrop-blur-md border border-[#3B4452] text-white text-xs font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
+                                >
+                                    — ZOOM OUT
                                 </button>
                             </div>
-                            <div className="h-full w-full flex flex-col justify-between items-center">
-                                <div className="h-[25%] w-full rounded-md bg-[#F7F7F7] my-1 flex justify-between items-center px-3">
-                                    <span>CAM ID</span>
-                                    <span>{!!selectedFrame ? selectedFrame?.sysid : frames[0]?.sysid}</span>
+
+                            {/* Main Selected Image */}
+                            <div className="w-full h-full flex items-center justify-center overflow-hidden relative">
+                                {activeFrame && (
+                                    <div
+                                        className="w-full h-full flex items-center justify-center transition-transform duration-200 ease-out"
+                                        style={{ transform: `scale(${zoom})` }}
+                                    >
+                                        <Image
+                                            src={`${config.ImagesBase}/${missionState.missionNumber}/${activeFrame.groupId ?? (fod as any)?.groupId}/${activeFrame.id ?? fod?.id}.jpg`}
+                                            className="w-full h-full object-cover object-center"
+                                            alt={`FOD #${fodNumber}`}
+                                            width={800}
+                                            height={600}
+                                            draggable={false}
+                                        />
+                                        {/* Center FOD Tag Badge */}
+                                        <div className="absolute top-[37%] left-1/2 -translate-x-1/2 -translate-y-full mb-1 pointer-events-none">
+                                            <span className="px-3 py-0.5 rounded bg-[#DC2626] text-white text-xs font-bold tracking-wide shadow-md">
+                                                FOD #{fodNumber}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Bottom Thumbnail Carousel Strip */}
+                            {frames.length > 0 && (
+                                <div className="absolute bottom-3 left-3 right-3 z-20 flex items-center justify-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => stepFrame(-1)}
+                                        disabled={selectedFrameIdx <= 0}
+                                        className="w-8 h-8 rounded-full bg-[#161A21]/90 hover:bg-[#252C37] disabled:opacity-40 border border-[#3B4452] flex items-center justify-center text-white shrink-0 cursor-pointer transition-all active:scale-90 shadow-lg"
+                                    >
+                                        <FiChevronLeft className="w-4 h-4 stroke-[2.5]" />
+                                    </button>
+
+                                    <div className="flex items-center gap-2.5 overflow-x-auto py-1 px-1 max-w-full">
+                                        {frames.map((frame: any, index: number) => {
+                                            const isSelected = selectedFrame
+                                                ? frame?.id === selectedFrame?.id
+                                                : index === selectedFrameIdx;
+                                            return (
+                                                <div
+                                                    id={`selectedFrame${index}`}
+                                                    key={frame?.id ?? index}
+                                                    onClick={() => {
+                                                        setSelectedFrameIdx(index);
+                                                        setselectedFrame(frame);
+                                                        setZoom(1);
+                                                    }}
+                                                    className={`w-[96px] h-[72px] rounded-md overflow-hidden shrink-0 cursor-pointer transition-all duration-150 bg-slate-900 ${
+                                                        isSelected
+                                                            ? "border-2 border-white shadow-lg scale-[1.03] opacity-100"
+                                                            : "border border-[#495362] opacity-75 hover:opacity-100"
+                                                    }`}
+                                                >
+                                                    <Image
+                                                        src={`${config.ImagesBase}/${missionState.missionNumber}/${frame.groupId ?? (fod as any)?.groupId}/${frame.id}.jpg`}
+                                                        className="w-full h-full object-cover object-center"
+                                                        alt="FOD frame thumbnail"
+                                                        width={96}
+                                                        height={72}
+                                                        draggable={false}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => stepFrame(1)}
+                                        disabled={selectedFrameIdx >= frames.length - 1}
+                                        className="w-8 h-8 rounded-full bg-[#161A21]/90 hover:bg-[#252C37] disabled:opacity-40 border border-[#3B4452] flex items-center justify-center text-white shrink-0 cursor-pointer transition-all active:scale-90 shadow-lg"
+                                    >
+                                        <FiChevronRight className="w-4 h-4 stroke-[2.5]" />
+                                    </button>
                                 </div>
-                                <div className="h-[25%] w-full rounded-md bg-[#F7F7F7] my-1 flex justify-between items-center px-3">
-                                    <span>Size</span>
-                                    <span>{!!selectedFrame ? selectedFrame.size : frames[0]?.size}mm</span>
-                                </div>
-                                <div className="h-[25%] w-full rounded-md bg-[#F7F7F7] my-1 flex justify-between items-center px-3">
-                                    <span>Class</span>
-                                    <span>{!!selectedFrame ? selectedFrame.class : frames[0]?.class}</span>
-                                </div>
-                                <div className="h-[25%] w-full rounded-md bg-[#F7F7F7] my-1 flex justify-between items-center px-3">
-                                    <span>Velocity</span>
-                                    <span>{!!selectedFrame ? Math.floor(selectedFrame.velocity) : Math.floor(frames[0]?.velocity)}Km/h</span>
-                                </div>
-                                <div className="h-[25%] w-full rounded-md bg-[#F7F7F7] my-1 flex justify-between items-center px-3">
-                                    <span>
-                                        Distance
+                            )}
+                        </div>
+
+                        {/* Right Section: Details & Decision Panel */}
+                        <div className="w-[37%] h-full rounded-xl bg-[#1D2229] border border-[#2E3642] p-6 flex flex-col justify-between text-white">
+                            <div>
+                                {/* Header Row: Risk Pill & Close Button */}
+                                <div className="flex justify-between items-center">
+                                    <span className={`px-4 py-1.5 rounded-md text-xs font-extrabold uppercase tracking-wider ${risk.badgeStyle}`}>
+                                        {risk.text}
                                     </span>
-                                    <span><Distance {...{ selectedFrame }} /></span>
+                                    <button
+                                        type="button"
+                                        onClick={() => dispatch(removeDetailedViewFod())}
+                                        title="Close (Esc)"
+                                        className="w-9 h-9 rounded-full bg-[#14181E] hover:bg-[#252C37] border border-[#323B48] flex items-center justify-center text-slate-300 hover:text-white transition-colors cursor-pointer"
+                                    >
+                                        <RxCross1 className="w-4 h-4 stroke-[1.5]" />
+                                    </button>
+                                </div>
+
+                                {/* Title */}
+                                <h2 className="text-[22px] font-bold text-white tracking-tight mt-3 mb-4">
+                                    Is this real debris?
+                                </h2>
+
+                                {/* Metadata Table */}
+                                <div className="flex flex-col text-sm">
+                                    <div className="flex justify-between items-center py-3 border-b border-[#2B323D]">
+                                        <span className="text-[#8A94A6] font-medium">CAM ID</span>
+                                        <span className="text-white font-bold">
+                                            {activeFrame?.sysid || (fod as any)?.sysid || "-"}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-3 border-b border-[#2B323D]">
+                                        <span className="text-[#8A94A6] font-medium">Type</span>
+                                        <span className="text-white font-bold">
+                                            {activeFrame?.class || (fod as any)?.class || "Metal bolt"}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-3 border-b border-[#2B323D]">
+                                        <span className="text-[#8A94A6] font-medium">Size</span>
+                                        <span className="text-white font-bold">
+                                            {Math.round(currentSize)} mm
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-3 border-b border-[#2B323D]">
+                                        <span className="text-[#8A94A6] font-medium">Velocity</span>
+                                        <span className="text-white font-bold">
+                                            {Math.floor(Number(activeFrame?.velocity ?? (fod as any)?.velocity ?? 0))}Km/h
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-3">
+                                        <span className="text-[#8A94A6] font-medium">Distance</span>
+                                        <span className="text-white font-bold">
+                                            <Distance {...{ selectedFrame: activeFrame }} />
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
+
+                            {/* Decision Buttons & Helper Caption */}
+                            <div className="flex flex-col gap-3 mt-4">
+                                <button
+                                    type="button"
+                                    onClick={handleAccept}
+                                    disabled={isAcceptDisabled}
+                                    className="w-full py-4 rounded-xl bg-[#153928] hover:bg-[#1B4933] active:scale-[0.99] border border-[#1E7047] text-[#34D399] font-bold text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+                                >
+                                    <HiOutlineCheck className="w-5 h-5 stroke-[2.5]" />
+                                    <span>YES – SEND TO RETRIEVAL CREW</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={handleReject}
+                                    disabled={isRejectDisabled}
+                                    className="w-full py-3.5 rounded-xl bg-[#232830] hover:bg-[#2C323C] active:scale-[0.99] border border-[#38414E] text-slate-200 hover:text-white font-bold text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer"
+                                >
+                                    <RxCross1 className="w-4 h-4 stroke-[1.5]" />
+                                    <span>NO – NOT DEBRIS</span>
+                                </button>
+
+                                <p className="text-center text-[#7E8691] text-xs font-medium mt-0.5">
+                                    If unsure, press YES. The crew will check the spot.
+                                </p>
+                            </div>
                         </div>
-                        <div className="h-[15%] w-full flex gap-5 justify-center items-center">
-                            <button onClick={handleAccept} disabled={isAcceptDisabled} className="h-full w-1/2 rounded-md bg-[#017ED7] text-white flex justify-center items-center text-xl gap-1 active:scale-95 active:bg-blue-600 cursor-pointer">
-                                <PiCheckBold className="text-[22px] stroke-[3px]" />
-                                <span className="text-2xl font-semibold">Accept</span>
-                            </button>
-                            <button onClick={handleReject} disabled={isRejectDisabled} className="h-full w-1/2 rounded-md bg-[#C8CDD1] text-white flex justify-center items-center text-xl gap-1 active:scale-95 active:bg-gray-600 cursor-pointer">
-                                <RxCross1 className="stroke-[1px]" />
-                                <span className="text-2xl font-semibold">Reject</span>
-                            </button>
-                        </div>
-                    </div>
-                    {/* Next Arrow */}
-                    <div onClick={fetchNextFodDetailedView} className="absolute -right-28 top-1/2 transform -translate-y-1/2 z-20 active:scale-95 cursor-pointer">
-                        {/* <FaArrowRight className="text-3xl text-gray-700 hover:text-gray-900" /> */}
-                        <Image src={rightArowImg} width={100} height={100} alt={""} />
+
+                        {/* Outer Next FOD Button */}
+                        <button
+                            type="button"
+                            onClick={fetchNextFodDetailedView}
+                            title="Next FOD (D)"
+                            className="absolute -right-14 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-[#161A21] hover:bg-[#222832] border border-[#343C48] flex items-center justify-center text-slate-200 hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
+                        >
+                            <FiChevronRight className="w-6 h-6 stroke-[2]" />
+                        </button>
                     </div>
                 </div>
-            </div>}
+            )}
         </>
     );
 };

@@ -1,86 +1,88 @@
 import React, { useEffect, useState } from "react";
 import FilterBar from "./filterBar";
 import FodDisplay from "./fodDisplay";
-import axiosClient from "@/utils/axios";
 import { useDispatch, useSelector } from "react-redux";
 import { syncFod } from "@/store/slices/fodReducer-slice";
 import FilteredFods from "./filteredFod";
-import Loader, { CircleLoader } from "../commen/loader";
+import { CircleLoader } from "../commen/loader";
 import { RootState } from "@/store";
-import { toast } from "react-toastify";
-import { ServerBase } from "@/config/clientConfig";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 const FodPanel = ({ open }) => {
   const [fodLoading, setFodLoading] = useState(true);
   const missionNumber = useSelector((store: RootState) => store.MissionState.missionNumber);
   const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
   const dispatch = useDispatch();
-  //this will update data if mission changes
+
   useEffect(() => {
     if (!missionNumber) return;
-    let sse: EventSource | null = null;
-    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
-    let disconnectToastShown = false; // one warning per disconnect burst
+    let unlistenFn: (() => void) | null = null;
+    const subId = `fod-panel-${missionNumber}-${Date.now()}`;
 
-    function getRealtimeData(data) {
+    function getRealtimeData(data: any) {
+      if (disposed) return;
       try {
-        dispatch(syncFod(data));  // assuming you're syncing here
-        setFodLoading(false);
+        const rows = typeof data === "string" ? JSON.parse(data) : data;
+        if (Array.isArray(rows)) {
+          dispatch(syncFod(rows));
+          setFodLoading(false);
+        }
       } catch (err) {
-        console.error("Failed to parse SSE data:", err);
+        console.error("Failed to parse IPC retrive-data:", err);
       }
     }
 
-    const connect = () => {
-      if (disposed) return;
-      sse = new EventSource(`${ServerBase}/api/sse/retrive-data?id=${missionNumber}`,
-        { withCredentials: true });
-
-      sse.addEventListener("update", (e: Event) => {
-        getRealtimeData(JSON.parse((e as MessageEvent).data));
-      });
-
-      sse.onopen = () => {
-        // Connected (or reconnected): allow the next disconnect to warn again.
-        disconnectToastShown = false;
-      };
-
-      sse.onmessage = e => getRealtimeData(JSON.parse(e.data));
-
-      sse.onerror = (err) => {
-        console.error("SSE connection error:", err);
-        if (!disconnectToastShown) {
-          toast.warn('Live FOD stream disconnected — reconnecting…');
-          disconnectToastShown = true;
+    listen(`sse:retrive-data:${subId}`, (event: any) => {
+      const payload = event.payload;
+      if (payload?.event === "update") {
+        getRealtimeData(payload.data);
+      }
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
         }
-        sse?.close();
-        if (reconnectTimeout) clearTimeout(reconnectTimeout);
-        reconnectTimeout = setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
+        unlistenFn = unlisten;
+        return invoke("start_retrive_stream", {
+          subId,
+          missionId: Number(missionNumber),
+        });
+      })
+      .catch((err) => {
+        console.error("IPC retrive-data stream error:", err);
+      });
 
     return () => {
       disposed = true;
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      sse?.close();
+      if (unlistenFn) {
+        unlistenFn();
+      }
+      invoke("stop_retrive_stream", { subId }).catch(() => {});
     };
-  }, [dispatch, missionNumber])
+  }, [dispatch, missionNumber]);
 
-  console.log("Spinning FodPanel")
   return (
-    <div className={`relative h-full w-full flex justify-center items-center border z-9 ${isMapOpen || !open ? "hidden" : ""}`} >
-      <div className="relative h-full w-full flex justify-center items-center">
-        <div className="absolute left-[6vw] h-[90%] w-[85%] flex flex-wrap ">
+    <div className={`relative h-full w-full flex flex-col z-9 overflow-hidden ${isMapOpen || !open ? "hidden" : ""}`}>
+      <div className="h-full w-full flex flex-col px-5 pt-3 pb-2 relative overflow-hidden">
+        <div className="w-full shrink-0 mb-3">
           <FilterBar />
-          {fodLoading ? <CircleLoader /> : <FodDisplay />}
+        </div>
+        <div className="flex-1 w-full min-h-0 relative">
+          {fodLoading ? (
+            <div className="h-full w-full flex items-center justify-center">
+              <CircleLoader />
+            </div>
+          ) : (
+            <FodDisplay />
+          )}
         </div>
       </div>
       <FilteredFods />
     </div>
   );
-}
+};
 
 export default FodPanel;

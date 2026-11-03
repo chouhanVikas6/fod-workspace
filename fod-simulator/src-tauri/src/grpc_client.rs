@@ -54,7 +54,7 @@ impl GrpcClientManager {
         let mut detection_client = IngestServiceClient::new(channel.clone());
         let mut telemetry_client = IngestServiceClient::new(channel);
 
-        let (batch_tx, batch_rx) = mpsc::channel::<DetectionBatch>(1000);
+        let (batch_tx, batch_rx) = mpsc::channel::<DetectionBatch>(4096);
         let (telemetry_tx, telemetry_rx) = mpsc::channel::<TelemetryFrame>(1000);
 
         let accepted_count = Arc::new(AtomicU64::new(0));

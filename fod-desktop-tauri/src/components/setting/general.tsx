@@ -1,206 +1,520 @@
-import SettingIcon from '@/assets/images/svgr/setting'
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { CircleLoader } from '../commen/loader';
-import axiosClient from '@/utils/axios';
-import { syncFod } from '@/store/slices/fodReducer-slice';
-import { toggleTheme } from '@/store/slices/theme-slice';
+import { RootState } from '@/store';
+import { setTheme } from '@/store/slices/theme-slice';
 import { setLanguage } from '@/store/slices/language-slice';
 import { toast } from 'react-toastify';
-import { RootState } from '@/store';
+import notificationSound from '@/assets/audio/notification.mp3';
 
-function General() {
-   const [loading, setLoading] = useState(false);
-   const missionNumber = useSelector((store:RootState) => store.MissionState.missionNumber);
-   const theme = useSelector((store:RootState) => store.theme.theme);
-   const lang = useSelector((store:RootState) => store.language.lang);
-   const dispatch = useDispatch();
-
-   const refreshFods = () => {
-      try {
-         setLoading(true)
-         axiosClient({
-            method: "GET",
-            url: "/api/mission/retrive-data/" + missionNumber,
-         }).then(response => {
-            console.log({ response })
-            dispatch(syncFod(response.data));
-         }).finally(() => {
-            setLoading(false)
-         })
-      } catch (e) {
-         console.log(e)
-         setLoading(false)
-      }
-   }
-
-   const getMissionInput = () => (document.getElementById('downloadMission') as HTMLInputElement)?.value;
-
-   const exportMission = () => {
-      const missionNumber = getMissionInput();
-      if (!missionNumber) { toast.error('Please enter a mission number'); return; }
-      setLoading(true);
-      axiosClient({ method: 'GET', url: '/api/mission/export/' + missionNumber })
-         .then(response => {
-            const d = response.data || {};
-            toast.success(`Exported mission ${missionNumber} (${d.counts?.fods ?? 0} FODs) → ${d.path}`);
-         })
-         .catch(err => toast.error(err?.data?.error || 'Failed to export mission'))
-         .finally(() => setLoading(false));
-   }
-
-   const deleteMission = () => {
-      const missionNumber = getMissionInput();
-      if (!missionNumber) { toast.error('Please enter a mission number'); return; }
-      if (!window.confirm(`Delete mission ${missionNumber} and all its data + images? This cannot be undone.`)) return;
-      setLoading(true);
-      axiosClient({ method: 'DELETE', url: '/api/mission/delete/' + missionNumber })
-         .then(response => {
-            const d = response.data || {};
-            toast.success(`Deleted mission ${missionNumber} (${d.deleted?.fods ?? 0} FODs${d.imagesRemoved ? ', images' : ''})`);
-         })
-         .catch(err => toast.error(err?.data?.error || 'Failed to delete mission'))
-         .finally(() => setLoading(false));
-   }
-   if (loading) {
-      return <div className='fixed w-screen h-screen'>
-         <CircleLoader />
-      </div>
-   }
-   return (
-      <div className='w-full h-full flex overflow-hidden'>
-
-
-         <aside id="logo-sidebar" className="w-[30%] top-0 left-0 z-40 h-full transition-transform -translate-x-full sm:translate-x-0" aria-label="Sidebar">
-            <div className="w-full h-full px-3 py-4 overflow-y-auto bg-gray-50 dark:bg-gray-800">
-               <a href="https://flowbite.com/" className="flex items-center ps-2.5 mb-5">
-                  {/* <img src="https://flowbite.com/docs/images/logo.svg" className="h-6 me-3 sm:h-7" alt="Flowbite Logo" /> */}
-                  <span className="self-center text-xl font-semibold whitespace-nowrap dark:text-white">General</span>
-               </a>
-               <ul className="space-y-2 font-medium">
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 22 21">
-                           <path d="M16.975 11H10V4.025a1 1 0 0 0-1.066-.998 8.5 8.5 0 1 0 9.039 9.039.999.999 0 0 0-1-1.066h.002Z" />
-                           <path d="M12.5 0c-.157 0-.311.01-.565.027A1 1 0 0 0 11 1.02V10h8.975a1 1 0 0 0 1-.935c.013-.188.028-.374.028-.565A8.51 8.51 0 0 0 12.5 0Z" />
-                        </svg>
-                        <span className="ms-3">Dashboard</span>
-                     </a>
-                  </li>
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="flex-shrink-0 w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 18 18">
-                           <path d="M6.143 0H1.857A1.857 1.857 0 0 0 0 1.857v4.286C0 7.169.831 8 1.857 8h4.286A1.857 1.857 0 0 0 8 6.143V1.857A1.857 1.857 0 0 0 6.143 0Zm10 0h-4.286A1.857 1.857 0 0 0 10 1.857v4.286C10 7.169 10.831 8 11.857 8h4.286A1.857 1.857 0 0 0 18 6.143V1.857A1.857 1.857 0 0 0 16.143 0Zm-10 10H1.857A1.857 1.857 0 0 0 0 11.857v4.286C0 17.169.831 18 1.857 18h4.286A1.857 1.857 0 0 0 8 16.143v-4.286A1.857 1.857 0 0 0 6.143 10Zm10 0h-4.286A1.857 1.857 0 0 0 10 11.857v4.286c0 1.026.831 1.857 1.857 1.857h4.286A1.857 1.857 0 0 0 18 16.143v-4.286A1.857 1.857 0 0 0 16.143 10Z" />
-                        </svg>
-                        <span className="flex-1 ms-3 whitespace-nowrap">Kanban</span>
-                        <span className="inline-flex items-center justify-center px-2 ms-3 text-sm font-medium text-gray-800 bg-gray-100 rounded-full dark:bg-gray-700 dark:text-gray-300">Pro</span>
-                     </a>
-                  </li>
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="flex-shrink-0 w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20">
-                           <path d="m17.418 3.623-.018-.008a6.713 6.713 0 0 0-2.4-.569V2h1a1 1 0 1 0 0-2h-2a1 1 0 0 0-1 1v2H9.89A6.977 6.977 0 0 1 12 8v5h-2V8A5 5 0 1 0 0 8v6a1 1 0 0 0 1 1h8v4a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-4h6a1 1 0 0 0 1-1V8a5 5 0 0 0-2.582-4.377ZM6 12H4a1 1 0 0 1 0-2h2a1 1 0 0 1 0 2Z" />
-                        </svg>
-                        <span className="flex-1 ms-3 whitespace-nowrap">Inbox</span>
-                        <span className="inline-flex items-center justify-center w-3 h-3 p-3 ms-3 text-sm font-medium text-blue-800 bg-blue-100 rounded-full dark:bg-blue-900 dark:text-blue-300">3</span>
-                     </a>
-                  </li>
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="flex-shrink-0 w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 18">
-                           <path d="M14 2a3.963 3.963 0 0 0-1.4.267 6.439 6.439 0 0 1-1.331 6.638A4 4 0 1 0 14 2Zm1 9h-1.264A6.957 6.957 0 0 1 15 15v2a2.97 2.97 0 0 1-.184 1H19a1 1 0 0 0 1-1v-1a5.006 5.006 0 0 0-5-5ZM6.5 9a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9ZM8 10H5a5.006 5.006 0 0 0-5 5v2a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-2a5.006 5.006 0 0 0-5-5Z" />
-                        </svg>
-                        <span className="flex-1 ms-3 whitespace-nowrap">Users</span>
-                     </a>
-                  </li>
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="flex-shrink-0 w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 18 20">
-                           <path d="M17 5.923A1 1 0 0 0 16 5h-3V4a4 4 0 1 0-8 0v1H2a1 1 0 0 0-1 .923L.086 17.846A2 2 0 0 0 2.08 20h13.84a2 2 0 0 0 1.994-2.153L17 5.923ZM7 9a1 1 0 0 1-2 0V7h2v2Zm0-5a2 2 0 1 1 4 0v1H7V4Zm6 5a1 1 0 1 1-2 0V7h2v2Z" />
-                        </svg>
-                        <span className="flex-1 ms-3 whitespace-nowrap">Products</span>
-                     </a>
-                  </li>
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="flex-shrink-0 w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 18 16">
-                           <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 8h11m0 0L8 4m4 4-4 4m4-11h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3" />
-                        </svg>
-                        <span className="flex-1 ms-3 whitespace-nowrap">Sign In</span>
-                     </a>
-                  </li>
-                  <hr className="bg-white" />
-                  <li>
-                     <a href="#" className="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
-                        <svg className="flex-shrink-0 w-5 h-5 text-gray-500 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20">
-                           <path d="M5 5V.13a2.96 2.96 0 0 0-1.293.749L.879 3.707A2.96 2.96 0 0 0 .13 5H5Z" />
-                           <path d="M6.737 11.061a2.961 2.961 0 0 1 .81-1.515l6.117-6.116A4.839 4.839 0 0 1 16 2.141V2a1.97 1.97 0 0 0-1.933-2H7v5a2 2 0 0 1-2 2H0v11a1.969 1.969 0 0 0 1.933 2h12.134A1.97 1.97 0 0 0 16 18v-3.093l-1.546 1.546c-.413.413-.94.695-1.513.81l-3.4.679a2.947 2.947 0 0 1-1.85-.227 2.96 2.96 0 0 1-1.635-3.257l.681-3.397Z" />
-                           <path d="M8.961 16a.93.93 0 0 0 .189-.019l3.4-.679a.961.961 0 0 0 .49-.263l6.118-6.117a2.884 2.884 0 0 0-4.079-4.078l-6.117 6.117a.96.96 0 0 0-.263.491l-.679 3.4A.961.961 0 0 0 8.961 16Zm7.477-9.8a.958.958 0 0 1 .68-.281.961.961 0 0 1 .682 1.644l-.315.315-1.36-1.36.313-.318Zm-5.911 5.911 4.236-4.236 1.359 1.359-4.236 4.237-1.7.339.341-1.699Z" />
-                        </svg>
-                        <span className="flex-1 ms-3 whitespace-nowrap">Sign Up</span>
-                     </a>
-                  </li>
-               </ul>
-            </div>
-         </aside>
-
-         <div className="w-full p-4 ">
-            <div className="p-4 border-2 border-gray-200 border-dashed rounded-lg dark:border-gray-700">
-               <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="flex items-center justify-center h-24 rounded bg-gray-50 dark:bg-gray-800">
-                     <p className="text-2xl text-gray-400 dark:text-gray-500 flex justify-around">
-                        <p className='text-white'>refresh fod data</p>
-                        <SettingIcon onClick={refreshFods} fill='white' width={35} height={35} />
-                     </p>
-                  </div>
-                  <div className="flex flex-col items-center justify-center h-24 rounded bg-gray-50 dark:bg-gray-800 gap-2 px-3">
-                     <input id="downloadMission" placeholder='Mission number' type='number' className="w-full px-2 py-1 rounded border border-gray-300 text-base" />
-                     <div className="flex gap-2">
-                        <button onClick={exportMission} className="px-3 py-1 rounded bg-[#017ED7] text-white text-sm font-semibold active:scale-95">Export</button>
-                        <button onClick={deleteMission} className="px-3 py-1 rounded bg-red-600 text-white text-sm font-semibold active:scale-95">Delete</button>
-                     </div>
-                  </div>
-                  <div className="flex items-center justify-center h-24 rounded bg-gray-50 dark:bg-gray-800">
-                     <button
-                        onClick={() => dispatch(toggleTheme())}
-                        className="flex items-center gap-3 px-4 py-2 rounded-lg bg-[#002756] text-white font-semibold active:scale-95 transition"
-                     >
-                        {theme === 'dark' ? (
-                           <svg className="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" /></svg>
-                        ) : (
-                           <svg className="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd" /></svg>
-                        )}
-                        {theme === 'dark' ? 'Night mode' : 'Day mode'}
-                     </button>
-                  </div>
-
-                  <div className="flex items-center justify-center h-24 rounded bg-gray-50 dark:bg-gray-800 gap-2">
-                     <span className="text-sm text-gray-500 dark:text-gray-400">Language</span>
-                     <div className="flex rounded-lg overflow-hidden border border-gray-300">
-                        <button
-                           onClick={() => dispatch(setLanguage('en'))}
-                           className={`px-4 py-2 font-semibold transition ${lang === 'en' ? 'bg-[#002756] text-white' : 'bg-white text-gray-600'}`}
-                        >English</button>
-                        <button
-                           onClick={() => dispatch(setLanguage('hindi'))}
-                           className={`px-4 py-2 font-semibold transition ${lang === 'hindi' ? 'bg-[#002756] text-white' : 'bg-white text-gray-600'}`}
-                        >हिन्दी</button>
-                     </div>
-                  </div>
-
-               </div>
-
-            </div>
-         </div>
-
-      </div>
-   )
+interface GeneralSettingsState {
+  fodAlerts: boolean;
+  disconnectAlerts: boolean;
+  overspeedAlerts: boolean;
+  syncComplete: boolean;
+  alertDisplay: string;
+  soundEnabled: boolean;
+  masterVolume: number;
+  alertTone: string;
+  dateFormat: string;
+  timeFormat: '12h' | '24h';
 }
 
-export default General
+const DEFAULT_SETTINGS: GeneralSettingsState = {
+  fodAlerts: true,
+  disconnectAlerts: true,
+  overspeedAlerts: true,
+  syncComplete: false,
+  alertDisplay: 'Popup + list',
+  soundEnabled: true,
+  masterVolume: 70,
+  alertTone: 'Chime',
+  dateFormat: 'DD MMM YYYY',
+  timeFormat: '24h',
+};
+
+export default function General() {
+  const dispatch = useDispatch();
+  const theme = useSelector((store: RootState) => store.theme.theme);
+  const lang = useSelector((store: RootState) => store.language.lang);
+  const isDark = theme === 'dark';
+
+  const [settings, setSettings] = useState<GeneralSettingsState>(() => {
+    try {
+      const saved = localStorage.getItem('zoid_general_settings');
+      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  });
+
+  const updateSetting = <K extends keyof GeneralSettingsState>(key: K, value: GeneralSettingsState[K]) => {
+    setSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = () => {
+    try {
+      localStorage.setItem('zoid_general_settings', JSON.stringify(settings));
+      toast.success('Settings saved successfully');
+    } catch {
+      toast.error('Failed to save settings');
+    }
+  };
+
+  const handleReset = () => {
+    setSettings(DEFAULT_SETTINGS);
+    dispatch(setTheme('dark'));
+    dispatch(setLanguage('en'));
+    localStorage.removeItem('zoid_general_settings');
+    toast.info('Preferences reset to default');
+  };
+
+  const playTestSound = () => {
+    if (!settings.soundEnabled) {
+      toast.warn('Sound is currently disabled');
+      return;
+    }
+    try {
+      const audio = new Audio(notificationSound);
+      audio.volume = Math.max(0, Math.min(1, settings.masterVolume / 100));
+      audio.play().catch(() => {
+        // Fallback Web Audio API synthetic chime
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(settings.masterVolume / 100, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      });
+      toast.success(`Playing alert tone: ${settings.alertTone}`);
+    } catch (e) {
+      console.warn('Audio play error', e);
+    }
+  };
+
+  return (
+    <div className="w-full h-full flex flex-col justify-between overflow-y-auto">
+      {/* Content Area */}
+      <div className="flex-1 pb-4">
+        {/* Header */}
+        <div className="mb-4">
+          <h1 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+            General
+          </h1>
+          <p className={`text-xs mt-0.5 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+            App preferences for this console
+          </p>
+        </div>
+
+        {/* 2x2 Settings Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Card 1: Theme */}
+          <div
+            className={`rounded-xl border overflow-hidden transition-all flex flex-col ${
+              isDark
+                ? 'bg-[#292D33] border-[#383D44]'
+                : 'bg-white border-slate-200 shadow-xs'
+            }`}
+          >
+            <div
+              className={`px-4 py-2.5 border-b ${
+                isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
+              }`}
+            >
+              <h2 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                Theme
+              </h2>
+            </div>
+
+            <div className="p-4 flex-1 flex items-center">
+              <div className="grid grid-cols-3 gap-3 w-full">
+                {/* Light Option */}
+                <button
+                  type="button"
+                  onClick={() => dispatch(setTheme('light'))}
+                  className={`flex flex-col items-center p-2.5 rounded-lg border transition-all cursor-pointer ${
+                    theme === 'light'
+                      ? isDark
+                        ? 'border-[#5AA7EA] bg-[#31475D]'
+                        : 'border-blue-500 bg-blue-50/70 ring-1 ring-blue-500'
+                      : isDark
+                      ? 'border-[#383D44] bg-[#292D33] hover:border-[#4B525C]'
+                      : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="w-full h-16 rounded bg-[#EEF2F6] border border-slate-300/60 mb-2" />
+                  <span className={`text-[11px] font-medium ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                    Light
+                  </span>
+                </button>
+
+                {/* Dark Option */}
+                <button
+                  type="button"
+                  onClick={() => dispatch(setTheme('dark'))}
+                  className={`flex flex-col items-center p-2.5 rounded-lg border transition-all cursor-pointer ${
+                    theme === 'dark'
+                      ? isDark
+                        ? 'border-[#5AA7EA] bg-[#31475D]'
+                        : 'border-blue-500 bg-blue-50/70 ring-1 ring-blue-500'
+                      : isDark
+                      ? 'border-[#383D44] bg-[#292D33] hover:border-[#4B525C]'
+                      : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="w-full h-16 rounded bg-[#22262B] border border-[#383D44] mb-2" />
+                  <span className={`text-[11px] font-medium ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                    Dark
+                  </span>
+                </button>
+
+                {/* Default / System Option */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    dispatch(setTheme(prefersDark ? 'dark' : 'light'));
+                  }}
+                  className={`flex flex-col items-center p-2.5 rounded-lg border transition-all cursor-pointer ${
+                    isDark
+                      ? 'border-[#383D44] bg-[#292D33] hover:border-[#4B525C]'
+                      : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="w-full h-16 rounded overflow-hidden border border-[#383D44] flex mb-2">
+                    <div className="w-1/2 h-full bg-[#EEF2F6]" />
+                    <div className="w-1/2 h-full bg-[#22262B]" />
+                  </div>
+                  <span className={`text-[11px] font-medium ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                    Default
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Notifications */}
+          <div
+            className={`rounded-xl border overflow-hidden transition-all flex flex-col ${
+              isDark
+                ? 'bg-[#292D33] border-[#383D44]'
+                : 'bg-white border-slate-200 shadow-xs'
+            }`}
+          >
+            <div
+              className={`px-4 py-2.5 border-b ${
+                isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
+              }`}
+            >
+              <h2 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                Notifications
+              </h2>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3">
+              {/* FOD Alerts Switch */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>FOD alerts</span>
+                <button
+                  type="button"
+                  onClick={() => updateSetting('fodAlerts', !settings.fodAlerts)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out ${
+                    settings.fodAlerts ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-y-0.5 ${
+                      settings.fodAlerts ? 'translate-x-4.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Vehicle Disconnect Alerts */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                  Vehicle disconnect alerts
+                </span>
+                <button
+                  type="button"
+                  onClick={() => updateSetting('disconnectAlerts', !settings.disconnectAlerts)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out ${
+                    settings.disconnectAlerts ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-y-0.5 ${
+                      settings.disconnectAlerts ? 'translate-x-4.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Overspeed Alerts */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Overspeed alerts</span>
+                <button
+                  type="button"
+                  onClick={() => updateSetting('overspeedAlerts', !settings.overspeedAlerts)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out ${
+                    settings.overspeedAlerts ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-y-0.5 ${
+                      settings.overspeedAlerts ? 'translate-x-4.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Mission Sync Complete */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Mission sync complete</span>
+                <button
+                  type="button"
+                  onClick={() => updateSetting('syncComplete', !settings.syncComplete)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out ${
+                    settings.syncComplete ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-y-0.5 ${
+                      settings.syncComplete ? 'translate-x-4.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Alert Display Dropdown */}
+              <div className="flex items-center justify-between pt-1">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Alert display</span>
+                <select
+                  value={settings.alertDisplay}
+                  onChange={(e) => updateSetting('alertDisplay', e.target.value)}
+                  className={`w-40 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
+                    isDark
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
+                  }`}
+                >
+                  <option value="Popup + list">Popup + list</option>
+                  <option value="Popup only">Popup only</option>
+                  <option value="List only">List only</option>
+                  <option value="Banner">Banner</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 3: Sound */}
+          <div
+            className={`rounded-xl border overflow-hidden transition-all flex flex-col ${
+              isDark
+                ? 'bg-[#292D33] border-[#383D44]'
+                : 'bg-white border-slate-200 shadow-xs'
+            }`}
+          >
+            <div
+              className={`px-4 py-2.5 border-b ${
+                isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
+              }`}
+            >
+              <h2 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                Sound
+              </h2>
+            </div>
+
+            <div className="p-4 flex flex-col gap-4">
+              {/* Sound Enabled */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Sound enabled</span>
+                <button
+                  type="button"
+                  onClick={() => updateSetting('soundEnabled', !settings.soundEnabled)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out ${
+                    settings.soundEnabled ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-y-0.5 ${
+                      settings.soundEnabled ? 'translate-x-4.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Master Volume Slider */}
+              <div className="flex items-center gap-3">
+                <span className={`text-xs shrink-0 ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                  Master volume
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={settings.masterVolume}
+                  disabled={!settings.soundEnabled}
+                  onChange={(e) => updateSetting('masterVolume', parseInt(e.target.value))}
+                  className={`flex-1 accent-[#5AA7EA] h-1.5 rounded-lg cursor-pointer disabled:opacity-40 ${
+                    isDark ? 'bg-[#454B53]' : 'bg-slate-200'
+                  }`}
+                />
+                <span className={`text-xs font-medium w-8 text-right ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                  {settings.masterVolume}%
+                </span>
+              </div>
+
+              {/* Alert Tone & Test Sound Button */}
+              <div className="flex items-center gap-3">
+                <span className={`text-xs shrink-0 ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Alert tone</span>
+                <select
+                  value={settings.alertTone}
+                  onChange={(e) => updateSetting('alertTone', e.target.value)}
+                  className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
+                    isDark
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
+                  }`}
+                >
+                  <option value="Chime">Chime</option>
+                  <option value="Beep">Beep</option>
+                  <option value="Siren">Siren</option>
+                  <option value="Bell">Bell</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={playTestSound}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer shrink-0"
+                >
+                  Test sound
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 4: Language & Date */}
+          <div
+            className={`rounded-xl border overflow-hidden transition-all flex flex-col ${
+              isDark
+                ? 'bg-[#292D33] border-[#383D44]'
+                : 'bg-white border-slate-200 shadow-xs'
+            }`}
+          >
+            <div
+              className={`px-4 py-2.5 border-b ${
+                isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
+              }`}
+            >
+              <h2 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                Language
+              </h2>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3.5">
+              {/* Language Selector */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Language</span>
+                <select
+                  value={lang}
+                  onChange={(e) => dispatch(setLanguage(e.target.value))}
+                  className={`w-44 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
+                    isDark
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
+                  }`}
+                >
+                  <option value="en">English (US)</option>
+                  <option value="en-gb">English (UK)</option>
+                  <option value="hindi">Hindi (हिन्दी)</option>
+                  <option value="fr">French (Français)</option>
+                  <option value="de">German (Deutsch)</option>
+                </select>
+              </div>
+
+              {/* Date Format */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Date format</span>
+                <select
+                  value={settings.dateFormat}
+                  onChange={(e) => updateSetting('dateFormat', e.target.value)}
+                  className={`w-44 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
+                    isDark
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
+                  }`}
+                >
+                  <option value="DD MMM YYYY">DD MMM YYYY</option>
+                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                </select>
+              </div>
+
+              {/* Time Format */}
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Time format</span>
+                <div className={`flex rounded-lg overflow-hidden border ${isDark ? 'bg-[#353A42] border-[#454B53]' : 'bg-slate-100 border-slate-300'}`}>
+                  <button
+                    type="button"
+                    onClick={() => updateSetting('timeFormat', '12h')}
+                    className={`px-3 py-1 text-xs font-semibold transition cursor-pointer ${
+                      settings.timeFormat === '12h'
+                        ? 'bg-[#5AA7EA] text-white'
+                        : isDark
+                        ? 'text-slate-300 hover:text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    12h
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSetting('timeFormat', '24h')}
+                    className={`px-3 py-1 text-xs font-semibold transition cursor-pointer ${
+                      settings.timeFormat === '24h'
+                        ? 'bg-[#5AA7EA] text-white'
+                        : isDark
+                        ? 'text-slate-300 hover:text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    24h
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Action Bar */}
+      <div className="pt-3 mt-auto flex items-center justify-end gap-3">
+        <button
+          type="button"
+          onClick={handleReset}
+          className={`px-4 py-2 rounded-lg text-xs font-medium border transition active:scale-95 cursor-pointer ${
+            isDark
+              ? 'bg-[#353A42] border-[#454B53] hover:bg-[#41464E] text-slate-200'
+              : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-700'
+          }`}
+        >
+          Reset to defaults
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          className="px-4 py-2 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs active:scale-95 transition cursor-pointer"
+        >
+          Save Changes
+        </button>
+      </div>
+    </div>
+  );
+}

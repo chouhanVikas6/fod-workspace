@@ -5,9 +5,11 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useDispatch } from 'react-redux';
 import { toast } from 'react-toastify';
 import ExploreMap from '../map/exploreMap';
-import { config, ServerBase } from '@/config/clientConfig';
+import { config } from '@/config/clientConfig';
 import Image from 'next/image';
 import FodHorizontalcard from '../fodPanel/FodCards/fodHorizontalCard';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 // timer is elapsed ms (see MissionProgress) — render as 1h 05m / 12m 30s / 45s
 function formatDuration(ms: any) {
@@ -96,28 +98,50 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
 
     useEffect(() => {
         if (!selectedMission) return;
-        const sse = new EventSource(`${ServerBase}/api/sse/retrive-data?id=${selectedMission.id}`,
-            { withCredentials: true });
-        function getRealtimeData(data) {
+        let disposed = false;
+        let unlistenFn: (() => void) | null = null;
+        const subId = `mission-explore-${selectedMission.id}-${Date.now()}`;
+        setFodList([]);
+
+        function getRealtimeData(data: any) {
+            if (disposed) return;
             try {
-                setFodList((prvs) => {
-                    return [...prvs, ...data]
-                })
+                const rows = typeof data === "string" ? JSON.parse(data) : data;
+                if (Array.isArray(rows) && rows.length > 0) {
+                    setFodList((prvs) => [...prvs, ...rows]);
+                }
             } catch (err) {
-                console.error("Failed to parse SSE data:", err);
+                console.error("Failed to parse IPC retrive-data:", err);
             }
         }
-        sse.addEventListener("update", (e) => {
-            getRealtimeData(JSON.parse(e.data));
-        });
 
-        sse.onmessage = e => getRealtimeData(JSON.parse(e.data));
-        sse.onerror = (err) => {
-            console.error("SSE connection error:", err);
-            sse.close();
-        };
+        listen(`sse:retrive-data:${subId}`, (event: any) => {
+            const payload = event.payload;
+            if (payload?.event === "update") {
+                getRealtimeData(payload.data);
+            }
+        })
+            .then((unlisten) => {
+                if (disposed) {
+                    unlisten();
+                    return;
+                }
+                unlistenFn = unlisten;
+                return invoke("start_retrive_stream", {
+                    subId,
+                    missionId: Number(selectedMission.id),
+                });
+            })
+            .catch((err) => {
+                console.error("IPC retrive-data stream error:", err);
+            });
+
         return () => {
-            sse.close();
+            disposed = true;
+            if (unlistenFn) {
+                unlistenFn();
+            }
+            invoke("stop_retrive_stream", { subId }).catch(() => {});
         };
     }, [selectedMission])
 
@@ -136,26 +160,30 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
     const groupInfo = selectedGroupId?.data?.[0];
 
     return (
-        <div className="w-full h-full flex flex-col gap-3 p-4 bg-[#F5F5F5]">
+        <div className="w-full h-full flex flex-col gap-3 p-4 bg-[#F8FAFC] dark:bg-[#22262B] text-slate-800 dark:text-slate-100 transition-colors duration-200 select-none">
             {/* Header */}
             <div className="flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
-                    <h1 className="text-xl font-bold text-[#002756]">Mission {selectedMission.id}</h1>
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
+                    <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-wide">Mission {selectedMission.id}</h1>
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide border ${
+                        isActive 
+                            ? 'bg-[#01B656]/20 text-[#01B656] border-[#01B656]/50' 
+                            : 'bg-white dark:bg-[#292D33] text-slate-600 dark:text-[#8C939C] border-slate-200 dark:border-[#373C43]'
+                    }`}>
                         {selectedMission.status}
                     </span>
                 </div>
                 <div className="flex items-center gap-2">
                     <button
                         onClick={exploreMission}
-                        className="h-10 px-5 rounded-lg bg-[#017ED7] text-white font-medium hover:bg-[#0171c0] active:scale-95 transition-transform"
+                        className="h-10 px-5 rounded-lg bg-[#4C9FE8] text-white font-semibold hover:bg-[#3B91DC] active:scale-95 transition-all shadow"
                     >
                         Explore Mission
                     </button>
                     <button
                         onClick={stopTemplateView}
                         title="Close"
-                        className="h-10 w-10 rounded-lg border border-gray-300 bg-white text-gray-500 hover:bg-gray-100 hover:text-gray-700 active:scale-95 transition-transform"
+                        className="h-10 w-10 rounded-lg border border-slate-200 dark:border-[#373C43] bg-white dark:bg-[#292D33] text-slate-500 dark:text-[#8C939C] hover:bg-slate-100 dark:hover:bg-[#373C43] hover:text-slate-900 dark:hover:text-white active:scale-95 transition-all flex items-center justify-center font-bold"
                     >
                         ✕
                     </button>
@@ -165,27 +193,28 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
             {/* Mission stats */}
             <div className="grid grid-cols-4 gap-2 shrink-0">
                 {stats.map(({ label, value }) => (
-                    <div key={label} className="bg-white border border-gray-200 rounded-lg px-3 py-2">
-                        <div className="text-xs text-gray-500">{label}</div>
-                        <div className="text-base font-semibold text-[#002756] truncate">{value}</div>
+                    <div key={label} className="bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-lg px-3 py-2.5 shadow-xs dark:shadow-none">
+                        <div className="text-xs text-slate-500 dark:text-[#8C939C] font-medium">{label}</div>
+                        <div className="text-base font-bold text-slate-900 dark:text-white font-mono mt-0.5 truncate">{value}</div>
                     </div>
                 ))}
             </div>
 
             {/* Body: map/list + group detail */}
             <div className="flex gap-3 flex-1 min-h-0">
-                <div className="flex-[3] min-w-0 flex flex-col bg-white border border-gray-200 rounded-lg overflow-hidden isolate">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 shrink-0">
-                        <span className="text-sm font-semibold text-gray-600">Detected FODs</span>
-                        <div className="inline-flex rounded-lg bg-gray-100 p-0.5">
+                <div className="flex-[3] min-w-0 flex flex-col bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-lg overflow-hidden isolate shadow-xs dark:shadow-none">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-[#373C43] shrink-0">
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Detected FODs</span>
+                        <div className="inline-flex rounded-lg bg-slate-100 dark:bg-[#22262B] p-0.5 border border-slate-200 dark:border-[#373C43]">
                             {['map', 'list'].map((tab) => (
                                 <button
                                     key={tab}
                                     onClick={() => setActiveTab(tab)}
-                                    className={`px-4 py-1 rounded-md text-sm font-medium capitalize transition-colors ${activeTab === tab
-                                        ? 'bg-white shadow text-[#017ED7]'
-                                        : 'text-gray-500 hover:text-gray-700'
-                                        }`}
+                                    className={`px-4 py-1 rounded-md text-sm font-medium capitalize transition-colors ${
+                                        activeTab === tab
+                                            ? 'bg-[#4C9FE8] shadow text-white font-semibold'
+                                            : 'text-slate-600 dark:text-[#8C939C] hover:text-slate-900 dark:hover:text-slate-200'
+                                    }`}
                                 >
                                     {tab}
                                 </button>
@@ -195,29 +224,26 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                     <div className={`relative flex-1 min-h-0 ${activeTab === 'list' ? 'overflow-y-auto' : 'overflow-hidden'}`}>
                         {activeTab === 'map' ? <ExploreMap fods={fodList} onSelectFod={setSelectedGroup} /> :
                             fodList.length ?
-                                <div className="grid grid-cols-2">
+                                <div className="grid grid-cols-2 p-2 gap-2">
                                     {fodList.map((fod) => (
                                         <FodHorizontalcard key={fod.id + 'listonExplore'} {...{ fod, selectedMission, actionOnCard: setSelectedGroup }} />
                                     ))}
                                 </div>
                                 :
-                                <div className="h-full flex items-center justify-center text-sm text-gray-400">
+                                <div className="h-full flex items-center justify-center text-sm text-slate-400 dark:text-slate-500">
                                     No FODs recorded for this mission
                                 </div>
                         }
                     </div>
                 </div>
 
-                <div className="relative z-10 flex-[2] min-w-0 bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="relative z-10 flex-[2] min-w-0 bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-lg overflow-hidden shadow-xs dark:shadow-none">
                     {selectedGroupId ? (
                         <div className="h-full flex flex-col gap-3 p-3 overflow-y-auto">
                             <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-sm font-semibold text-gray-600">FOD Group {selectedGroupId.id}</span>
-                                {/* NOTE: don't use animate-spin here — tailwind.config.ts
-                                    overrides it with mulShdSpin, whose box-shadow dots
-                                    paint far outside the element. */}
+                                <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">FOD Group {selectedGroupId.id}</span>
                                 {selectedGroupId.loading && (
-                                    <span className="text-xs text-gray-400 animate-pulse">loading frames…</span>
+                                    <span className="text-xs text-[#4C9FE8] animate-pulse">loading frames…</span>
                                 )}
                             </div>
                             <div className="grid grid-cols-2 2xl:grid-cols-3 gap-2">
@@ -225,13 +251,13 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                                     <div
                                         id={`selectedFrame${index}`}
                                         key={index + 'fodGroupOnExplore'}
-                                        className={`aspect-square overflow-hidden rounded-lg border ${index === 0 ? "border-[#017ED7] border-2" : "border-gray-200"}`}
+                                        className={`aspect-square overflow-hidden rounded-lg border ${index === 0 ? "border-[#4C9FE8] border-2" : "border-slate-200 dark:border-[#373C43]"}`}
                                     >
                                         <Image src={`${config.ImagesBase}/${selectedMission.id}/${frame.groupId}/${frame.id}.jpg`} className="w-full h-full object-cover object-center" alt="FOD frame" width={220} height={220} />
                                     </div>
                                 ))}
                                 {selectedGroupId.loading && [0, 1].map((i) => (
-                                    <div key={`skeleton${i}`} className="aspect-square rounded-lg bg-gray-200 animate-pulse" />
+                                    <div key={`skeleton${i}`} className="aspect-square rounded-lg bg-slate-100 dark:bg-[#22262B] animate-pulse" />
                                 ))}
                             </div>
                             <div className="grid grid-cols-2 gap-2 shrink-0">
@@ -242,23 +268,23 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                                     ['Velocity', groupInfo?.velocity != null ? `${groupInfo.velocity} km/h` : '—'],
                                     ['Detected at', formatDate(groupInfo?.createdAt)],
                                 ].map(([label, value]) => (
-                                    <div key={label as string} className="rounded-md bg-[#F7F7F7] px-3 py-2 flex justify-between items-center text-sm">
-                                        <span className="text-gray-500">{label}</span>
-                                        <span className="font-medium text-[#002756] truncate ml-2">{value}</span>
+                                    <div key={label as string} className="rounded-lg bg-slate-50 dark:bg-[#22262B] border border-slate-200 dark:border-[#373C43] px-3 py-2 flex justify-between items-center text-sm">
+                                        <span className="text-slate-500 dark:text-[#8C939C] text-xs">{label}</span>
+                                        <span className="font-semibold text-slate-900 dark:text-white truncate ml-2 font-mono">{value}</span>
                                     </div>
                                 ))}
-                                <div className="rounded-md bg-[#F7F7F7] px-3 py-2 flex justify-between items-center text-sm">
-                                    <span className="text-gray-500">Status</span>
-                                    <span className={`font-semibold ${GROUP_STATUS_COLOR[selectedGroupId?.status] || 'text-[#002756]'}`}>{selectedGroupId?.status}</span>
+                                <div className="rounded-lg bg-slate-50 dark:bg-[#22262B] border border-slate-200 dark:border-[#373C43] px-3 py-2 flex justify-between items-center text-sm">
+                                    <span className="text-slate-500 dark:text-[#8C939C] text-xs">Status</span>
+                                    <span className={`font-bold ${GROUP_STATUS_COLOR[selectedGroupId?.status] || 'text-slate-900 dark:text-white'}`}>{selectedGroupId?.status}</span>
                                 </div>
                             </div>
                         </div>
                     ) : (
-                        <div className="h-full flex flex-col items-center justify-center gap-2 text-gray-400 p-4 text-center">
-                            <svg className="w-10 h-10" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                        <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500 p-4 text-center">
+                            <svg className="w-10 h-10 text-slate-300 dark:text-slate-600" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5 21 6.75v10.5l-5.25-3.75M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9A2.25 2.25 0 0 0 13.5 5.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
                             </svg>
-                            <span className="text-sm">Select a FOD from the list to view its frames and details</span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400">Select a FOD from the list to view its frames and details</span>
                         </div>
                     )}
                 </div>

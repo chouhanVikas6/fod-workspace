@@ -1,23 +1,20 @@
 import React from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '@/store';
 import MissionControlPanel from './MissionControlPanel';
 import MissionProgress from './MissionProgress';
-const OperationSideBarStyle={
-  width:6,
-  background :'#FCFCFC',
-  borderColor:'#DDDDE7'
-}
 
-const OperationSideBar = ({tab,setTab}) => {
-  const { width, background, borderColor } = OperationSideBarStyle;
+const OperationSideBar = ({ tab, setTab }: any) => {
+  const isDark = useSelector((state: RootState) => state.theme.theme === 'dark');
 
   return (
-    <div
-      className={`h-full flex flex-col justify-between items-center border-r`}
-      style={{ width: `${width}%`, background, borderRightColor: borderColor }}
+    <aside
+      className={`sidebar-native-theme h-full w-[78px] shrink-0 flex flex-col items-center py-2.5 overflow-y-auto border-r select-none transition-colors duration-200 ${
+        isDark ? 'bg-[#181C23] border-[#252B35]' : 'bg-[#FCFCFC] border-[#DDDDE7]'
+      }`}
     >
-      <MissionControlPanel tab={tab} setTab={setTab}/>
-      <MissionProgress />
-    </div>
+      <MissionControlPanel tab={tab} setTab={setTab} />
+    </aside>
   );
 };
 

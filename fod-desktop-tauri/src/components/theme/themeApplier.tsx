@@ -7,6 +7,7 @@ import { RootState } from '@/store';
 export default function ThemeApplier() {
     const theme = useSelector((state: RootState) => state.theme.theme);
     useEffect(() => {
+        document.documentElement.classList.toggle('dark', theme === 'dark');
         document.documentElement.classList.toggle('theme-dark', theme === 'dark');
     }, [theme]);
     return null;

@@ -65,31 +65,31 @@ const MissionProgress = () => {
     return () => clearInterval(interval);
   }, [missionNumber]);
   return (
-    <div className="w-full px-1 py-3 flex flex-col items-center space-y-3.5 border-t border-slate-200/80">
+    <div className="w-full px-1 py-3 flex flex-col items-center space-y-3.5 border-t border-slate-200/80 dark:border-[#353A42]">
       <div className="flex flex-col items-center w-full">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Alerts</span>
-        <span className={`font-mono font-bold text-lg leading-tight mt-0.5 ${groupCount === fods.length ? 'text-emerald-600' : 'text-amber-500'}`}>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">Alerts</span>
+        <span className={`font-mono font-bold text-lg leading-tight mt-0.5 ${groupCount === fods.length ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500 dark:text-amber-400'}`}>
           {count}
         </span>
       </div>
       
       <div className="flex flex-col items-center w-full px-1">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Mission</span>
-        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700 truncate max-w-full" title={missionNumber ? String(missionNumber) : 'NA'}>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">Mission</span>
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700 dark:text-slate-200 truncate max-w-full" title={missionNumber ? String(missionNumber) : 'NA'}>
           {missionNumber ? missionNumber : 'NA'}
         </span>
       </div>
 
       <div className="flex flex-col items-center w-full">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Duration</span>
-        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">Duration</span>
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700 dark:text-slate-200">
           {elapsed != null ? formatElapsed(elapsed) : 'NA'}
         </span>
       </div>
 
       <div className="flex flex-col items-center w-full">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">WayPoint</span>
-        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-500">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">WayPoint</span>
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-500 dark:text-slate-400">
           {waypoint ?? "--"}
         </span>
       </div>

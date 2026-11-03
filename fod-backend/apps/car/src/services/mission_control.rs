@@ -14,6 +14,7 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use zoid_db::Db;
 
+#[derive(Clone)]
 pub struct MissionControlServiceImpl {
     db: Db,
     active_mission_id: Arc<AtomicI64>,
@@ -29,6 +30,45 @@ impl MissionControlServiceImpl {
             active_mission_id: Arc::new(AtomicI64::new(0)),
             scan_status: Arc::new(AtomicI32::new(MissionScanStatus::Play as i32)),
             event_tx,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_active_mission_id(&self) -> i64 {
+        self.active_mission_id.load(Ordering::SeqCst)
+    }
+
+    pub async fn terminate_active_mission(&self) -> Option<i64> {
+        let current = self.active_mission_id.swap(0, Ordering::SeqCst);
+        self.scan_status.store(MissionScanStatus::Pause as i32, Ordering::SeqCst);
+        if current > 0 {
+            let _ = self.db.terminate_mission(current).await;
+            let _ = self.db.append_change(1, &current.to_string()).await;
+            let now = chrono::Utc::now().timestamp_millis();
+            let _ = self.event_tx.send(MissionEvent {
+                mission_id: current,
+                timestamp: now,
+                event: Some(proto_defination::mission_control::mission_event::Event::RawCommand(
+                    format!("terminate_{}", current),
+                )),
+            });
+            let _ = self.event_tx.send(MissionEvent {
+                mission_id: current,
+                timestamp: now,
+                event: Some(proto_defination::mission_control::mission_event::Event::StatusChanged(
+                    MissionStatus::Terminated as i32,
+                )),
+            });
+            let _ = self.event_tx.send(MissionEvent {
+                mission_id: current,
+                timestamp: now,
+                event: Some(proto_defination::mission_control::mission_event::Event::ScanChanged(
+                    MissionScanStatus::Pause as i32,
+                )),
+            });
+            Some(current)
+        } else {
+            None
         }
     }
 

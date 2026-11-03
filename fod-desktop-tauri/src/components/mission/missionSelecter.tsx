@@ -1,37 +1,36 @@
 import React, { useEffect, useMemo, useState } from "react";
-import MissionType from "./missionType";
 import PastMission from "./pastMissions";
 import axiosClient from "@/utils/axios";
 import { useDispatch, useSelector } from "react-redux";
 import { start_Mission } from "@/store/slices/missionState-slice";
-import zoidBanner1 from "@/assets/images/zoidbanner.png"
-import Image from "next/image";
 import RestPath from "@/constants/apiPaths";
 import { CircleLoader } from "../commen/loader";
-import ZoidLogoSvgr from "@/assets/images/svgr/zoid-logo";
-import refreshIcon from "@/assets/images/svg/refresh.svg"
+import Zoid_logo from "@/assets/images/zoid_logo.png";
 import MissionTemplate from "./missionTemplate";
 import MissionExplore from "./missionExplore";
-
-// import { useSelector } from "react-redux";
+import MissionCard from "./missionCard";
+import { RootState } from "@/store";
+import { toast } from "react-toastify";
 
 const MissionSelector = () => {
-    const [missionTemplateView,setMissionTemplateView]=useState(false);
-    const [currentScreen,setCurrentScreen]=useState("");
+    const [currentScreen, setCurrentScreen] = useState("");
     const [loading, setLoading] = useState(true);
-    const [missions, setMissions] = useState([]);
-    const [selectedMission, setSelectedMission] = useState(null);
+    const [missions, setMissions] = useState<any[]>([]);
+    const [selectedMission, setSelectedMission] = useState<any>(null);
+
+    const { latency, availableCommunication } = useSelector((store: RootState) => store.SystemHealth);
+    const isDark = useSelector((store: RootState) => store.theme.theme === 'dark');
+    const isCarLive = Boolean(
+        latency?.connected ||
+        (availableCommunication as any[])?.some((c: any) => c?.type === 'car' || c?.type?.startsWith('car'))
+    );
 
     const fetchMission = () => {
         try {
-            // if(missions.length==0)setLoading(true)
             axiosClient({
                 method: "GET",
                 url: RestPath.MISSIONWITHSTAT
             }).then((response) => {
-                // Guard the shape — an error body here would crash the
-                // .filter() calls below. Keep the previous list on failure
-                // (this runs on a 1.5s poll, so no toast spam).
                 if (Array.isArray(response.data)) {
                     setMissions(response.data);
                 }
@@ -39,115 +38,130 @@ const MissionSelector = () => {
             }).catch((error) => {
                 console.log('Failed to fetch mission list:', error?.data?.error || error);
                 setLoading(false);
-            })
+            });
         } catch (e) {
-            setMission([]);
+            setMissions([]);
             console.log(e);
             setLoading(false);
         }
-    }
+    };
 
-    //get mission list
+    // Poll mission list every 2.5 seconds
     useEffect(() => {
-        fetchMission()
-        let interval = setInterval(() => {
-            fetchMission()
-        }, 1500)
-        return () => clearInterval(interval)
-    }, [])
+        fetchMission();
+        const interval = setInterval(() => {
+            fetchMission();
+        }, 2500);
+        return () => clearInterval(interval);
+    }, []);
 
-    const setMission = (data) => {
-        if (!!selectedMission && selectedMission.mission_id == data.mission_id) {
+    const setMission = (data: any) => {
+        if (selectedMission && selectedMission.mission_id === data.mission_id) {
             setSelectedMission(null);
             setCurrentScreen('');
             return;
         }
         setCurrentScreen("MissionExplore");
-        setSelectedMission(data)
-    }
+        setSelectedMission(data);
+    };
 
-    const startTemplateView=()=>{
-        setCurrentScreen('MissionTemplate')
-    }
+    const startTemplateView = () => {
+        if (!isCarLive) {
+            toast.error("Vehicle is not in communication");
+            return;
+        }
+        setCurrentScreen('MissionTemplate');
+    };
 
-    const stopTemplateView=()=>{
+    const stopTemplateView = () => {
         setCurrentScreen('');
-    }
+        setSelectedMission(null);
+    };
 
-
-    //precalculated data
+    // Live active mission
     const activeMission = useMemo(() => {
-        return missions?.filter((mission) => mission.status === 'ACTIVE') || [];
-    }, [missions]);
-    const inActiveMission = useMemo(() => {
-        return missions?.filter((mission) => mission.status === 'INACTIVE') || [];
-    }, [missions]);
+        if (!isCarLive) return [];
+        return missions?.filter((mission: any) => mission.status === 'ACTIVE') || [];
+    }, [missions, isCarLive]);
 
     if (loading) return <CircleLoader />;
+
     return (
-        <>
-            <div className="h-full w-full flex items-center gap-4 bg-slate-100/70 p-4 overflow-hidden select-none">
-                <div className="h-full w-[28%] min-w-[280px] max-w-[340px] flex flex-col gap-3">
-                    <MissionType activeMission={activeMission} selectedMission={selectedMission} startTemplateView={startTemplateView} missionTemplateView={missionTemplateView} />
-                    <div className="flex items-center justify-between px-2 shrink-0">
-                        <div className="flex items-center space-x-2">
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Missions</span>
-                            <span className="px-2 py-0.5 rounded-full bg-slate-200/80 font-bold text-[11px] text-slate-600 font-mono">
-                                {missions.length}
-                            </span>
+        <div className={`mission-selector-native-theme h-full w-full flex items-center gap-6 p-5 overflow-hidden select-none transition-colors duration-200 ${
+            isDark ? "bg-[#22262B] text-slate-100" : "bg-[#F1F5F9] text-slate-900"
+        }`}>
+            {/* Left Column: Actions & Previous Missions */}
+            <div className="h-full w-[270px] shrink-0 flex flex-col">
+                {/* + Start New Mission Primary Button */}
+                <button
+                    onClick={startTemplateView}
+                    className="w-full h-10 px-4 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] transition-all text-white font-bold text-sm flex items-center justify-center space-x-2 shadow cursor-pointer"
+                >
+                    <span>+ Start New Mission</span>
+                </button>
+
+                {/* If an active mission is currently running, show it as a high priority card */}
+                {activeMission?.length > 0 && (
+                    <div className="mt-3">
+                        <MissionCard active={true} missionData={activeMission[0]} isCarLive={isCarLive} />
+                    </div>
+                )}
+
+                {/* Previous Missions Header */}
+                <div className="flex items-center justify-between px-1 mt-4 mb-2.5 shrink-0">
+                    <span className="text-[11px] font-semibold text-slate-500 dark:text-[#8C939C] uppercase tracking-wider">
+                        PREVIOUS MISSIONS
+                    </span>
+                    <span className="text-xs font-semibold text-[#4C9FE8] font-mono">
+                        {missions.length} total
+                    </span>
+                </div>
+
+                {/* Previous Missions List */}
+                <PastMission {...{ missions, setMission, selectedMission }} />
+            </div>
+
+            {/* Right Main Area */}
+            <div className={`relative h-full flex-1 overflow-hidden flex items-center justify-center transition-colors duration-200 ${
+                currentScreen
+                    ? isDark
+                        ? "bg-[#292D33] border border-[#373C43] rounded-2xl"
+                        : "bg-white border border-slate-200 shadow-sm rounded-2xl"
+                    : ""
+            }`}>
+                {currentScreen === 'MissionTemplate' ? (
+                    <MissionTemplate {...{ stopTemplateView }} />
+                ) : currentScreen === 'MissionExplore' ? (
+                    <MissionExplore {...{ stopTemplateView, selectedMission }} />
+                ) : (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center select-none">
+                        {/* Centered Logo & Brand Info */}
+                        <div className="flex flex-col items-center justify-center text-center -mt-6">
+                            <img
+                                src={Zoid_logo}
+                                alt="ZOID Logo"
+                                className="w-16 h-16 object-contain mb-3"
+                            />
+                            <h1 className="text-3xl font-serif font-bold tracking-[0.22em] text-slate-800 dark:text-white">
+                                ZOID
+                            </h1>
+                            <p className="text-slate-500 dark:text-[#8C939C] text-xs mt-3 text-center max-w-sm leading-relaxed">
+                                Select a mission from the list to review it, or start a new mission.
+                            </p>
                         </div>
+
+                        {/* Floating Action Button (+) */}
                         <button
-                            onClick={fetchMission}
-                            title="Refresh missions"
-                            className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200/70 active:scale-90 transition-all focus:outline-none"
+                            onClick={startTemplateView}
+                            title="Start New Mission"
+                            className="absolute bottom-6 right-6 w-14 h-14 rounded-full border-2 border-[#4C9FE8] bg-transparent hover:bg-[#4C9FE8]/10 active:scale-95 flex items-center justify-center text-[#4C9FE8] shadow-lg transition-all cursor-pointer"
                         >
-                            <Image src={refreshIcon} width={18} height={18} alt="Refresh" />
+                            <span className="text-3xl font-light leading-none -mt-0.5">+</span>
                         </button>
                     </div>
-                    <PastMission {...{ missions, setMission, selectedMission }} />
-                </div>
-                <div className="relative h-full flex-1 bg-white border border-slate-200/90 rounded-2xl shadow-sm overflow-hidden flex items-center justify-center">
-                    {
-                        currentScreen == 'MissionTemplate' ?
-                            <MissionTemplate {...{ stopTemplateView }} /> :
-                            currentScreen == 'MissionExplore' ?
-                                <MissionExplore {...{ stopTemplateView, selectedMission }} /> :
-                                <div className="flex flex-col items-center justify-center text-center p-8 max-w-md space-y-6">
-                                    <div className="relative flex items-center justify-center">
-                                        <div className="absolute w-28 h-28 bg-blue-500/10 rounded-full blur-2xl" />
-                                        <div className="relative flex items-center space-x-3 scale-125">
-                                            <ZoidLogoSvgr />
-                                            <span className="text-3xl font-black text-slate-900 tracking-wider font-sans">ZOID</span>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1.5">
-                                        <h2 className="text-lg font-bold text-slate-800 tracking-tight">Mission Operations Center</h2>
-                                        <p className="text-slate-500 text-xs leading-relaxed max-w-xs mx-auto">
-                                            Select a past mission from the sidebar to review FOD detections and telemetry, or start a new scanning operation.
-                                        </p>
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-2.5 w-full pt-2">
-                                        <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col items-center text-center space-y-1">
-                                            <span className="text-lg">🎯</span>
-                                            <span className="text-[11px] font-bold text-slate-700">AI Detection</span>
-                                            <span className="text-[9px] text-slate-400">Real-time FODs</span>
-                                        </div>
-                                        <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col items-center text-center space-y-1">
-                                            <span className="text-lg">🛰️</span>
-                                            <span className="text-[11px] font-bold text-slate-700">Centimeter RTK</span>
-                                            <span className="text-[9px] text-slate-400">High Precision</span>
-                                        </div>
-                                        <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col items-center text-center space-y-1">
-                                            <span className="text-lg">📸</span>
-                                            <span className="text-[11px] font-bold text-slate-700">Multi-Camera</span>
-                                            <span className="text-[9px] text-slate-400">26 Cam BITE</span>
-                                        </div>
-                                    </div>
-                                </div>
-                    }
-                </div>
+                )}
             </div>
-        </>
+        </div>
     );
 };
 

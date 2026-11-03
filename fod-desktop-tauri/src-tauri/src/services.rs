@@ -10,7 +10,7 @@
 use crate::state::AppState;
 use serde_json::{json, Map, Value};
 use sqlx::types::chrono::{NaiveDateTime, Utc};
-use sqlx::{Postgres, QueryBuilder};
+use sqlx::{QueryBuilder, Sqlite};
 use std::time::Duration;
 
 pub const MISSION_STATUS: &[&str] = &["ACTIVE", "INACTIVE", "TERMINATED"];
@@ -299,6 +299,7 @@ async fn connect_fod_client(state: &AppState) -> Option<proto_defination::fod::f
     Some(proto_defination::fod::fod_service_client::FodServiceClient::new(ch))
 }
 
+#[allow(dead_code)]
 async fn connect_image_client(state: &AppState) -> Option<proto_defination::image::image_service_client::ImageServiceClient<tonic::transport::Channel>> {
     let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
     Some(proto_defination::image::image_service_client::ImageServiceClient::new(ch))
@@ -970,6 +971,7 @@ pub async fn api_to_main(
 // default" semantics need per-payload column lists)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub(crate) enum Bind {
     I32(i32),
     OptI32(Option<i32>),
@@ -988,7 +990,7 @@ pub(crate) enum Bind {
     Enum(String, &'static str),
 }
 
-pub(crate) fn push_bind_val(qb: &mut QueryBuilder<Postgres>, v: &Bind) {
+pub(crate) fn push_bind_val(qb: &mut QueryBuilder<Sqlite>, v: &Bind) {
     match v {
         Bind::I32(x) => {
             qb.push_bind(*x);
@@ -1027,20 +1029,18 @@ pub(crate) fn push_bind_val(qb: &mut QueryBuilder<Postgres>, v: &Bind) {
             qb.push_bind(x.clone());
         }
         Bind::StrArr(x) => {
-            qb.push_bind(x.clone());
+            qb.push_bind(sqlx::types::Json(x.clone()));
         }
-        Bind::Enum(x, ty) => {
+        Bind::Enum(x, _ty) => {
             qb.push_bind(x.clone());
-            qb.push("::");
-            qb.push(*ty);
         }
     }
 }
 
 /// `INSERT INTO "<table>" ("c1",...) VALUES ($1,...)` from (column, bind)
 /// pairs; caller appends ON CONFLICT / RETURNING.
-pub(crate) fn insert_builder(table: &str, cols: &[(&str, Bind)]) -> QueryBuilder<Postgres> {
-    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(format!("INSERT INTO \"{table}\" ("));
+pub(crate) fn insert_builder(table: &str, cols: &[(&str, Bind)]) -> QueryBuilder<Sqlite> {
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(format!("INSERT INTO \"{table}\" ("));
     for (i, (name, _)) in cols.iter().enumerate() {
         if i > 0 {
             qb.push(", ");
@@ -1112,7 +1112,7 @@ fn get_req_date(data: &Value, key: &str) -> anyhow::Result<NaiveDateTime> {
 /// any).
 async fn upsert_mission_row<'e, E>(ex: E, mission: &Value, now: NaiveDateTime) -> anyhow::Result<()>
 where
-    E: sqlx::PgExecutor<'e>,
+    E: sqlx::SqliteExecutor<'e>,
 {
     let id = get_req_i64(mission, "id")?;
     let mut cols: Vec<(&str, Bind)> = vec![("id", Bind::I64(id))];
@@ -1297,7 +1297,7 @@ async fn update_fod_group_biggest(
     status: &str,
 ) -> anyhow::Result<()> {
     let res = sqlx::query(
-        "UPDATE \"FodGroup\" SET \"groupId\" = $1, \"missionId\" = $2, \"biggestFodId\" = $3, \"biggestFodSize\" = $4, \"status\" = $5::\"FodGroupStatus\", \"updatedAt\" = $6 WHERE \"groupId\" = $1 AND \"missionId\" = $2",
+        "UPDATE \"FodGroup\" SET \"groupId\" = $1, \"missionId\" = $2, \"biggestFodId\" = $3, \"biggestFodSize\" = $4, \"status\" = $5, \"updatedAt\" = $6 WHERE \"groupId\" = $1 AND \"missionId\" = $2",
     )
     .bind(group_id)
     .bind(mission_id)
@@ -1662,6 +1662,42 @@ pub fn obj(pairs: Vec<(&str, Value)>) -> Value {
     Value::Object(m)
 }
 
+/// If car is down / unreachable, terminate any active mission immediately in the local database
+/// and broadcast a terminate update event to the GUI.
+pub async fn terminate_active_mission_if_car_down(state: &AppState) {
+    let active_id: Option<i64> = sqlx::query_scalar(
+        r#"SELECT "id" FROM "Mission" WHERE "status" = 'ACTIVE' LIMIT 1"#,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    if let Some(id) = active_id {
+        tracing::warn!("Car is down — terminating live mission {id} instantly");
+        let now = now_naive();
+        let _ = sqlx::query(
+            r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = $1 WHERE "id" = $2"#,
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&state.db)
+        .await;
+
+        state.emit_gui(
+            "update",
+            &json!({
+                "type": "terminate",
+                "missionNumber": id,
+                "missionId": id,
+                "message": {
+                    "missionId": id,
+                    "reason": "car_disconnected"
+                }
+            }),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R1 smoke test for the socket-ingestion path (handle_fod_from_socket →
@@ -1674,7 +1710,7 @@ mod tests {
     use super::*;
     use crate::state::AppState;
 
-    async fn cleanup(db: &sqlx::PgPool, mission_id: i32) {
+    async fn cleanup(db: &sqlx::SqlitePool, mission_id: i32) {
         for sql in [
             "DELETE FROM \"Fod\" WHERE \"missionId\" = $1",
             "DELETE FROM \"FodGroup\" WHERE \"missionId\" = $1",
@@ -1691,17 +1727,15 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         std::env::set_current_dir(&tmp).unwrap();
 
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect("postgresql://postgres:1234@localhost:5432/zoid_client")
+        let db = crate::db::init_db("sqlite::memory:")
             .await
-            .expect("dev database must be up");
+            .expect("in-memory sqlite must initialize");
         let mission_id = 999998i32;
         let group_id = 434343i32;
         cleanup(&db, mission_id).await;
         sqlx::query(
             "INSERT INTO \"Mission\" (\"id\",\"status\",\"timer\",\"scanStatus\",\"createdAt\",\"updatedAt\") \
-             VALUES ($1,'INACTIVE',0,'PAUSE',now() at time zone 'utc',now() at time zone 'utc')",
+             VALUES ($1,'INACTIVE',0,'PAUSE',strftime('%Y-%m-%d %H:%M:%f', 'now'),strftime('%Y-%m-%d %H:%M:%f', 'now'))",
         )
         .bind(mission_id)
         .execute(&db)
@@ -1724,7 +1758,7 @@ mod tests {
 
         let (status, biggest_id, biggest_size): (String, Option<String>, Option<i32>) =
             sqlx::query_as(
-                "SELECT \"status\"::text, \"biggestFodId\", \"biggestFodSize\" FROM \"FodGroup\" WHERE \"groupId\" = $1 AND \"missionId\" = $2",
+                "SELECT \"status\", \"biggestFodId\", \"biggestFodSize\" FROM \"FodGroup\" WHERE \"groupId\" = $1 AND \"missionId\" = $2",
             )
             .bind(group_id)
             .bind(mission_id)
@@ -1791,7 +1825,7 @@ mod tests {
         .await
         .unwrap();
         let mstatus: String =
-            sqlx::query_scalar("SELECT \"status\"::text FROM \"Mission\" WHERE \"id\" = $1")
+            sqlx::query_scalar("SELECT \"status\" FROM \"Mission\" WHERE \"id\" = $1")
                 .bind(mission_id)
                 .fetch_one(&db)
                 .await
@@ -1807,7 +1841,7 @@ mod tests {
         .await
         .unwrap();
         let (gstatus, dirty): (String, Option<bool>) = sqlx::query_as(
-            "SELECT \"status\"::text, \"dirty\" FROM \"FodGroup\" WHERE \"groupId\" = $1 AND \"missionId\" = $2",
+            "SELECT \"status\", \"dirty\" FROM \"FodGroup\" WHERE \"groupId\" = $1 AND \"missionId\" = $2",
         )
         .bind(group_id)
         .bind(mission_id)

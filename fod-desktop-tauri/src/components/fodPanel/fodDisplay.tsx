@@ -55,7 +55,7 @@ const FodGridCell = ({
   const fod = items[idx];
 
   return (
-    <div style={{ ...style, padding: 10, boxSizing: "border-box" }} className="flex justify-center items-center">
+    <div style={{ ...style, padding: 8, boxSizing: "border-box" }} className="flex justify-center items-center">
       <Fodcard key={fod.id} fod={fod} handleDetailViewRequest={onDetailView} />
     </div>
   );
@@ -81,8 +81,8 @@ const FodDisplay = () => {
     return sortByFilter(filters, byStatus, currentLocation);
   }, [fods, groupStatus, filters, currentLocation]);
 
-  const itemWidth = 180;
-  const itemHeight = 210;
+  const itemWidth = 225;
+  const itemHeight = 350;
   const rowCount = Math.ceil(filteredFods.length / columnCount);
 
   const handleDetailViewRequest = React.useCallback(
@@ -95,12 +95,12 @@ const FodDisplay = () => {
   useEffect(() => {
     const updateColumnCount = () => {
       const width = window.innerWidth;
-      if (width < 768) setColumnCount(2); // Tablet
-      else if (width < 1000) setColumnCount(3);
-      else if (width < 1260) setColumnCount(4);
-      else if (width < 1501) setColumnCount(5); // Laptop
-      else if (width < 1750) setColumnCount(6);
-      else setColumnCount(7); // Desktop
+      if (width < 800) setColumnCount(2);
+      else if (width < 1050) setColumnCount(3);
+      else if (width < 1300) setColumnCount(4);
+      else if (width < 1600) setColumnCount(5);
+      else if (width < 1900) setColumnCount(6);
+      else setColumnCount(7);
     };
 
     updateColumnCount(); // Set initially
@@ -119,14 +119,14 @@ const FodDisplay = () => {
   );
 
   return (
-    <div className="absolute w-full h-[90%] top-[70px] overflow-hidden select-none px-[5px]">
+    <div className="w-full h-full relative overflow-hidden select-none">
       <Grid
         cellComponent={FodGridCell as any}
         cellProps={cellProps}
         columnCount={columnCount}
         rowCount={rowCount}
-        columnWidth={itemWidth + 20}
-        rowHeight={itemHeight + 20}
+        columnWidth={itemWidth + 16}
+        rowHeight={itemHeight + 16}
         style={{ height: '100%', width: '100%' }}
       />
     </div>

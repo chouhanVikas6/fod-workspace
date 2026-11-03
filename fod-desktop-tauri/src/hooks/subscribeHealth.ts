@@ -1,49 +1,63 @@
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { update_SystemHealth } from '@/store/slices/system-health-slice';
 import { update_BiteState } from '@/store/slices/bite-state.slice';
-import { ServerBase } from '@/config/clientConfig';
 
 export const useSSE = (url: string) => {
   const dispatch = useDispatch();
 
   useEffect(() => {
-    // Callers pass a path relative to the sidecar (e.g. '/api/sse/health-data').
-    // Resolve it against ServerBase so this works outside the old vite dev
-    // proxy — a bare page origin has no idea where :7985 is.
-    const absoluteUrl = url.startsWith('/') ? `${ServerBase}${url}` : url;
-    const eventSource = new EventSource(absoluteUrl, { withCredentials: true });
+    let disposed = false;
+    let unlistenFn: (() => void) | null = null;
 
-    const handleMessage = (event: MessageEvent) => {
+    const handleData = (data: any) => {
+      if (disposed || !data) return;
       try {
-        const data = JSON.parse(event.data);
-        if (data) {
-          dispatch(update_SystemHealth(data));
-          // car_health (temp/volt/memory/space/rtk) powers the BITE tab.
-          if (data.car_health) {
-            dispatch(update_BiteState({ carData: data.car_health }));
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        if (parsed) {
+          dispatch(update_SystemHealth(parsed));
+          if (parsed.car_health) {
+            dispatch(update_BiteState({ carData: parsed.car_health }));
           }
         }
       } catch (error) {
-        console.error('Error parsing SSE data:', error);
+        console.error('Error parsing health IPC data:', error);
       }
     };
 
-    const handleError = (error: Event) => {
-      console.error('SSE Error:', error);
-      eventSource.close();
-    };
+    // Fetch initial state immediately via Tauri IPC
+    invoke('get_health_bite_state')
+      .then((initial) => {
+        if (initial && typeof initial === 'object' && Object.keys(initial as object).length > 0) {
+          handleData(initial);
+        }
+      })
+      .catch(() => {});
 
-    // Listen for both specific events and general messages
-    eventSource.addEventListener('update', handleMessage);
-    eventSource.onmessage = handleMessage;
-    eventSource.onerror = handleError;
+    // Subscribe to continuous 1s Tauri IPC broadcasts
+    listen('sse:health-data', (event) => {
+      handleData(event.payload);
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          unlistenFn = unlisten;
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to subscribe to sse:health-data IPC event:', error);
+      });
 
-    // Cleanup on unmount
     return () => {
-      eventSource.removeEventListener('update', handleMessage);
-      eventSource.close();
+      disposed = true;
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, [dispatch, url]);
+
   return null;
-}; 
+};

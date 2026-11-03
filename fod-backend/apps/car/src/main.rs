@@ -80,12 +80,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let image_svc = ImageServiceImpl::new(storage.clone());
     let mission_ctrl_svc = MissionControlServiceImpl::new(db.clone());
     if let Ok(Some(active)) = db.get_active_mission().await {
-        tracing::info!(
-            "Restored active mission {} from DB (scan_status: {:?})",
-            active.id,
-            active.scan_status
+        tracing::warn!(
+            "Car was down; terminating leftover active mission {} on daemon startup",
+            active.id
         );
-        mission_ctrl_svc.restore_active_mission(active.id, active.scan_status);
+        let _ = db.terminate_mission(active.id).await;
+        let _ = db.append_change(1, &active.id.to_string()).await;
     }
     let fod_group_svc = FodGroupServiceImpl::new(db.clone(), group_tx.clone(), "car-primary".to_string());
     let fod_svc = FodServiceImpl::new(db.clone());
@@ -140,7 +140,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Starting gRPC server with tonic-web & permissive CORS on {}", addr);
 
-    Server::builder()
+    let mission_ctrl_shutdown = mission_ctrl_svc.clone();
+    let db_shutdown = db.clone();
+
+    let server_fut = Server::builder()
         .accept_http1(true)
         .layer(grpc_core::cors_layer())
         .layer(tonic_web::GrpcWebLayer::new())
@@ -158,8 +161,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .add_service(ReplicationServiceServer::new(replication_svc))
         .add_service(UserServiceServer::new(user_svc))
-        .serve(addr)
-        .await?;
+        .serve(addr);
+
+    tokio::select! {
+        res = server_fut => {
+            if let Err(e) = res {
+                tracing::error!("Car gRPC server error: {e}");
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Shutdown signal received, stopping Car daemon...");
+        }
+    }
+
+    // If car is shutting down/stopping, terminate any active mission immediately
+    if let Some(active_id) = mission_ctrl_shutdown.terminate_active_mission().await {
+        tracing::info!("Terminated active mission {active_id} on Car daemon shutdown");
+    } else if let Ok(Some(active)) = db_shutdown.get_active_mission().await {
+        tracing::info!("Terminated active mission {} on Car daemon shutdown", active.id);
+        let _ = db_shutdown.terminate_mission(active.id).await;
+        let _ = db_shutdown.append_change(1, &active.id.to_string()).await;
+    }
 
     Ok(())
 }

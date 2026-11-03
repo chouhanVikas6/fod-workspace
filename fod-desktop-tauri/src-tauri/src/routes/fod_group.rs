@@ -166,7 +166,7 @@ async fn update(method: Method,
         _ => return err500("Failed to retrieve fod group"),
     };
     let updated: Result<Option<crate::models::FodGroup>, sqlx::Error> = sqlx::query_as(
-        "UPDATE \"FodGroup\" SET \"status\" = $1::\"FodGroupStatus\", \"dirty\" = true, \"updatedAt\" = $2 WHERE \"groupId\" = $3 AND \"missionId\" = $4 RETURNING *",
+        "UPDATE \"FodGroup\" SET \"status\" = $1, \"dirty\" = true, \"updatedAt\" = $2 WHERE \"groupId\" = $3 AND \"missionId\" = $4 RETURNING *",
     )
     .bind(&status)
     .bind(svc::now_naive())

@@ -17,26 +17,15 @@
 }
 
 /*
- * Day/Night theme toggle (PDF: "Theme toggle day night option").
- * The UI uses hardcoded light colours everywhere (bg-[#F5F5F5], bg-white, ...)
- * with no dark: variants, so a class-based Tailwind dark mode would restyle
- * nothing. Instead we invert the whole document and re-invert media/map/canvas
- * so photos, camera frames and the Mapbox map keep their true colours.
- * invert(1) hue-rotate(180deg) is self-cancelling, so re-applying it to media
- * returns those elements to their original appearance.
+ * Day/Night theme toggle:
+ * All application views (Settings, MissionSelector, Templates, Explore, Header, Sidebar, Dashboard, FodPanel)
+ * now use native Tailwind dark/light classes with exact palette tokens.
  */
+html.dark,
 html.theme-dark {
-  filter: invert(1) hue-rotate(180deg);
-  background: #ffffff;
+  color-scheme: dark;
 }
-html.theme-dark img,
-html.theme-dark video,
-html.theme-dark canvas,
-html.theme-dark .mapboxgl-canvas,
-html.theme-dark [class*="mapbox"],
-html.theme-dark svg image {
-  filter: invert(1) hue-rotate(180deg);
-}
+
 
 body {
   /* color: rgb(var(--foreground-rgb)); */

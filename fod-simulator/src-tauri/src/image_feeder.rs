@@ -5,17 +5,36 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
+const SYNTHETIC_POOL_SIZE: usize = 20;
+const MAX_CACHED_FOLDER_IMAGES: usize = 128;
+
 #[derive(Clone)]
 pub struct ImageFeeder {
     folder_path: Arc<RwLock<Option<String>>>,
     indexed_files: Arc<RwLock<Vec<String>>>,
+    cached_folder_frames: Arc<RwLock<Vec<(Vec<u8>, String)>>>,
+    synthetic_pool: Arc<Vec<(Vec<u8>, String)>>,
+    corrupt_frame: Arc<(Vec<u8>, String)>,
 }
 
 impl ImageFeeder {
     pub fn new() -> Self {
+        let mut pool = Vec::with_capacity(SYNTHETIC_POOL_SIZE);
+        for seq in 0..SYNTHETIC_POOL_SIZE {
+            pool.push(Self::generate_synthetic_pattern(seq));
+        }
+
+        let bad_bytes = b"CORRUPTED_JPEG_PAYLOAD_FOR_TESTING".to_vec();
+        let mut hasher = Sha256::new();
+        hasher.update(&bad_bytes);
+        let corrupt_sha = format!("{:x}", hasher.finalize());
+
         Self {
             folder_path: Arc::new(RwLock::new(None)),
             indexed_files: Arc::new(RwLock::new(Vec::new())),
+            cached_folder_frames: Arc::new(RwLock::new(Vec::new())),
+            synthetic_pool: Arc::new(pool),
+            corrupt_frame: Arc::new((bad_bytes, corrupt_sha)),
         }
     }
 
@@ -31,6 +50,7 @@ impl ImageFeeder {
 
         let mut file_paths = Vec::new();
         let mut items = Vec::new();
+        let mut cached_frames = Vec::new();
 
         for p in raw_files {
             let filename = p
@@ -49,6 +69,15 @@ impl ImageFeeder {
                 String::new()
             };
 
+            if cached_frames.len() < MAX_CACHED_FOLDER_IMAGES {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    let mut hasher = Sha256::new();
+                    hasher.update(&bytes);
+                    let sha = format!("{:x}", hasher.finalize());
+                    cached_frames.push((bytes, sha));
+                }
+            }
+
             items.push(ImageFolderItem {
                 path: full_path.clone(),
                 filename,
@@ -61,6 +90,7 @@ impl ImageFeeder {
 
         *self.folder_path.write().unwrap() = Some(dir_path.to_string());
         *self.indexed_files.write().unwrap() = file_paths;
+        *self.cached_folder_frames.write().unwrap() = cached_frames;
 
         Ok(items)
     }
@@ -92,26 +122,18 @@ impl ImageFeeder {
         corrupt: bool,
     ) -> (Vec<u8>, String) {
         if corrupt {
-            let bad_bytes = b"CORRUPTED_JPEG_PAYLOAD_FOR_TESTING".to_vec();
-            let mut hasher = Sha256::new();
-            hasher.update(&bad_bytes);
-            return (bad_bytes, format!("{:x}", hasher.finalize()));
+            return (*self.corrupt_frame).clone();
         }
 
-        let files = self.indexed_files.read().unwrap();
-        if !files.is_empty() {
-            let file_path = &files[index % files.len()];
-            if let Ok(bytes) = std::fs::read(file_path) {
-                // If it's already a JPEG, compute hash and return
-                let mut hasher = Sha256::new();
-                hasher.update(&bytes);
-                let sha = format!("{:x}", hasher.finalize());
-                return (bytes, sha);
+        {
+            let cached = self.cached_folder_frames.read().unwrap();
+            if !cached.is_empty() {
+                return cached[index % cached.len()].clone();
             }
         }
 
-        // Fallback: Generate clean synthetic JPEG pattern
-        Self::generate_synthetic_pattern(index)
+        // Fast O(1) lookup from pre-generated synthetic JPEG pool
+        self.synthetic_pool[index % self.synthetic_pool.len()].clone()
     }
 
     fn create_thumbnail_base64(path: &Path) -> Result<String, Box<dyn std::error::Error>> {

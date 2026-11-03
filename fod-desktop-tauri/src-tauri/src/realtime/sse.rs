@@ -1,19 +1,8 @@
-//! SSE endpoints — OWNED BY AGENT R2.
-//! Ports of custom-api/health-data/index.ts and custom-api/retrive-data/index.ts
-//! (mounted in routes/mod.rs at /api/sse/health-data and /api/sse/retrive-data).
+//! SSE & Tauri IPC stream endpoints.
+//! Ports of custom-api/health-data/index.ts and custom-api/retrive-data/index.ts.
 //!
-//! Framing matches the Node handlers byte-for-byte where the renderer's
-//! EventSource consumers (subscribeHealth.ts, fodPanel.tsx, missionExplore.tsx)
-//! can observe it:
-//!   health-data : ": SSE Connection Established\n\n" once, then unnamed
-//!                 "data: {biteState}\n\n" every 1 s, ":heartbeat\n\n" per 30 s
-//!   retrive-data: "event: update\ndata: [rows]\n\n" (or "event: error\n…"),
-//!                 immediate first poll then every 500 ms, ":heartbeat\n\n"
-//!                 per 30 s
-//! axum's Sse response carries the same Content-Type: text/event-stream and
-//! Cache-Control: no-cache headers Node wrote (Connection: keep-alive is
-//! implicit hop-by-hop under HTTP/1.1).
-//! DB polling behaviour is kept as-is — parity first, no redesign.
+//! Supports both Tauri IPC event streams (`sse:health-data` and
+//! `sse:retrive-data:<subId>`) and the in-process router endpoints.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -36,14 +25,32 @@ fn sse_response(
     Sse::new(ReceiverStream::new(rx).map(Ok))
 }
 
-/// ISO-8601 with milliseconds + Z — what JS Date#toISOString / JSON.stringify
-/// produce. Naive DB timestamps are UTC (Prisma convention).
 fn iso_millis_naive(t: chrono::NaiveDateTime) -> String {
     t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
 fn iso_millis_utc(t: chrono::DateTime<chrono::Utc>) -> String {
     t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
+/// Spawns a 1 s background broadcaster that emits `sse:health-data` Tauri IPC events.
+pub fn spawn_health_broadcaster(state: AppState) {
+    tokio::spawn(async move {
+        let url = format!("{}/api/bite-data/state", state.cfg.car_backend_url);
+        let mut poll = tokio::time::interval(Duration::from_secs(1));
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            poll.tick().await;
+            if let Some(bite_state) = fetch_bite_state(&state, &url).await {
+                state.emit_event("sse:health-data", &bite_state);
+            }
+        }
+    });
+}
+
+pub async fn get_bite_state_once(state: &AppState) -> Option<Value> {
+    let url = format!("{}/api/bite-data/state", state.cfg.car_backend_url);
+    fetch_bite_state(state, &url).await
 }
 
 // ---------------------------------------------------------------------------
@@ -58,10 +65,6 @@ pub async fn health_data(
     let (tx, rx) = mpsc::channel::<Event>(32);
 
     tokio::spawn(async move {
-        // axum serializes comments as ": <text>" (colon + space hardcoded),
-        // so this yields Node's exact ": SSE Connection Established" line.
-        // (The ":heartbeat" comments below gain that same space — ": heartbeat"
-        // — which EventSource ignores; the Event API can't omit it.)
         if tx
             .send(Event::default().comment("SSE Connection Established"))
             .await
@@ -71,7 +74,6 @@ pub async fn health_data(
         }
         let url = format!("{}/api/bite-data/state", state.cfg.car_backend_url);
         let start = tokio::time::Instant::now();
-        // setInterval semantics: first fire only after one full period.
         let mut poll = tokio::time::interval_at(start + Duration::from_secs(1), Duration::from_secs(1));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut heartbeat =
@@ -81,15 +83,10 @@ pub async fn health_data(
         loop {
             tokio::select! {
                 _ = poll.tick() => {
-                    // setInterval fires regardless of how long the previous
-                    // axios call is taking (bite-data/state has been observed
-                    // at 2.5 s) — overlap the fetches the same way instead of
-                    // serializing them, or the 1 s cadence collapses.
                     let state = state.clone();
                     let url = url.clone();
                     let tx = tx.clone();
                     tokio::spawn(async move {
-                        // backend temporarily unreachable — skip this tick
                         if let Some(bite_state) = fetch_bite_state(&state, &url).await {
                             let _ = tx.send(Event::default().data(bite_state.to_string())).await;
                         }
@@ -100,7 +97,7 @@ pub async fn health_data(
                         return;
                     }
                 }
-                _ = tx.closed() => return, // client closed the stream
+                _ = tx.closed() => return,
             }
         }
     });
@@ -110,7 +107,7 @@ pub async fn health_data(
 
 /// GET car-backend bite state; `const { latency, ...biteState } = r.data.data || {}`
 /// — latency stays owned by the desktop's own heartbeat tracking.
-async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Value> {
+pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Value> {
     if let Ok(mut client) = proto_defination::bite::bite_service_client::BiteServiceClient::connect(state.cfg.car_backend_url.clone()).await {
         if let Ok(resp) = client.get_bite_state(tonic::Request::new(proto_defination::bite::GetBiteStateRequest {})).await {
             let b = resp.into_inner();
@@ -240,43 +237,163 @@ fn parse_int_js(s: &str) -> Option<i64> {
 const RETRIVE_SQL: &str = r#"
 SELECT
 COALESCE("f"."id", "fg"."biggestFodId", "fg"."id") AS "id",
-COALESCE("f"."size", "fg"."biggestFodSize"::double precision, 10.0) AS "size",
+COALESCE("f"."size", CAST("fg"."biggestFodSize" AS REAL), 10.0) AS "size",
 COALESCE("f"."groupId", "fg"."groupId") AS "groupId",
 COALESCE("f"."timestamp", "fg"."createdAt") AS "timestamp",
-COALESCE("f"."location", '{"lat":0.0,"lon":0.0,"sd":0.0}'::jsonb) AS "location",
+COALESCE("f"."location", '{"lat":0.0,"lon":0.0,"sd":0.0}') AS "location",
 COALESCE("f"."class", 'Unknown') AS "class",
 COALESCE("f"."velocity", 0.0) AS "velocity",
 COALESCE("f"."sysid", '') AS "sysid",
-COALESCE("f"."size", "fg"."biggestFodSize"::double precision, 10.0) AS "biggestSize",
-"fg"."updatedAt" AT TIME ZONE 'UTC' AS "updatedAt",
-fg."status"::text AS "groupStatus",
+COALESCE("f"."size", CAST("fg"."biggestFodSize" AS REAL), 10.0) AS "biggestSize",
+"fg"."updatedAt" AS "updatedAt",
+fg."status" AS "groupStatus",
 fg."groupId" AS "idssssss"
 FROM "FodGroup" fg
 LEFT JOIN "Fod" f ON fg."biggestFodId" = f."id"
 WHERE fg."missionId" = $1
 AND (
-    (fg."updatedAt" AT TIME ZONE 'UTC') > $2::timestamptz
-    OR ((fg."updatedAt" AT TIME ZONE 'UTC') = $2::timestamptz AND fg."groupId" > $3)
+    fg."updatedAt" > $2
+    OR (fg."updatedAt" = $2 AND fg."groupId" > $3)
 )
 ORDER BY fg."updatedAt" ASC, fg."groupId" ASC
 LIMIT 500
 "#;
 
-
 struct RetriveState {
-    last_updated_at: String,
+    last_updated_at: chrono::NaiveDateTime,
     last_group_id: i64,
     last_activity: Instant,
     data_has_been_sent: bool,
     polling_stopped: bool,
 }
 
+impl RetriveState {
+    fn new() -> Self {
+        let epoch = chrono::DateTime::from_timestamp_millis(0)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or_default();
+        Self {
+            last_updated_at: epoch,
+            last_group_id: 0,
+            last_activity: Instant::now(),
+            data_has_been_sent: false,
+            polling_stopped: false,
+        }
+    }
+}
+
+/// Start a Tauri IPC subscription for `retrive-data`, emitting events on
+/// `sse:retrive-data:{sub_id}` with payload `{ "event": "update"|"error", "data": ... }`.
+pub async fn start_retrive_ipc_stream(state: AppState, sub_id: String, mission_id: Option<i64>) {
+    stop_retrive_ipc_stream(&state, &sub_id).await;
+
+    if let Some(mid) = mission_id {
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
+                tracing::warn!("sync_fod on IPC retrive-data connect for mission {mid} failed: {e}");
+            }
+        });
+    }
+
+    let event_name = format!("sse:retrive-data:{sub_id}");
+    let state_clone = state.clone();
+    let handle = tokio::spawn(async move {
+        let mut st = RetriveState::new();
+        send_data_ipc(&state_clone, &event_name, mission_id, &mut st).await;
+
+        let start = tokio::time::Instant::now();
+        let mut poll =
+            tokio::time::interval_at(start + Duration::from_millis(500), Duration::from_millis(500));
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            poll.tick().await;
+            if !st.polling_stopped {
+                send_data_ipc(&state_clone, &event_name, mission_id, &mut st).await;
+            }
+        }
+    });
+
+    state.retrive_subs.lock().await.insert(sub_id, handle);
+}
+
+pub async fn stop_retrive_ipc_stream(state: &AppState, sub_id: &str) {
+    if let Some(handle) = state.retrive_subs.lock().await.remove(sub_id) {
+        handle.abort();
+    }
+}
+
+async fn send_data_ipc(
+    state: &AppState,
+    event_name: &str,
+    mission_id: Option<i64>,
+    st: &mut RetriveState,
+) {
+    let rows = match query_rows(state, mission_id, st.last_updated_at, st.last_group_id).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(error = %e, "IPC retrive-data error");
+            state.emit_event(
+                event_name,
+                &json!({
+                    "event": "error",
+                    "data": { "error": "Failed to fetch data" }
+                }),
+            );
+            return;
+        }
+    };
+
+    if rows.is_empty() {
+        if !st.data_has_been_sent {
+            st.data_has_been_sent = true;
+            state.emit_event(
+                event_name,
+                &json!({
+                    "event": "update",
+                    "data": []
+                }),
+            );
+            return;
+        }
+        if st.data_has_been_sent
+            && st.last_activity.elapsed() > Duration::from_secs(5 * 60)
+            && !st.polling_stopped
+        {
+            tracing::info!("[IPC retrive-data] Inactivity timeout reached, stopping polling.");
+            st.polling_stopped = true;
+        }
+        return;
+    }
+
+    st.last_activity = Instant::now();
+    st.data_has_been_sent = true;
+
+    if let Some(last) = rows.last() {
+        if let Some(ts_val) = last.get("updatedAt") {
+            if let Some(dt) = crate::services::parse_js_date(ts_val) {
+                st.last_updated_at = dt;
+            }
+        }
+        if let Some(gid) = last.get("idssssss").and_then(Value::as_i64) {
+            st.last_group_id = gid;
+        }
+    }
+
+    state.emit_event(
+        event_name,
+        &json!({
+            "event": "update",
+            "data": rows
+        }),
+    );
+}
+
 pub async fn retrive_data(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    // parseInt(req.query.id) — a missing/garbage id makes every poll hit the
-    // error path, exactly like the NaN bind did in Prisma.
     let mission_id = query.get("id").and_then(|s| parse_int_js(s));
     tracing::info!(?mission_id, "SSE retrive-data connection opened");
 
@@ -292,15 +409,8 @@ pub async fn retrive_data(
     let (tx, rx) = mpsc::channel::<Event>(32);
 
     tokio::spawn(async move {
-        let mut st = RetriveState {
-            last_updated_at: "1970-01-01T00:00:00.000Z".to_string(),
-            last_group_id: 0,
-            last_activity: Instant::now(),
-            data_has_been_sent: false,
-            polling_stopped: false,
-        };
+        let mut st = RetriveState::new();
 
-        // Send initial data, then poll every 500 ms.
         if !send_data(&state, &tx, mission_id, &mut st).await {
             return;
         }
@@ -322,7 +432,7 @@ pub async fn retrive_data(
                 }
             };
             if !alive {
-                return; // client closed the stream
+                return;
             }
         }
     });
@@ -330,15 +440,13 @@ pub async fn retrive_data(
     sse_response(rx)
 }
 
-/// Port of sendData (custom-api/retrive-data/index.ts:24-118). Returns false
-/// once the client is gone.
 async fn send_data(
     state: &AppState,
     tx: &mpsc::Sender<Event>,
     mission_id: Option<i64>,
     st: &mut RetriveState,
 ) -> bool {
-    let rows = match query_rows(state, mission_id, &st.last_updated_at, st.last_group_id).await {
+    let rows = match query_rows(state, mission_id, st.last_updated_at, st.last_group_id).await {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!(error = %e, "SSE Error");
@@ -346,7 +454,7 @@ async fn send_data(
                 .event("error")
                 .data(json!({ "error": "Failed to fetch data" }).to_string());
             let _ = tx.send(evt).await;
-            return true; // Keep SSE stream open on transient query error
+            return true;
         }
     };
 
@@ -356,8 +464,6 @@ async fn send_data(
             let evt = Event::default().event("update").data("[]");
             return tx.send(evt).await.is_ok();
         }
-        // Inactivity timeout stops the DB polling but keeps the connection
-        // (and heartbeats) alive — Node only clears pollInterval.
         if st.data_has_been_sent
             && st.last_activity.elapsed() > Duration::from_secs(5 * 60)
             && !st.polling_stopped
@@ -371,10 +477,11 @@ async fn send_data(
     st.last_activity = Instant::now();
     st.data_has_been_sent = true;
 
-    // Advance cursor to the last row in this batch
     if let Some(last) = rows.last() {
-        if let Some(ts) = last.get("updatedAt").and_then(Value::as_str) {
-            st.last_updated_at = ts.to_string();
+        if let Some(ts_val) = last.get("updatedAt") {
+            if let Some(dt) = crate::services::parse_js_date(ts_val) {
+                st.last_updated_at = dt;
+            }
         }
         if let Some(gid) = last.get("idssssss").and_then(Value::as_i64) {
             st.last_group_id = gid;
@@ -390,7 +497,7 @@ async fn send_data(
 async fn query_rows(
     state: &AppState,
     mission_id: Option<i64>,
-    last_updated_at: &str,
+    last_updated_at: chrono::NaiveDateTime,
     last_group_id: i64,
 ) -> anyhow::Result<Vec<Value>> {
     let mission_id = mission_id.ok_or_else(|| anyhow::anyhow!("invalid mission id (NaN)"))?;
@@ -403,7 +510,6 @@ async fn query_rows(
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        // LEFT JOIN — every Fod column may be NULL.
         let id: Option<String> = row.try_get("id")?;
         let size: Option<f64> = row.try_get("size")?;
         let group_id: Option<i32> = row.try_get("groupId")?;
@@ -422,13 +528,13 @@ async fn query_rows(
         let sysid: Option<String> = row.try_get("sysid")?;
         let biggest_size: Option<f64> = row.try_get("biggestSize")?;
         let updated_at: Option<String> = row
-            .try_get::<chrono::DateTime<chrono::Utc>, _>("updatedAt")
+            .try_get::<chrono::NaiveDateTime, _>("updatedAt")
             .ok()
-            .map(iso_millis_utc)
+            .map(iso_millis_naive)
             .or_else(|| {
-                row.try_get::<chrono::NaiveDateTime, _>("updatedAt")
+                row.try_get::<chrono::DateTime<chrono::Utc>, _>("updatedAt")
                     .ok()
-                    .map(iso_millis_naive)
+                    .map(iso_millis_utc)
             });
         let group_status: Option<String> = row.try_get("groupStatus")?;
         let idssssss: i32 = row.try_get("idssssss")?;
@@ -449,5 +555,3 @@ async fn query_rows(
     }
     Ok(out)
 }
-
-
