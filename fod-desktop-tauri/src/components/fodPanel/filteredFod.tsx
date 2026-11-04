@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import Fodcard from "./FodCards/FodCard";
 import { FiltersCheck, sortByFilter } from "../../utils/FiltersCheck";
@@ -9,8 +9,7 @@ const FilteredFods = () => {
   const dispatch = useDispatch<AppDispatch>();
   const [isVisible, setIsVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<'filtered' | 'unfiltered'>('filtered');
-  const [startY, setStartY] = useState(null);
-  const [endY, setEndY] = useState(null);
+  const startYRef = useRef<number | null>(null);
   const alertQueue = useSelector((state:RootState)  => state.FodReducer.fods);
   const {filters,doubleAccepted} = useSelector((state:RootState)  => state.FodReducer);
   const { groupStatus } = useSelector((state:RootState) => state.FodReducer.filters);
@@ -22,67 +21,58 @@ const FilteredFods = () => {
   );
 
   useEffect(() => {
-    const handleTouchStart = (event) => {
+    const handleTouchStart = (event: TouchEvent) => {
       const touchY = event.touches[0].clientY;
       const swipeRange = isVisible ? 400 : 100;
       if (touchY >= window.innerHeight - swipeRange) {
-        setStartY(touchY);
+        startYRef.current = touchY;
       }
     };
 
-    const handleTouchEnd = (event) => {
+    const handleTouchEnd = (event: TouchEvent) => {
       const touchY = event.changedTouches[0].clientY;
-      if (startY !== null && touchY !== null) {
-        const swipeDistance = startY - touchY;
+      if (startYRef.current !== null) {
+        const swipeDistance = startYRef.current - touchY;
         if (swipeDistance > 150 && !isVisible) {
-          setIsVisible(true); // Swipe from bottom to up to open
+          setIsVisible(true);
         } else if (swipeDistance < -50 && isVisible) {
-          setIsVisible(false); // Swipe from up to bottom to close
+          setIsVisible(false);
         }
       }
-      setStartY(null);
+      startYRef.current = null;
     };
 
-    const handleMouseDown = (event) => {
+    const handleMouseDown = (event: MouseEvent) => {
       const swipeRange = isVisible ? 400 : 100;
       if (event.clientY >= window.innerHeight - swipeRange) {
-        setStartY(event.clientY);
+        startYRef.current = event.clientY;
       }
     };
 
-    const handleMouseMove = (event) => {
-      if (startY !== null) {
-        setEndY(event.clientY);
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (startY !== null && endY !== null) {
-        const swipeDistance = startY - endY;
+    const handleMouseUp = (event: MouseEvent) => {
+      if (startYRef.current !== null) {
+        const swipeDistance = startYRef.current - event.clientY;
         if (swipeDistance > 150 && !isVisible) {
-          setIsVisible(true); // Swipe from bottom to up to open
+          setIsVisible(true);
         } else if (swipeDistance < -50 && isVisible) {
-          setIsVisible(false); // Swipe from up to bottom to close
+          setIsVisible(false);
         }
       }
-      setStartY(null);
-      setEndY(null);
+      startYRef.current = null;
     };
 
     document.addEventListener("touchstart", handleTouchStart);
     document.addEventListener("touchend", handleTouchEnd);
     document.addEventListener("mousedown", handleMouseDown);
-    document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
 
     return () => {
       document.removeEventListener("touchstart", handleTouchStart);
       document.removeEventListener("touchend", handleTouchEnd);
       document.removeEventListener("mousedown", handleMouseDown);
-      document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isVisible, startY, endY]);
+  }, [isVisible]);
 
   const toggleVisibility = () => {
     setIsVisible((prevState) => !prevState);
@@ -109,8 +99,8 @@ const FilteredFods = () => {
   const shownFods = activeTab === 'filtered' ? excludedFods : passingFods;
 
   return (
-    <div className={`absolute fixed w-[100%] transition-all duration-300 bottom-[-1px] z-20 overflow-hidden`}>
-      <div className="flex justify-center">
+    <div className={`fixed w-[100%] transition-all duration-300 bottom-[-1px] z-20 overflow-hidden pointer-events-none`}>
+      <div className="flex justify-center pointer-events-auto">
         <div
           className={`h-8 px-5 rounded-tl-xl flex justify-center items-center text-xs font-bold uppercase tracking-wider cursor-pointer transition-all border-t border-l ${
             activeTab === 'filtered'
@@ -133,7 +123,7 @@ const FilteredFods = () => {
         </div>
       </div>
       {isVisible && (
-        <div className="bg-[#181C23] border-t border-[#252B35] shadow-2xl">
+        <div className="bg-[#181C23] border-t border-[#252B35] shadow-2xl pointer-events-auto">
           <div className="flex justify-between items-center px-4 py-2 bg-[#14181F] border-b border-[#252B35] text-slate-200">
             <span className="text-xs font-bold uppercase tracking-wider">
               {activeTab === 'filtered' ? 'Filtered-out FODs' : 'Unfiltered FODs'} ({shownFods.length})
@@ -151,7 +141,7 @@ const FilteredFods = () => {
                 No FODs in this tab
               </div>
             ) : (
-              shownFods.map((fod, index) => (
+              shownFods.slice(0, 80).map((fod, index) => (
                 <Fodcard key={fod.id ?? index} fod={fod} handleDetailViewRequest={handleDetailViewRequest} />
               ))
             )}

@@ -127,7 +127,7 @@ const HealthBar = () => {
       <button
         type="button"
         onClick={() => setActiveTooltip(activeTooltip === 'comm' ? null : 'comm')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        className="bg-slate-100 hover:bg-slate-200/70 border border-slate-300/80 dark:bg-[#1E242B] dark:border-[#2A313C] dark:hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Communication Status"
       >
         <svg
@@ -140,14 +140,14 @@ const HealthBar = () => {
           <rect x="11" y="6" width="2.5" height="11" rx="0.5" />
           <rect x="15.5" y="2" width="2.5" height="15" rx="0.5" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">COMM</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-700 dark:text-slate-200">COMM</span>
       </button>
 
       {/* 2. GNSS */}
       <button
         type="button"
         onClick={() => setActiveTooltip(activeTooltip === 'gnss' ? null : 'gnss')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        className="bg-slate-100 hover:bg-slate-200/70 border border-slate-300/80 dark:bg-[#1E242B] dark:border-[#2A313C] dark:hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="GNSS Satellites & Fix"
       >
         <svg
@@ -163,14 +163,14 @@ const HealthBar = () => {
           <line x1="2" y1="12" x2="22" y2="12" />
           <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">GNSS</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-700 dark:text-slate-200">GNSS</span>
       </button>
 
       {/* 3. TABLET */}
       <button
         type="button"
         onClick={() => setActiveTooltip(activeTooltip === 'tablet' ? null : 'tablet')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        className="bg-slate-100 hover:bg-slate-200/70 border border-slate-300/80 dark:bg-[#1E242B] dark:border-[#2A313C] dark:hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Tablet RTK GPS Status"
       >
         <svg
@@ -185,14 +185,14 @@ const HealthBar = () => {
           <rect x="4" y="2" width="16" height="20" rx="3" />
           <line x1="12" y1="18" x2="12" y2="18.01" strokeWidth="2.5" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">TABLET</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-700 dark:text-slate-200">TABLET</span>
       </button>
 
       {/* 4. CAR */}
       <button
         type="button"
         onClick={() => setActiveTooltip(activeTooltip === 'car' ? null : 'car')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        className="bg-slate-100 hover:bg-slate-200/70 border border-slate-300/80 dark:bg-[#1E242B] dark:border-[#2A313C] dark:hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Vehicle Health & GNSS"
       >
         <svg
@@ -208,14 +208,14 @@ const HealthBar = () => {
           <circle cx="7" cy="17" r="2" />
           <circle cx="17" cy="17" r="2" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">CAR</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-700 dark:text-slate-200">CAR</span>
       </button>
 
       {/* 5. CAMERA & AI */}
       <button
         type="button"
         onClick={() => setActiveTooltip(activeTooltip === 'camera' ? null : 'camera')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        className="bg-slate-100 hover:bg-slate-200/70 border border-slate-300/80 dark:bg-[#1E242B] dark:border-[#2A313C] dark:hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Camera & AI Vision Status"
       >
         <svg
@@ -230,7 +230,7 @@ const HealthBar = () => {
           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
           <circle cx="12" cy="13" r="4" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">CAMERA & AI</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-700 dark:text-slate-200">CAMERA & AI</span>
       </button>
 
       {/* Tooltip Popovers */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
@@ -27,7 +27,6 @@ const FodCategoryAndDetail = () => {
 
   const listLengthFn = () => {
     let total = {
-      NEW: 0,
       ACCEPTED: 0,
       REJECTED: 0,
       CLEARED: 0
@@ -40,8 +39,6 @@ const FodCategoryAndDetail = () => {
         total.REJECTED++;
       } else if (ele.groupStatus === "CLEARED") {
         total.CLEARED++;
-      } else {
-        total.NEW++;
       }
     });
 
@@ -54,20 +51,14 @@ const FodCategoryAndDetail = () => {
     if (selectedList === "ACCEPTED") return `Accepted FODs (${padZero(listLength.ACCEPTED)})`;
     if (selectedList === "REJECTED") return `Rejected FODs (${padZero(listLength.REJECTED)})`;
     if (selectedList === "CLEARED") return `Cleared FODs (${padZero(listLength.CLEARED)})`;
-    if (selectedList === "NEW") return `Pending FODs (${padZero(listLength.NEW)})`;
     return "FOD List";
   };
 
-  const currentItems = fods.filter((fod) => {
-    if (selectedList === "NEW") {
-      return !fod.groupStatus || fod.groupStatus === "NEW";
-    }
-    return fod.groupStatus === selectedList;
-  });
+  const currentItems = fods.filter((fod) => fod.groupStatus === selectedList);
 
   return (
     <div
-      className={`fixed top-[52px] bottom-0 right-0 flex z-30 pointer-events-none transition-transform duration-300 ease-in-out ${
+      className={`absolute top-0 bottom-0 right-0 h-full flex z-30 pointer-events-none transition-transform duration-300 ease-in-out ${
         isSidebarVisible ? "translate-x-0" : "translate-x-[320px]"
       }`}
     >
@@ -83,22 +74,22 @@ const FodCategoryAndDetail = () => {
             dispatch(close_SideBarFodDetail());
           }}
         >
-          {/* Pending / Unreviewed */}
+          {/* Cleared FODs */}
           <button
             type="button"
-            title="Pending Review"
+            title="Cleared FODs"
             className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
-              selectedList === "NEW" ? "text-blue-400 scale-105" : "text-slate-400 hover:text-white"
+              selectedList === "CLEARED" ? "text-blue-400 scale-105" : "text-slate-400 hover:text-white"
             }`}
             onClick={(e) => {
               e.stopPropagation();
-              setList("NEW");
+              setList("CLEARED");
               dispatch(setSideBarVisibility(true));
               dispatch(close_SideBarFodDetail());
             }}
           >
             <FiThumbsUp className="w-4 h-4 stroke-[2]" />
-            <span className="text-[11px] font-mono font-bold">{padZero(listLength.NEW)}</span>
+            <span className="text-[11px] font-mono font-bold">{padZero(listLength.CLEARED)}</span>
           </button>
 
           <div className="w-5 h-[1px] bg-[#2B3542]" />

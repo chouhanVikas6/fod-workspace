@@ -228,8 +228,13 @@ const FodReducer = createSlice({
       const { payload: fodId } = action;
       state.doubleAccepted[fodId] = true;
     },
+    resetFods: (state) => {
+      state.fods = [];
+      state.fodMap = {};
+      state.doubleAccepted = {};
+    },
   },
 });
 
-export const { pushFod, syncFod, add_updateFod, accept_Fod, reject_Fod, set_ImageModal, add_ToClearedFod, undo_fod, add_FodsOnRefresh, set_SortBy, set_Class_Size, remove_Class,setDashboardStatus ,doubleAccept} = FodReducer.actions;
+export const { pushFod, syncFod, add_updateFod, accept_Fod, reject_Fod, set_ImageModal, add_ToClearedFod, undo_fod, add_FodsOnRefresh, set_SortBy, set_Class_Size, remove_Class, setDashboardStatus, doubleAccept, resetFods } = FodReducer.actions;
 export default FodReducer.reducer;

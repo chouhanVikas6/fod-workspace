@@ -1,7 +1,44 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
+const MAX_CACHE_SIZE = 120;
 const imageCache = new Map<string, string>();
+
+function cacheSet(key: string, val: string) {
+  if (imageCache.size >= MAX_CACHE_SIZE) {
+    const oldest = imageCache.keys().next().value;
+    if (oldest) imageCache.delete(oldest);
+  }
+  imageCache.set(key, val);
+}
+
+const MAX_CONCURRENT_REQUESTS = 4;
+let activeRequests = 0;
+const requestQueue: (() => void)[] = [];
+
+function enqueueImageRequest<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const execute = () => {
+      activeRequests++;
+      fn()
+        .then(resolve)
+        .catch(reject)
+        .finally(() => {
+          activeRequests--;
+          if (requestQueue.length > 0) {
+            const next = requestQueue.shift();
+            if (next) next();
+          }
+        });
+    };
+
+    if (activeRequests < MAX_CONCURRENT_REQUESTS) {
+      execute();
+    } else {
+      requestQueue.push(execute);
+    }
+  });
+}
 
 function isHexSha256(str: string): boolean {
   const clean = str.replace(/\.jpg$/i, '').trim();
@@ -29,7 +66,7 @@ function needsIpcResolution(src: unknown): src is string {
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-const Image = ({ src, alt, className, width, height, onClick, style, draggable }: any) => {
+const Image = ({ src, alt, className, width, height, onClick, style, draggable, onError, ...rest }: any) => {
   const rawSrc = src && typeof src === 'object' && 'src' in src ? src.src : src;
 
   const initialSrc = (() => {
@@ -66,10 +103,10 @@ const Image = ({ src, alt, className, width, height, onClick, style, draggable }
     }
 
     let cancelled = false;
-    invoke<string | null>('get_fod_image', { path: rawSrc })
+    enqueueImageRequest(() => invoke<string | null>('get_fod_image', { path: rawSrc }))
       .then((dataUrl) => {
         if (dataUrl) {
-          imageCache.set(rawSrc, dataUrl);
+          cacheSet(rawSrc, dataUrl);
           if (!cancelled) {
             setResolvedSrc(dataUrl);
           }
@@ -98,6 +135,8 @@ const Image = ({ src, alt, className, width, height, onClick, style, draggable }
       onClick={onClick}
       style={style}
       draggable={draggable}
+      onError={onError}
+      {...rest}
     />
   );
 };

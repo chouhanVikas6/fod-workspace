@@ -46,6 +46,12 @@ export default defineConfig(({ mode }) => ({
       ignored: [
         '**/src-tauri/**',
         '**/backend-rs/**',
+        '**/fod-images/**',
+        '**/*.db',
+        '**/*.db-*',
+        '**/*.sqlite*',
+        '**/public/images/**',
+        '**/target/**',
       ],
     },
   },

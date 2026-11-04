@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import FilterBar from "./filterBar";
 import FodDisplay from "./fodDisplay";
 import { useDispatch, useSelector } from "react-redux";
-import { syncFod } from "@/store/slices/fodReducer-slice";
+import { syncFod, resetFods } from "@/store/slices/fodReducer-slice";
 import FilteredFods from "./filteredFod";
 import { CircleLoader } from "../commen/loader";
 import { RootState } from "@/store";
@@ -17,6 +17,8 @@ const FodPanel = ({ open }) => {
 
   useEffect(() => {
     if (!missionNumber) return;
+    dispatch(resetFods());
+    setFodLoading(true);
     let disposed = false;
     let unlistenFn: (() => void) | null = null;
     const subId = `fod-panel-${missionNumber}-${Date.now()}`;
