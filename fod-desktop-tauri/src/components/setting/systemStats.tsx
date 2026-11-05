@@ -58,44 +58,58 @@ export default function SystemStats() {
   };
 
   // Helper SVG circle ring
-  const renderGaugeRing = (percent: number, strokeColor: string, label: string) => {
-    const radius = 28;
-    const circumference = 2 * Math.PI * radius;
-    const strokeDashoffset = circumference - (Math.min(100, Math.max(0, percent)) / 100) * circumference;
+// Compact SVG gauge ring
+const renderGaugeRing = (
+  percent: number,
+  strokeColor: string,
+  label: string
+) => {
+  const radius = 28;
+  const circumference = 2 * Math.PI * radius;
 
-    return (
-      <div className="relative w-18 h-18 flex items-center justify-center shrink-0">
-        <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 72 72">
-          {/* Background circle */}
-          <circle
-            cx="36"
-            cy="36"
-            r={radius}
-            className={`${isDark ? 'stroke-[#383D44]' : 'stroke-slate-200'}`}
-            strokeWidth="6"
-            fill="transparent"
-          />
-          {/* Filled progress arc */}
-          <circle
-            cx="36"
-            cy="36"
-            r={radius}
-            className="transition-all duration-700 ease-out"
-            stroke={strokeColor}
-            strokeWidth="6"
-            strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
-            strokeLinecap="round"
-            fill="transparent"
-          />
-        </svg>
-        <span className={`absolute font-bold text-xs ${isDark ? 'text-white' : 'text-slate-800'}`}>
-          {label}
-        </span>
-      </div>
-    );
-  };
+  const strokeDashoffset =
+    circumference -
+    (Math.min(100, Math.max(0, percent)) / 100) * circumference;
 
+  return (
+    <div className="relative flex h-[80px] w-[80px] shrink-0 items-center justify-center">
+      <svg
+        className="h-full w-full -rotate-90"
+        viewBox="0 0 72 72"
+      >
+        <circle
+          cx="36"
+          cy="36"
+          r={radius}
+          className={isDark ? 'stroke-[#383D44]' : 'stroke-slate-200'}
+          strokeWidth="9"
+          fill="none"
+        />
+
+        <circle
+          cx="36"
+          cy="36"
+          r={radius}
+          stroke={strokeColor}
+          strokeWidth="9"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          fill="none"
+          className="transition-all duration-700 ease-out"
+        />
+      </svg>
+
+      <span
+        className={`absolute text-sm font-semibold ${
+          isDark ? 'text-white' : 'text-slate-800'
+        }`}
+      >
+        {label}
+      </span>
+    </div>
+  );
+};
   return (
     <div className="w-full h-full flex flex-col justify-start overflow-y-auto">
       {/* Top Header Row */}
@@ -118,7 +132,7 @@ export default function SystemStats() {
               : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
           }`}
         >
-          <HiArrowPath className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#5AA7EA]' : ''}`} />
+          <HiArrowPath className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#4C9FE8]' : ''}`} />
           <span>Refresh</span>
         </button>
       </div>
@@ -158,7 +172,7 @@ export default function SystemStats() {
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
-            {renderGaugeRing(memoryPct, '#5AA7EA', `${memoryPct}%`)}
+            {renderGaugeRing(memoryPct, '#4C9FE8', `${memoryPct}%`)}
             <div>
               <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
                 Memory
@@ -178,7 +192,7 @@ export default function SystemStats() {
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
-            {renderGaugeRing(storagePct, '#5AA7EA', `${storagePct}%`)}
+            {renderGaugeRing(storagePct, '#4C9FE8', `${storagePct}%`)}
             <div>
               <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
                 Storage
@@ -235,8 +249,8 @@ export default function SystemStats() {
               <svg className="w-full h-full overflow-visible" viewBox="0 0 500 160" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="tempAreaGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#5AA7EA" stopOpacity={isDark ? 0.35 : 0.25} />
-                    <stop offset="100%" stopColor="#5AA7EA" stopOpacity="0.0" />
+                    <stop offset="0%" stopColor="#4C9FE8" stopOpacity={isDark ? 0.35 : 0.25} />
+                    <stop offset="100%" stopColor="#4C9FE8" stopOpacity="0.0" />
                   </linearGradient>
                 </defs>
 
@@ -255,7 +269,7 @@ export default function SystemStats() {
                 <path
                   d="M 0,110 L 45,98 L 90,104 L 135,82 L 180,90 L 225,72 L 270,82 L 315,62 L 360,74 L 405,56 L 450,68 L 480,61 L 500,64"
                   fill="none"
-                  stroke="#5AA7EA"
+                  stroke="#4C9FE8"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"

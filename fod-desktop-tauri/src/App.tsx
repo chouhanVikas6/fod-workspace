@@ -1,11 +1,12 @@
+import Setting from "@/components/setting/setting";
 import React, { useEffect, useState } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Provider } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
 import { store, persistor } from "@/store/index";
 import { ThemeProvider } from "@/components/theme/themeProvider";
-import { ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 import Global from "@/components/global/global";
 import ThemeApplier from "@/components/theme/themeApplier";
@@ -32,7 +33,10 @@ export default function App() {
       if (event.touches.length > 1) event.preventDefault();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && (event.key === '+' || event.key === '-' || event.key === '0')) {
+      if (
+        event.ctrlKey &&
+        (event.key === "+" || event.key === "-" || event.key === "0")
+      ) {
         event.preventDefault();
       }
     };
@@ -43,19 +47,21 @@ export default function App() {
       event.preventDefault();
     };
 
-    document.addEventListener('touchstart', handleTouchStart, { passive: false });
-    document.addEventListener('touchmove', handleTouchMove, { passive: false });
-    document.addEventListener('contextmenu', handleContextMenu);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('wheel', handleWheel);
+    document.addEventListener("touchstart", handleTouchStart, {
+      passive: false,
+    });
+    document.addEventListener("touchmove", handleTouchMove, { passive: false });
+    document.addEventListener("contextmenu", handleContextMenu);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("wheel", handleWheel);
 
     return () => {
       clearTimeout(timer);
-      document.removeEventListener('touchstart', handleTouchStart);
-      document.removeEventListener('touchmove', handleTouchMove);
-      document.removeEventListener('contextmenu', handleContextMenu);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('wheel', handleWheel);
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("contextmenu", handleContextMenu);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("wheel", handleWheel);
     };
   }, []);
 
@@ -75,18 +81,28 @@ export default function App() {
                   {/* Public route */}
                   <Route path="/login" element={<Login />} />
 
+                  {/* Temporary Settings Preview */}
+                  <Route
+                    path="/setting-preview"
+                    element={<Setting open={true} />}
+                  />
+
                   {/* Private route */}
-                  <Route 
-                    path="/dashboard" 
+                  {/* <Route
+                    path="/dashboard"
                     element={
                       <PrivateRoute authenticated={true}>
                         <MissionControl />
                       </PrivateRoute>
-                    } 
-                  />
+                    }
+                  /> */}
+                  <Route path="/dashboard" element={<MissionControl />} />
 
                   {/* Fallback routing */}
-                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                  <Route
+                    path="*"
+                    element={<Navigate to="/dashboard" replace />}
+                  />
                 </Routes>
               </HashRouter>
             </MotionTransition>

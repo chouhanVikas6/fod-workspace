@@ -91,7 +91,7 @@ const LoginInfo: React.FC = () => {
         </div>
 
         {/* Separator */}
-        <div className="h-4 w-[1px] bg-slate-200 dark:bg-[#373C43] mx-0.5" />
+        <div className="h-4 w-[1px] bg-slate-200 dark:bg-[#4A5059] mx-0.5" />
 
         {/* User profile dropdown trigger */}
         <div ref={dropdownRef} className="relative flex items-center h-full">

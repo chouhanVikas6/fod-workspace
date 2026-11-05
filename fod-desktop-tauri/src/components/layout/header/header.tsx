@@ -1,18 +1,19 @@
 import React from "react";
 import HealthBar from "./healthBar";
 import LoginInfo from "./loginInfo";
-import Zoid_logo from "@/assets/images/zoid_logo.png";
+import Zoid_logo from "@/assets/images/svg/zoid_logo.svg";
 
 const Header = () => {
   return (
-    <div className="header-native-theme relative flex items-center justify-between px-6 py-0 w-full h-full bg-[#181C23] border-b border-[#252B35] transition-colors duration-200 select-none">
+    <div className="header-native-theme relative flex items-center justify-between px-6 py-0 w-full h-full bg-[#292D33] border-b border-[#252B35] transition-colors duration-200 select-none">
       {/* Brand logo & title */}
       <div className="flex items-center h-full flex-shrink-0">
         <div className="flex items-center space-x-2.5 cursor-pointer">
           <img src={Zoid_logo} alt="ZOID Logo" className="w-6 h-6 object-contain" />
-          <p className="text-white font-serif font-bold text-lg tracking-[0.22em]">ZOID</p>
+          <p className="text-white font-serif font-bold text-lg tracking-[0.05em]">ZOID</p>
         </div>
-        <div className="h-4 w-[1px] bg-[#373C43] mx-3" />
+        <div className="h-4 w-[1px] bg-[#4A5059] mx-3" />
+          <p className="text-[#A8B0BA] font-medium text-medium tracking-[0]">Vehicle Operator Console</p>
       </div>
 
       {/* Health status & User info */}

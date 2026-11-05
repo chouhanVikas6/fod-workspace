@@ -5,13 +5,15 @@ import { useSSE } from "@/hooks/subscribeHealth";
 import { config } from "@/config/clientConfig";
 
 const HealthBar = () => {
-  useSSE('/api/sse/health-data');
+  useSSE("/api/sse/health-data");
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
-  const [selectedCam, setSelectedCam] = useState<{ index: number; data: any } | null>(null);
+  const [selectedCam, setSelectedCam] = useState<{
+    index: number;
+    data: any;
+  } | null>(null);
 
-  const { latency, availableCommunication, RtkData, carData, AiHealth } = useSelector(
-    (state: RootState) => state.SystemHealth
-  );
+  const { latency, availableCommunication, RtkData, carData, AiHealth } =
+    useSelector((state: RootState) => state.SystemHealth);
 
   // Close tooltips on outside click or escape
   useEffect(() => {
@@ -41,41 +43,46 @@ const HealthBar = () => {
   // COMM status
   const isCommConnected = Boolean(
     latency?.connected ||
-    (availableCommunication as any[])?.some((c: any) => c?.type === 'car' || c?.type?.startsWith('car'))
+    (availableCommunication as any[])?.some(
+      (c: any) => c?.type === "car" || c?.type?.startsWith("car"),
+    ),
   );
-  const commStatus = isCommConnected ? 'ok' : 'error';
+  const commStatus = isCommConnected ? "ok" : "error";
 
   // GNSS status
   const gnssStatus = useMemo(() => {
     const fix = (RtkData?.data as any)?.fix;
-    if (fix === 'RTK') return 'ok';
-    if (fix === 'GPS') return 'warning';
-    return 'error';
+    if (fix === "RTK") return "ok";
+    if (fix === "GPS") return "warning";
+    return "error";
   }, [RtkData]);
 
   // Tablet status
   const tabletStatus = useMemo(() => {
     const fix = (RtkData?.data as any)?.fix;
-    if (fix === 'RTK') return 'ok';
-    if (fix === 'GPS') return 'warning';
-    return 'error';
+    if (fix === "RTK") return "ok";
+    if (fix === "GPS") return "warning";
+    return "error";
   }, [RtkData]);
 
   // Car status
   const carStatus = useMemo(() => {
     const primaryFix = (carData?.data as any)?.primary_data?.fix;
     const secondaryFix = (carData?.data as any)?.secondary_data?.fix;
-    if (primaryFix === 'RTK' || secondaryFix === 'RTK') return 'ok';
-    if (primaryFix === 'GPS' || secondaryFix === 'GPS') return 'warning';
-    return 'error';
+    if (primaryFix === "RTK" || secondaryFix === "RTK") return "ok";
+    if (primaryFix === "GPS" || secondaryFix === "GPS") return "warning";
+    return "error";
   }, [carData]);
 
   // Camera & AI status
   const AI_THRESHOLD = 25;
   const rawHealth = AiHealth?.data;
   const healthList = useMemo(
-    () => (Array.isArray(rawHealth) ? rawHealth : Object.values(rawHealth || {})) as Array<any>,
-    [rawHealth]
+    () =>
+      (Array.isArray(rawHealth)
+        ? rawHealth
+        : Object.values(rawHealth || {})) as Array<any>,
+    [rawHealth],
   );
 
   // 26-Camera Array Mapping (from last used Camera & AI BITE dropdown)
@@ -83,7 +90,10 @@ const HealthBar = () => {
     const fixed = new Array(26).fill(null);
     healthList.forEach((h: any, idx: number) => {
       const camId = h?.CAM_ID || h?.sysid;
-      const camNum = camId && (config as any)?.cameraMap ? (config as any).cameraMap[camId] : undefined;
+      const camNum =
+        camId && (config as any)?.cameraMap
+          ? (config as any).cameraMap[camId]
+          : undefined;
       if (camNum !== undefined && camNum >= 1 && camNum <= 26) {
         fixed[camNum - 1] = h;
       } else if (idx < 26 && !fixed[idx]) {
@@ -98,15 +108,24 @@ const HealthBar = () => {
   }, [fixedHealth]);
 
   const cameraStatus = useMemo(() => {
-    if (!healthList || healthList.length === 0) return 'error';
-    const hasConnectionIssue = healthList.some(ele => !ele?.CAMERA_CONNECTION);
-    const hasLowFPSOrPause = healthList.some(ele => (ele?.INTR_FPS ?? 100) < AI_THRESHOLD || ele?.pause || ele?.PAUSE);
-    if (hasConnectionIssue) return 'error';
-    if (hasLowFPSOrPause) return 'warning';
-    return 'ok';
+    if (!healthList || healthList.length === 0) return "error";
+    const hasConnectionIssue = healthList.some(
+      (ele) => !ele?.CAMERA_CONNECTION,
+    );
+    const hasLowFPSOrPause = healthList.some(
+      (ele) =>
+        (ele?.INTR_FPS ?? 100) < AI_THRESHOLD || ele?.pause || ele?.PAUSE,
+    );
+    if (hasConnectionIssue) return "error";
+    if (hasLowFPSOrPause) return "warning";
+    return "ok";
   }, [healthList]);
 
-  const handleCameraClick = (e: React.MouseEvent, camera: any, index: number) => {
+  const handleCameraClick = (
+    e: React.MouseEvent,
+    camera: any,
+    index: number,
+  ) => {
     e.stopPropagation();
     if (selectedCam?.index === index) {
       setSelectedCam(null);
@@ -116,9 +135,9 @@ const HealthBar = () => {
   };
 
   const getStatusColor = (status: string) => {
-    if (status === 'ok') return 'text-[#01B656]';
-    if (status === 'warning') return 'text-[#F59E0B]';
-    return 'text-[#EF4444]';
+    if (status === "ok") return "text-[#01B656]";
+    if (status === "warning") return "text-[#F59E0B]";
+    return "text-[#EF4444]";
   };
 
   return (
@@ -126,8 +145,10 @@ const HealthBar = () => {
       {/* 1. COMM */}
       <button
         type="button"
-        onClick={() => setActiveTooltip(activeTooltip === 'comm' ? null : 'comm')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        onClick={() =>
+          setActiveTooltip(activeTooltip === "comm" ? null : "comm")
+        }
+        className=" hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Communication Status"
       >
         <svg
@@ -140,14 +161,19 @@ const HealthBar = () => {
           <rect x="11" y="6" width="2.5" height="11" rx="0.5" />
           <rect x="15.5" y="2" width="2.5" height="15" rx="0.5" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">COMM</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">
+          COMM
+        </span>
       </button>
+      <div className="h-4 w-[1px] bg-[#4A5059] mx-3" />
 
       {/* 2. GNSS */}
       <button
         type="button"
-        onClick={() => setActiveTooltip(activeTooltip === 'gnss' ? null : 'gnss')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        onClick={() =>
+          setActiveTooltip(activeTooltip === "gnss" ? null : "gnss")
+        }
+        className="hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="GNSS Satellites & Fix"
       >
         <svg
@@ -163,14 +189,19 @@ const HealthBar = () => {
           <line x1="2" y1="12" x2="22" y2="12" />
           <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">GNSS</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">
+          GNSS
+        </span>
       </button>
+      <div className="h-4 w-[1px] bg-[#4A5059] mx-3" />
 
       {/* 3. TABLET */}
       <button
         type="button"
-        onClick={() => setActiveTooltip(activeTooltip === 'tablet' ? null : 'tablet')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        onClick={() =>
+          setActiveTooltip(activeTooltip === "tablet" ? null : "tablet")
+        }
+        className="hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Tablet RTK GPS Status"
       >
         <svg
@@ -185,14 +216,17 @@ const HealthBar = () => {
           <rect x="4" y="2" width="16" height="20" rx="3" />
           <line x1="12" y1="18" x2="12" y2="18.01" strokeWidth="2.5" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">TABLET</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">
+          TABLET
+        </span>
       </button>
+      <div className="h-4 w-[1px] bg-[#4A5059] mx-3" />
 
       {/* 4. CAR */}
       <button
         type="button"
-        onClick={() => setActiveTooltip(activeTooltip === 'car' ? null : 'car')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        onClick={() => setActiveTooltip(activeTooltip === "car" ? null : "car")}
+        className="hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Vehicle Health & GNSS"
       >
         <svg
@@ -208,14 +242,19 @@ const HealthBar = () => {
           <circle cx="7" cy="17" r="2" />
           <circle cx="17" cy="17" r="2" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">CAR</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">
+          CAR
+        </span>
       </button>
+      <div className="h-4 w-[1px] bg-[#4A5059] mx-3" />
 
       {/* 5. CAMERA & AI */}
       <button
         type="button"
-        onClick={() => setActiveTooltip(activeTooltip === 'camera' ? null : 'camera')}
-        className="bg-[#1E242B] border border-[#2A313C] hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
+        onClick={() =>
+          setActiveTooltip(activeTooltip === "camera" ? null : "camera")
+        }
+        className="hover:border-[#3E4756] rounded-lg px-2.5 py-1.5 flex items-center space-x-2 text-xs font-semibold text-slate-200 transition-all cursor-pointer focus:outline-none"
         title="Camera & AI Vision Status"
       >
         <svg
@@ -230,121 +269,173 @@ const HealthBar = () => {
           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
           <circle cx="12" cy="13" r="4" />
         </svg>
-        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">CAMERA & AI</span>
+        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-200">
+          CAMERA & AI
+        </span>
       </button>
 
       {/* Tooltip Popovers */}
       {/* COMM tooltip */}
-      {activeTooltip === 'comm' && (
+      {activeTooltip === "comm" && (
         <div className="absolute top-full right-0 mt-3 p-4 bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-xl shadow-2xl z-[100] text-xs text-slate-700 dark:text-slate-200 w-64 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="font-bold text-sm text-slate-900 dark:text-white mb-2 pb-1 border-b border-slate-200 dark:border-[#373C43] flex items-center justify-between">
             <span>Communication Status</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isCommConnected ? 'bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50' : 'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60'}`}>
-              {isCommConnected ? 'Connected' : 'Offline'}
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isCommConnected ? "bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50" : "bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60"}`}
+            >
+              {isCommConnected ? "Connected" : "Offline"}
             </span>
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Ping / Latency:</span>
-              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">{latency?.ping != null ? `${latency.ping} ms` : '—'}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Ping / Latency:
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                {latency?.ping != null ? `${latency.ping} ms` : "—"}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Available nodes:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">{(availableCommunication as any[])?.length || 0}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Available nodes:
+              </span>
+              <span className="font-mono text-slate-700 dark:text-slate-300">
+                {(availableCommunication as any[])?.length || 0}
+              </span>
             </div>
           </div>
         </div>
       )}
 
       {/* GNSS tooltip */}
-      {activeTooltip === 'gnss' && (
+      {activeTooltip === "gnss" && (
         <div className="absolute top-full right-0 mt-3 p-4 bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-xl shadow-2xl z-[100] text-xs text-slate-700 dark:text-slate-200 w-64 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="font-bold text-sm text-slate-900 dark:text-white mb-2 pb-1 border-b border-slate-200 dark:border-[#373C43] flex items-center justify-between">
             <span>GNSS Status</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${gnssStatus === 'ok' ? 'bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50' : gnssStatus === 'warning' ? 'bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60' : 'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60'}`}>
-              {(RtkData?.data as any)?.fix || 'NO FIX'}
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${gnssStatus === "ok" ? "bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50" : gnssStatus === "warning" ? "bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60" : "bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60"}`}
+            >
+              {(RtkData?.data as any)?.fix || "NO FIX"}
             </span>
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Tablet Fix:</span>
-              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">{(RtkData?.data as any)?.fix || 'None'}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Tablet Fix:
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                {(RtkData?.data as any)?.fix || "None"}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Satellites:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">{(RtkData?.data as any)?.satellites ?? '—'}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Satellites:
+              </span>
+              <span className="font-mono text-slate-700 dark:text-slate-300">
+                {(RtkData?.data as any)?.satellites ?? "—"}
+              </span>
             </div>
           </div>
         </div>
       )}
 
       {/* TABLET tooltip */}
-      {activeTooltip === 'tablet' && (
+      {activeTooltip === "tablet" && (
         <div className="absolute top-full right-0 mt-3 p-4 bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-xl shadow-2xl z-[100] text-xs text-slate-700 dark:text-slate-200 w-64 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="font-bold text-sm text-slate-900 dark:text-white mb-2 pb-1 border-b border-slate-200 dark:border-[#373C43] flex items-center justify-between">
             <span>Tablet RTK Receiver</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${tabletStatus === 'ok' ? 'bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50' : tabletStatus === 'warning' ? 'bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60' : 'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60'}`}>
-              {(RtkData?.data as any)?.fix || 'NO FIX'}
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${tabletStatus === "ok" ? "bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50" : tabletStatus === "warning" ? "bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60" : "bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60"}`}
+            >
+              {(RtkData?.data as any)?.fix || "NO FIX"}
             </span>
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Position Accuracy:</span>
-              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">{(RtkData?.data as any)?.accuracy ? `${(RtkData?.data as any)?.accuracy} m` : '—'}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Position Accuracy:
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                {(RtkData?.data as any)?.accuracy
+                  ? `${(RtkData?.data as any)?.accuracy} m`
+                  : "—"}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-[#8C939C]">HDOP:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">{(RtkData?.data as any)?.hdop ?? '—'}</span>
+              <span className="font-mono text-slate-700 dark:text-slate-300">
+                {(RtkData?.data as any)?.hdop ?? "—"}
+              </span>
             </div>
           </div>
         </div>
       )}
 
       {/* CAR tooltip */}
-      {activeTooltip === 'car' && (
+      {activeTooltip === "car" && (
         <div className="absolute top-full right-0 mt-3 p-4 bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-xl shadow-2xl z-[100] text-xs text-slate-700 dark:text-slate-200 w-72 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="font-bold text-sm text-slate-900 dark:text-white mb-2 pb-1 border-b border-slate-200 dark:border-[#373C43] flex items-center justify-between">
             <span>Vehicle Telemetry</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${carStatus === 'ok' ? 'bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50' : carStatus === 'warning' ? 'bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60' : 'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60'}`}>
-              {(carData?.data as any)?.primary_data?.fix || 'OFFLINE'}
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${carStatus === "ok" ? "bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50" : carStatus === "warning" ? "bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60" : "bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60"}`}
+            >
+              {(carData?.data as any)?.primary_data?.fix || "OFFLINE"}
             </span>
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Primary Fix:</span>
-              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">{(carData?.data as any)?.primary_data?.fix || 'None'}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Primary Fix:
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                {(carData?.data as any)?.primary_data?.fix || "None"}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">Secondary Fix:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">{(carData?.data as any)?.secondary_data?.fix || 'None'}</span>
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Secondary Fix:
+              </span>
+              <span className="font-mono text-slate-700 dark:text-slate-300">
+                {(carData?.data as any)?.secondary_data?.fix || "None"}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-[#8C939C]">Speed:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">{(carData?.data as any)?.speed != null ? `${(carData?.data as any).speed} km/h` : '—'}</span>
+              <span className="font-mono text-slate-700 dark:text-slate-300">
+                {(carData?.data as any)?.speed != null
+                  ? `${(carData?.data as any).speed} km/h`
+                  : "—"}
+              </span>
             </div>
           </div>
         </div>
       )}
 
       {/* 5. CAMERA & AI Dropdown (Last Used 26-Camera Array Grid from CamerasInfo) */}
-      {activeTooltip === 'camera' && (
-        <div 
+      {activeTooltip === "camera" && (
+        <div
           onClick={(e) => e.stopPropagation()}
           className="absolute top-full right-0 mt-3 w-[330px] bg-white dark:bg-[#292D33] border border-slate-200 dark:border-[#373C43] rounded-2xl shadow-2xl p-4 z-[100] cursor-default animate-in fade-in slide-in-from-top-2 duration-150 select-none"
         >
           {/* Header */}
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-[#373C43]">
             <div>
-              <h4 className="text-xs font-bold text-slate-900 dark:text-white tracking-tight">Camera & Vision BITE</h4>
-              <p className="text-[11px] text-slate-500 dark:text-[#8C939C]">26-Camera Array Status</p>
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white tracking-tight">
+                Camera & Vision BITE
+              </h4>
+              <p className="text-[11px] text-slate-500 dark:text-[#8C939C]">
+                26-Camera Array Status
+              </p>
             </div>
-            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-              onlineCount === 26 
-                ? 'bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50'
-                : onlineCount > 0 
-                  ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50'
-                  : 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/50'
-            }`}>
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                onlineCount === 26
+                  ? "bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50"
+                  : onlineCount > 0
+                    ? "bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50"
+                    : "bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/50"
+              }`}
+            >
               {onlineCount}/26 Online
             </span>
           </div>
@@ -357,20 +448,25 @@ const HealthBar = () => {
               const hasLowFPS = (e?.INTR_FPS ?? 100) < AI_THRESHOLD;
               const isConnected = Boolean(e && e.CAMERA_CONNECTION);
 
-              let badgeBg = 'bg-slate-100 dark:bg-[#22262B] text-slate-500 dark:text-[#8C939C] hover:bg-slate-200 dark:hover:bg-[#373C43]';
-              let statusDesc = 'No Signal / Unconfigured';
+              let badgeBg =
+                "bg-slate-100 dark:bg-[#22262B] text-slate-500 dark:text-[#8C939C] hover:bg-slate-200 dark:hover:bg-[#373C43]";
+              let statusDesc = "No Signal / Unconfigured";
               if (e) {
                 if (!isConnected) {
-                  badgeBg = 'bg-rose-500 text-white hover:bg-rose-600 shadow-sm shadow-rose-500/30';
-                  statusDesc = 'Disconnected';
+                  badgeBg =
+                    "bg-rose-500 text-white hover:bg-rose-600 shadow-sm shadow-rose-500/30";
+                  statusDesc = "Disconnected";
                 } else if (isPaused) {
-                  badgeBg = 'bg-amber-400 text-slate-900 hover:bg-amber-500 shadow-sm shadow-amber-400/30';
-                  statusDesc = 'Paused';
+                  badgeBg =
+                    "bg-amber-400 text-slate-900 hover:bg-amber-500 shadow-sm shadow-amber-400/30";
+                  statusDesc = "Paused";
                 } else if (hasLowFPS) {
-                  badgeBg = 'bg-amber-400 text-slate-900 hover:bg-amber-500 shadow-sm shadow-amber-400/30';
+                  badgeBg =
+                    "bg-amber-400 text-slate-900 hover:bg-amber-500 shadow-sm shadow-amber-400/30";
                   statusDesc = `Low FPS (${fps})`;
                 } else {
-                  badgeBg = 'bg-[#01B656] text-white hover:bg-[#009E48] shadow-sm shadow-[#01B656]/30';
+                  badgeBg =
+                    "bg-[#01B656] text-white hover:bg-[#009E48] shadow-sm shadow-[#01B656]/30";
                   statusDesc = `Normal (${fps} FPS)`;
                 }
               }
@@ -384,7 +480,9 @@ const HealthBar = () => {
                   onClick={(ev) => handleCameraClick(ev, e, index)}
                   title={`Camera #${index + 1}: ${statusDesc}`}
                   className={`w-8 h-8 rounded-lg flex items-center justify-center font-mono text-xs font-bold transition-all duration-150 active:scale-95 ${badgeBg} ${
-                    isSelected ? 'ring-2 ring-[#4C9FE8] ring-offset-2 ring-offset-white dark:ring-offset-[#292D33] scale-110 z-10' : ''
+                    isSelected
+                      ? "ring-2 ring-[#4C9FE8] ring-offset-2 ring-offset-white dark:ring-offset-[#292D33] scale-110 z-10"
+                      : ""
                   }`}
                 >
                   {index + 1}
@@ -400,25 +498,35 @@ const HealthBar = () => {
                 <span className="font-bold text-xs text-slate-900 dark:text-white">
                   Camera #{selectedCam.index + 1}
                 </span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  selectedCam.data?.CAMERA_CONNECTION 
-                    ? 'bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50' 
-                    : 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/50'
-                }`}>
-                  {selectedCam.data?.CAMERA_CONNECTION ? 'CONNECTED' : 'DISCONNECTED'}
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    selectedCam.data?.CAMERA_CONNECTION
+                      ? "bg-[#01B656]/20 text-[#01B656] border border-[#01B656]/50"
+                      : "bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/50"
+                  }`}
+                >
+                  {selectedCam.data?.CAMERA_CONNECTION
+                    ? "CONNECTED"
+                    : "DISCONNECTED"}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-600 dark:text-slate-300">
                 <div>
-                  <span className="text-slate-500 dark:text-[#8C939C]">CAM ID: </span>
+                  <span className="text-slate-500 dark:text-[#8C939C]">
+                    CAM ID:{" "}
+                  </span>
                   <span className="font-mono font-semibold text-slate-900 dark:text-white">
-                    {selectedCam.data?.CAM_ID || selectedCam.data?.sysid || `CAM-${selectedCam.index + 1}`}
+                    {selectedCam.data?.CAM_ID ||
+                      selectedCam.data?.sysid ||
+                      `CAM-${selectedCam.index + 1}`}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-500 dark:text-[#8C939C]">FPS: </span>
+                  <span className="text-slate-500 dark:text-[#8C939C]">
+                    FPS:{" "}
+                  </span>
                   <span className="font-mono font-semibold text-slate-900 dark:text-white">
-                    {selectedCam.data?.INTR_FPS ?? '—'}
+                    {selectedCam.data?.INTR_FPS ?? "—"}
                   </span>
                 </div>
               </div>

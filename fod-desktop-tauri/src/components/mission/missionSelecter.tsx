@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { start_Mission } from "@/store/slices/missionState-slice";
 import RestPath from "@/constants/apiPaths";
 import { CircleLoader } from "../commen/loader";
-import Zoid_logo from "@/assets/images/zoid_logo.png";
+import zoidLogo from "@/assets/images/svg/zoid_logo.svg";
 import MissionTemplate from "./missionTemplate";
 import MissionExplore from "./missionExplore";
 import MissionCard from "./missionCard";
@@ -138,7 +138,7 @@ const MissionSelector = () => {
                         {/* Centered Logo & Brand Info */}
                         <div className="flex flex-col items-center justify-center text-center -mt-6">
                             <img
-                                src={Zoid_logo}
+                                src={zoidLogo}
                                 alt="ZOID Logo"
                                 className="w-16 h-16 object-contain mb-3"
                             />

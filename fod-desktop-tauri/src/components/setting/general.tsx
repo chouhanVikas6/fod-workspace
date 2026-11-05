@@ -140,7 +140,7 @@ export default function General() {
                   className={`flex flex-col items-center p-2.5 rounded-lg border transition-all cursor-pointer ${
                     theme === 'light'
                       ? isDark
-                        ? 'border-[#5AA7EA] bg-[#31475D]'
+                        ? 'border-[#4C9FE8] bg-[#31475D]'
                         : 'border-blue-500 bg-blue-50/70 ring-1 ring-blue-500'
                       : isDark
                       ? 'border-[#383D44] bg-[#292D33] hover:border-[#4B525C]'
@@ -160,7 +160,7 @@ export default function General() {
                   className={`flex flex-col items-center p-2.5 rounded-lg border transition-all cursor-pointer ${
                     theme === 'dark'
                       ? isDark
-                        ? 'border-[#5AA7EA] bg-[#31475D]'
+                        ? 'border-[#4C9FE8] bg-[#31475D]'
                         : 'border-blue-500 bg-blue-50/70 ring-1 ring-blue-500'
                       : isDark
                       ? 'border-[#383D44] bg-[#292D33] hover:border-[#4B525C]'
@@ -299,7 +299,7 @@ export default function General() {
                   onChange={(e) => updateSetting('alertDisplay', e.target.value)}
                   className={`w-40 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
                     isDark
-                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#4C9FE8]'
                       : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
                   }`}
                 >
@@ -361,7 +361,7 @@ export default function General() {
                   value={settings.masterVolume}
                   disabled={!settings.soundEnabled}
                   onChange={(e) => updateSetting('masterVolume', parseInt(e.target.value))}
-                  className={`flex-1 accent-[#5AA7EA] h-1.5 rounded-lg cursor-pointer disabled:opacity-40 ${
+                  className={`flex-1 accent-[#4C9FE8] h-1.5 rounded-lg cursor-pointer disabled:opacity-40 ${
                     isDark ? 'bg-[#454B53]' : 'bg-slate-200'
                   }`}
                 />
@@ -378,7 +378,7 @@ export default function General() {
                   onChange={(e) => updateSetting('alertTone', e.target.value)}
                   className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
                     isDark
-                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#4C9FE8]'
                       : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
                   }`}
                 >
@@ -391,7 +391,7 @@ export default function General() {
                 <button
                   type="button"
                   onClick={playTestSound}
-                  className="px-3.5 py-1.5 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer shrink-0"
+                  className="px-3.5 py-1.5 rounded-lg bg-[#4C9FE8] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer shrink-0"
                 >
                   Test sound
                 </button>
@@ -426,7 +426,7 @@ export default function General() {
                   onChange={(e) => dispatch(setLanguage(e.target.value))}
                   className={`w-44 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
                     isDark
-                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#4C9FE8]'
                       : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
                   }`}
                 >
@@ -446,7 +446,7 @@ export default function General() {
                   onChange={(e) => updateSetting('dateFormat', e.target.value)}
                   className={`w-44 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
                     isDark
-                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                      ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#4C9FE8]'
                       : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
                   }`}
                 >
@@ -466,7 +466,7 @@ export default function General() {
                     onClick={() => updateSetting('timeFormat', '12h')}
                     className={`px-3 py-1 text-xs font-semibold transition cursor-pointer ${
                       settings.timeFormat === '12h'
-                        ? 'bg-[#5AA7EA] text-white'
+                        ? 'bg-[#4C9FE8] text-white'
                         : isDark
                         ? 'text-slate-300 hover:text-white'
                         : 'text-slate-600 hover:text-slate-900'
@@ -479,7 +479,7 @@ export default function General() {
                     onClick={() => updateSetting('timeFormat', '24h')}
                     className={`px-3 py-1 text-xs font-semibold transition cursor-pointer ${
                       settings.timeFormat === '24h'
-                        ? 'bg-[#5AA7EA] text-white'
+                        ? 'bg-[#4C9FE8] text-white'
                         : isDark
                         ? 'text-slate-300 hover:text-white'
                         : 'text-slate-600 hover:text-slate-900'
@@ -510,7 +510,7 @@ export default function General() {
         <button
           type="button"
           onClick={handleSave}
-          className="px-4 py-2 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs active:scale-95 transition cursor-pointer"
+          className="px-4 py-2 rounded-lg bg-[#4C9FE8] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs active:scale-95 transition cursor-pointer"
         >
           Save Changes
         </button>
