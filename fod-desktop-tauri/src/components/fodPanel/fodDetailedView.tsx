@@ -16,6 +16,9 @@ import { doubleAccept } from "@/store/slices/fodReducer-slice";
 import { toast } from "react-toastify";
 import { config } from "@/config/clientConfig";
 
+const EMPTY_FODS: any[] = [];
+const EMPTY_DOUBLE_ACCEPTED: Record<string, any> = {};
+
 const DetailedView = () => {
     const dispatch = useDispatch<AppDispatch>();
     const missionState = useSelector((store: RootState) => store.MissionState);
@@ -27,7 +30,8 @@ const DetailedView = () => {
     const [isAcceptDisabled, setAcceptButtonStatus] = useState(false);
     const [isRejectDisabled, setRejectButtonStatus] = useState(false);
     const { isOpen, isFilteredFod, fod } = useSelector((state: RootState) => state.FodDetailedView);
-    const { fods: alertQueue, doubleAccepted } = useSelector((state: RootState) => state.FodReducer);
+    const alertQueue = useSelector((state: RootState) => (isOpen ? state.FodReducer.fods : EMPTY_FODS));
+    const doubleAccepted = useSelector((state: RootState) => (isOpen ? state.FodReducer.doubleAccepted : EMPTY_DOUBLE_ACCEPTED));
     const filters = useSelector((state: RootState) => state.FodReducer.filters);
 
     const getFrames = (fodItem: any) => {

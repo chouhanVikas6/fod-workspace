@@ -256,8 +256,10 @@ AND (
     OR (fg."updatedAt" = $2 AND fg."groupId" > $3)
 )
 ORDER BY fg."updatedAt" ASC, fg."groupId" ASC
-LIMIT 500
+LIMIT 2500
 "#;
+
+const RETRIVE_BATCH_SIZE: usize = 2500;
 
 struct RetriveState {
     last_updated_at: chrono::NaiveDateTime,
@@ -300,7 +302,14 @@ pub async fn start_retrive_ipc_stream(state: AppState, sub_id: String, mission_i
     let state_clone = state.clone();
     let handle = tokio::spawn(async move {
         let mut st = RetriveState::new();
-        send_data_ipc(&state_clone, &event_name, mission_id, &mut st).await;
+        // Rapidly drain initial pages (up to 25k FODs in 2500-row batches with 40ms yield)
+        loop {
+            let count = send_data_ipc(&state_clone, &event_name, mission_id, &mut st).await;
+            if count < RETRIVE_BATCH_SIZE || st.polling_stopped {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
 
         let start = tokio::time::Instant::now();
         let mut poll =
@@ -329,7 +338,7 @@ async fn send_data_ipc(
     event_name: &str,
     mission_id: Option<i64>,
     st: &mut RetriveState,
-) {
+) -> usize {
     let rows = match query_rows(state, mission_id, st.last_updated_at, st.last_group_id).await {
         Ok(rows) => rows,
         Err(e) => {
@@ -341,7 +350,7 @@ async fn send_data_ipc(
                     "data": { "error": "Failed to fetch data" }
                 }),
             );
-            return;
+            return 0;
         }
     };
 
@@ -355,7 +364,7 @@ async fn send_data_ipc(
                     "data": []
                 }),
             );
-            return;
+            return 0;
         }
         if st.data_has_been_sent
             && st.last_activity.elapsed() > Duration::from_secs(5 * 60)
@@ -364,9 +373,10 @@ async fn send_data_ipc(
             tracing::info!("[IPC retrive-data] Inactivity timeout reached, stopping polling.");
             st.polling_stopped = true;
         }
-        return;
+        return 0;
     }
 
+    let row_count = rows.len();
     st.last_activity = Instant::now();
     st.data_has_been_sent = true;
 
@@ -388,6 +398,7 @@ async fn send_data_ipc(
             "data": rows
         }),
     );
+    row_count
 }
 
 pub async fn retrive_data(

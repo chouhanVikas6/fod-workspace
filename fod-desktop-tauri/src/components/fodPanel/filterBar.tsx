@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useSelector, useDispatch } from 'react-redux';
 import InputRange from 'react-input-slider';
 import { config } from "@/config/clientConfig";
@@ -53,8 +53,16 @@ const FodStatusTabs = () => {
     const { groupStatus } = useSelector((state: RootState) => state.FodReducer.filters);
     const fods = useSelector((state: RootState) => state.FodReducer.fods);
 
-    const foundCount = fods.filter((f) => f.groupStatus === 'NEW').length;
-    const acceptedCount = fods.filter((f) => f.groupStatus === 'ACCEPTED' || f.groupStatus === 'CLEARED').length;
+    const { foundCount, acceptedCount } = useMemo(() => {
+        let found = 0;
+        let accepted = 0;
+        for (let i = 0; i < fods.length; i++) {
+            const st = fods[i].groupStatus;
+            if (st === 'NEW') found++;
+            else if (st === 'ACCEPTED' || st === 'CLEARED') accepted++;
+        }
+        return { foundCount: found, acceptedCount: accepted };
+    }, [fods]);
     const isFoundActive = groupStatus === 'NEW' || !groupStatus;
 
     return (

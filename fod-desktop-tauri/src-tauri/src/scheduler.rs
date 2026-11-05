@@ -351,7 +351,30 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+static SYNC_FOD_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+struct SyncFodGuard;
+impl Drop for SyncFodGuard {
+    fn drop(&mut self) {
+        SYNC_FOD_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
+    if SYNC_FOD_IN_FLIGHT
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::Acquire,
+            std::sync::atomic::Ordering::Relaxed,
+        )
+        .is_err()
+    {
+        return Ok(());
+    }
+    let _guard = SyncFodGuard;
+
     let groups = sqlx::query_as::<_, FodGroup>(r#"SELECT * FROM "FodGroup" WHERE "missionId" = $1"#)
         .bind(mission_id)
         .fetch_all(&state.db)

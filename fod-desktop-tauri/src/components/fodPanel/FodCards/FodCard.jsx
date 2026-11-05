@@ -13,9 +13,10 @@ import { accept_Fod, doubleAccept, reject_Fod } from '../../../store/slices/fodR
 import axiosClient from '@/utils/axios';
 import { toast } from 'react-toastify';
 
-const Fodcard = ({ fod, handleDetailViewRequest }) => {
+const Fodcard = ({ fod, missionNumber: propMissionNumber, handleDetailViewRequest }) => {
   const dispatch = useDispatch();
-  const missionNumber = useSelector((store) => store.MissionState?.missionNumber);
+  const storeMissionNumber = useSelector((store) => (propMissionNumber !== undefined ? propMissionNumber : store.MissionState?.missionNumber));
+  const missionNumber = propMissionNumber ?? storeMissionNumber;
   const { FodSize } = config.FodCard;
   const [fade, setFade] = useState(false);
   const [imgModal, setImageModal] = useState(false);
@@ -50,11 +51,18 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
 
   const getLocationDisplay = () => {
     if (fod?.grid) return `Grid ${fod.grid}`;
-    if (fod?.location) {
+    const loc = fod?._loc ?? (typeof fod?.location === 'object' ? fod.location : null);
+    if (loc) {
+      if (loc.grid) return `Grid ${loc.grid}`;
+      if (typeof loc.lat === 'number' && typeof loc.lon === 'number') {
+        return `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}`;
+      }
+    }
+    if (typeof fod?.location === 'string') {
       try {
-        const loc = typeof fod.location === 'string' ? JSON.parse(fod.location) : fod.location;
-        if (loc?.grid) return `Grid ${loc.grid}`;
-        if (loc?.lat && loc?.lon) return `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}`;
+        const parsed = JSON.parse(fod.location);
+        if (parsed?.grid) return `Grid ${parsed.grid}`;
+        if (parsed?.lat && parsed?.lon) return `${parsed.lat.toFixed(4)}, ${parsed.lon.toFixed(4)}`;
       } catch (e) {
         // ignore
       }

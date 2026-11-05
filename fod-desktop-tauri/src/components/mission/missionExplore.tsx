@@ -101,16 +101,40 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         if (!selectedMission) return;
         let disposed = false;
         let unlistenFn: (() => void) | null = null;
+        let rafId: number | null = null;
+        const pendingRows: any[] = [];
         const subId = `mission-explore-${selectedMission.id}-${Date.now()}`;
         setFodList([]);
         setDisplayLimit(60);
+
+        const flushRows = () => {
+            rafId = null;
+            if (disposed || pendingRows.length === 0) return;
+            const batch = pendingRows.splice(0, 2500);
+            React.startTransition(() => {
+                setFodList((prvs) => {
+                    const maxLimit = config?.FodListsLimit ?? 25000;
+                    if (prvs.length >= maxLimit) return prvs;
+                    return [...prvs, ...batch].slice(0, maxLimit);
+                });
+            });
+            if (pendingRows.length > 0 && !disposed) {
+                rafId = window.requestAnimationFrame(flushRows);
+            }
+        };
 
         function getRealtimeData(data: any) {
             if (disposed) return;
             try {
                 const rows = typeof data === "string" ? JSON.parse(data) : data;
                 if (Array.isArray(rows) && rows.length > 0) {
-                    setFodList((prvs) => [...prvs, ...rows]);
+                    const maxLimit = config?.FodListsLimit ?? 25000;
+                    if (pendingRows.length < maxLimit) {
+                        pendingRows.push(...rows);
+                    }
+                    if (rafId === null) {
+                        rafId = window.requestAnimationFrame(flushRows);
+                    }
                 }
             } catch (err) {
                 console.error("Failed to parse IPC retrive-data:", err);
@@ -140,6 +164,10 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
 
         return () => {
             disposed = true;
+            pendingRows.length = 0;
+            if (rafId !== null) {
+                window.cancelAnimationFrame(rafId);
+            }
             if (unlistenFn) {
                 unlistenFn();
             }

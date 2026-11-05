@@ -1,18 +1,25 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import Fodcard from "./FodCards/FodCard";
 import { FiltersCheck, sortByFilter } from "../../utils/FiltersCheck";
 import { updateDetailViewFod } from "../../store/actions/FodDetailedView";
 import { RootState, AppDispatch } from "@/store";
 
+const DRAWER_PAGE_SIZE = 60;
+
 const FilteredFods = () => {
   const dispatch = useDispatch<AppDispatch>();
   const [isVisible, setIsVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<'filtered' | 'unfiltered'>('filtered');
+  const [renderLimit, setRenderLimit] = useState(DRAWER_PAGE_SIZE);
   const startYRef = useRef<number | null>(null);
-  const alertQueue = useSelector((state:RootState)  => state.FodReducer.fods);
-  const {filters,doubleAccepted} = useSelector((state:RootState)  => state.FodReducer);
-  const { groupStatus } = useSelector((state:RootState) => state.FodReducer.filters);
+  const alertQueue = useSelector((state: RootState) => state.FodReducer.fods);
+  const filters = useSelector((state: RootState) => state.FodReducer.filters);
+  const doubleAccepted = useSelector((state: RootState) => state.FodReducer.doubleAccepted);
+  const missionNumber = useSelector((state: RootState) => state.MissionState?.missionNumber);
+  const deferredQueue = useDeferredValue(alertQueue);
+  const deferredFilters = useDeferredValue(filters);
+
   const handleDetailViewRequest = React.useCallback(
     (fod: any) => {
       dispatch(updateDetailViewFod(fod, true));
@@ -74,29 +81,53 @@ const FilteredFods = () => {
     };
   }, [isVisible]);
 
-  const toggleVisibility = () => {
-    setIsVisible((prevState) => !prevState);
-  };
+  const activeStatus = deferredFilters.groupStatus || "NEW";
 
-  const activeStatus = groupStatus || "NEW";
+  // Single O(N) pass to compute counts without sorting when drawer is closed
+  const { excludedCount, passingCount } = useMemo(() => {
+    let excluded = 0;
+    let passing = 0;
+    for (let i = 0; i < deferredQueue.length; i++) {
+      const fod = deferredQueue[i];
+      if (fod.groupStatus !== activeStatus) continue;
+      if (Object.prototype.hasOwnProperty.call(doubleAccepted, fod.groupId)) continue;
+      if (FiltersCheck(fod, deferredFilters)) {
+        passing++;
+      } else {
+        excluded++;
+      }
+    }
+    return { excludedCount: excluded, passingCount: passing };
+  }, [deferredQueue, activeStatus, deferredFilters, doubleAccepted]);
 
-  // "Filtered" = FODs excluded from the main grid by the active class/size
-  // filter (still reviewable here). "Unfiltered" = the passing set.
-  const excludedFods = sortByFilter(
-    filters,
-    alertQueue.filter((fod) => fod.groupStatus === activeStatus && !FiltersCheck(fod, filters) && !doubleAccepted.hasOwnProperty(fod.groupId))
-  ) || [];
-  const passingFods = sortByFilter(
-    filters,
-    alertQueue.filter((fod) => fod.groupStatus === activeStatus && FiltersCheck(fod, filters) && !doubleAccepted.hasOwnProperty(fod.groupId))
-  ) || [];
+  // Only filter and sort the active tab's FOD list when the bottom drawer is actually open
+  const shownFods = useMemo(() => {
+    if (!isVisible) return [];
+    const wantPassing = activeTab === 'unfiltered';
+    const matching: any[] = [];
+    for (let i = 0; i < deferredQueue.length; i++) {
+      const fod = deferredQueue[i];
+      if (fod.groupStatus !== activeStatus) continue;
+      if (Object.prototype.hasOwnProperty.call(doubleAccepted, fod.groupId)) continue;
+      if (Boolean(FiltersCheck(fod, deferredFilters)) === wantPassing) {
+        matching.push(fod);
+      }
+    }
+    return sortByFilter(deferredFilters, matching) || [];
+  }, [isVisible, activeTab, deferredQueue, activeStatus, deferredFilters, doubleAccepted]);
 
   const openTab = (tab: 'filtered' | 'unfiltered') => {
     setActiveTab(tab);
+    setRenderLimit(DRAWER_PAGE_SIZE);
     setIsVisible(true);
   };
 
-  const shownFods = activeTab === 'filtered' ? excludedFods : passingFods;
+  const handleHorizontalScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 400) {
+      setRenderLimit((prev) => (prev < shownFods.length ? prev + DRAWER_PAGE_SIZE : prev));
+    }
+  };
 
   return (
     <div className={`fixed w-[100%] transition-all duration-300 bottom-[-1px] z-20 overflow-hidden pointer-events-none`}>
@@ -109,7 +140,7 @@ const FilteredFods = () => {
           }`}
           onClick={() => openTab('filtered')}
         >
-          Filtered FOD ({excludedFods.length})
+          Filtered FOD ({excludedCount})
         </div>
         <div
           className={`h-8 px-5 rounded-tr-xl flex justify-center items-center text-xs font-bold uppercase tracking-wider cursor-pointer transition-all border-t border-r border-l ${
@@ -119,7 +150,7 @@ const FilteredFods = () => {
           }`}
           onClick={() => openTab('unfiltered')}
         >
-          Unfiltered ({passingFods.length})
+          Unfiltered ({passingCount})
         </div>
       </div>
       {isVisible && (
@@ -135,14 +166,22 @@ const FilteredFods = () => {
               ✕
             </button>
           </div>
-          <div className="filtered_fods_list flex px-4 h-[375px] gap-4 items-center overflow-x-auto overflow-y-hidden">
+          <div
+            onScroll={handleHorizontalScroll}
+            className="filtered_fods_list flex px-4 h-[375px] gap-4 items-center overflow-x-auto overflow-y-hidden"
+          >
             {shownFods.length === 0 ? (
               <div className="w-full text-center text-xs font-medium text-slate-500">
                 No FODs in this tab
               </div>
             ) : (
-              shownFods.slice(0, 80).map((fod, index) => (
-                <Fodcard key={fod.id ?? index} fod={fod} handleDetailViewRequest={handleDetailViewRequest} />
+              shownFods.slice(0, renderLimit).map((fod, index) => (
+                <Fodcard
+                  key={fod.id ?? index}
+                  fod={fod}
+                  missionNumber={missionNumber}
+                  handleDetailViewRequest={handleDetailViewRequest}
+                />
               ))
             )}
           </div>

@@ -20,39 +20,47 @@ export const FiltersCheck = (fod, filters) => {
     return classExists && sizeInRange;
 };
 
+const getTimestampMs = (fod) => {
+    if (typeof fod._ts === 'number') return fod._ts;
+    if (typeof fod.timestamp === 'number') return fod.timestamp;
+    return fod.timestamp ? Date.parse(fod.timestamp) || 0 : 0;
+};
+
 export const sortByFilter = (filters, fods, currentLocation = null) => {
+    if (!fods || fods.length === 0) return [];
     const { sortby } = filters;
     // Never mutate the source array (Redux state / memoised list).
-    const list = [...(fods || [])];
-    let sortingFunction;
+    const list = fods.slice();
+    if (list.length <= 1) return list;
+
     switch (sortby) {
         case 'latest':
-            sortingFunction = (a, b) => (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0);
-            break;
+            return list.sort((a, b) => {
+                const diff = getTimestampMs(b) - getTimestampMs(a);
+                return diff !== 0 ? diff : (b.groupId || 0) - (a.groupId || 0);
+            });
         case 'oldest':
-            sortingFunction = (a, b) => (Date.parse(a.timestamp) || 0) - (Date.parse(b.timestamp) || 0);
-            break;
+            return list.sort((a, b) => {
+                const diff = getTimestampMs(a) - getTimestampMs(b);
+                return diff !== 0 ? diff : (a.groupId || 0) - (b.groupId || 0);
+            });
         case 'biggestTosmallest':
-            sortingFunction = (a, b) => b.size - a.size;
-            break;
+            return list.sort((a, b) => (b.size || 0) - (a.size || 0));
         case 'smallestTobiggest':
-            sortingFunction = (a, b) => a.size - b.size;
-            break;
-        case 'nearestFirst':
+            return list.sort((a, b) => (a.size || 0) - (b.size || 0));
+        case 'nearestFirst': {
             if (!currentLocation) {
                 return list; // no self location -> leave order untouched
             }
-            sortingFunction = (a, b) => {
-                const distanceA = distanceBwCollectorAndFod(a, currentLocation);
-                const distanceB = distanceBwCollectorAndFod(b, currentLocation);
-                // Invalid distances (empty string) sort to the end.
-                const da = typeof distanceA === 'number' ? distanceA : Infinity;
-                const db = typeof distanceB === 'number' ? distanceB : Infinity;
-                return da - db; // ascending -> nearest first
-            };
-            break;
+            // Compute distance once per item (O(N)) instead of O(N log N) inside comparator
+            const withDist = list.map((item) => {
+                const d = distanceBwCollectorAndFod(item, currentLocation);
+                return { item, d: typeof d === 'number' ? d : Infinity };
+            });
+            withDist.sort((a, b) => a.d - b.d);
+            return withDist.map((entry) => entry.item);
+        }
         default:
             return list;
     }
-    return list.sort(sortingFunction);
 };

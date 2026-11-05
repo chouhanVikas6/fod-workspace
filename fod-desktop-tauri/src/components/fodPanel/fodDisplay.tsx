@@ -1,8 +1,7 @@
 'use client'
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSelector, useDispatch } from "react-redux";
+import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useSelector, useDispatch, shallowEqual } from "react-redux";
 import { AppDispatch } from "@/store";
-// import Fodcard from "./FodCards/FodCard";
 // Use the Fod interface from fodReducer-slice, where id is number
 type FodType = {
   id?: number;
@@ -15,26 +14,18 @@ type FodType = {
   groupId: number;
   sysid?: string;
 };
-// const Fodcard = dynamic(() => import("./FodCards/FodCard.jsx") as unknown as Promise<{ default: React.ComponentType<{ fod: FodType; handleDetailViewRequest: (fod: FodType) => void }> }>, {
-//   loading: () => <div className={`h-[210px] w-[180px] min-w-[180px] relative text-[#E2E2E2] mt-4 mb-2 transition-transform duration-200 transform hover:scale-[103%] active:scale-100  bg-gray-300 rounded`}><CircleLoader /></div>,
-// })
 import Fodcard from "./FodCards/FodCard";
 import { FiltersCheck, sortByFilter } from "../../utils/FiltersCheck";
-import dynamic from "next/dynamic";
 import { RootState } from "@/store";
 import { updateDetailViewFod } from "@/store/actions/FodDetailedView";
-import Loader, { CircleLoader } from "../commen/loader";
 // react-window v2: FixedSizeGrid was removed — the v2 <Grid> takes
 // cellComponent/cellProps and auto-sizes to its container.
 import { Grid } from "react-window";
-// import { updateDetailViewFod } from "../../redux/actions/FodDetailedView";
-// import FodWorker from '../../workers/fodWorker.worker';
-
-
 
 interface FodCellData {
   items: FodType[];
   columnCount: number;
+  missionNumber: any;
   onDetailView: (fod: FodType) => void;
 }
 
@@ -44,6 +35,7 @@ const FodGridCell = ({
   style,
   items,
   columnCount,
+  missionNumber,
   onDetailView,
 }: {
   columnIndex: number;
@@ -56,30 +48,48 @@ const FodGridCell = ({
 
   return (
     <div style={{ ...style, padding: 8, boxSizing: "border-box" }} className="flex justify-center items-center">
-      <Fodcard key={fod.id} fod={fod} handleDetailViewRequest={onDetailView} />
+      <Fodcard key={fod.id} fod={fod} missionNumber={missionNumber} handleDetailViewRequest={onDetailView} />
     </div>
   );
 };
 
 const FodDisplay = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const { fods } = useSelector((state: RootState) => state.FodReducer);
+  const fods = useSelector((state: RootState) => state.FodReducer.fods);
   const filters = useSelector((state: RootState) => state.FodReducer.filters);
-  const { groupStatus } = useSelector((state: RootState) => state.FodReducer.filters);
-  const carPrimary = useSelector((state: RootState) => (state.SystemHealth.carData?.data as any)?.primary_data);
-  const [columnCount, setColumnCount] = useState(3); // Default
+  const missionNumber = useSelector((state: RootState) => state.MissionState?.missionNumber);
+  const groupStatus = filters.groupStatus || "NEW";
+  const isSortingByDistance = filters.sortby === "nearestFirst";
 
-  // Only subscribe to location changes if actually sorting by distance
-  const isSortingByDistance = filters.sortby === 'nearestFirst';
-  const currentLocation = useMemo(
-    () => (isSortingByDistance && carPrimary?.lat ? { lat: carPrimary.lat, lon: carPrimary.lon } : null),
-    [isSortingByDistance, carPrimary?.lat, carPrimary?.lon]
-  );
+  // Subscribe to car coordinates ONLY when sorting by nearestFirst, rounded to 4 decimals (~11m)
+  // so 10Hz telemetry jitter never forces 25,000 FODs to re-sort every 100ms.
+  const currentLocation = useSelector((state: RootState) => {
+    if (!isSortingByDistance) return null;
+    const primary = (state.SystemHealth.carData?.data as any)?.primary_data;
+    if (typeof primary?.lat !== "number" || typeof primary?.lon !== "number") return null;
+    return {
+      lat: Math.round(primary.lat * 10000) / 10000,
+      lon: Math.round(primary.lon * 10000) / 10000,
+    };
+  }, shallowEqual);
+
+  const [columnCount, setColumnCount] = useState(3);
+
+  // Defer massive array updates so UI interactions (clicks, tabs, scrolling) stay immediate
+  const deferredFods = useDeferredValue(fods);
+  const deferredFilters = useDeferredValue(filters);
+  const deferredGroupStatus = deferredFilters.groupStatus || groupStatus;
 
   const filteredFods = useMemo(() => {
-    const byStatus = fods.filter((f) => f.groupStatus === groupStatus && FiltersCheck(f, filters));
-    return sortByFilter(filters, byStatus, currentLocation);
-  }, [fods, groupStatus, filters, currentLocation]);
+    const byStatus: FodType[] = [];
+    for (let i = 0; i < deferredFods.length; i++) {
+      const f = deferredFods[i];
+      if (f.groupStatus === deferredGroupStatus && FiltersCheck(f, deferredFilters)) {
+        byStatus.push(f);
+      }
+    }
+    return sortByFilter(deferredFilters, byStatus, currentLocation);
+  }, [deferredFods, deferredGroupStatus, deferredFilters, currentLocation]);
 
   const itemWidth = 225;
   const itemHeight = 350;
@@ -113,9 +123,10 @@ const FodDisplay = () => {
     () => ({
       items: filteredFods,
       columnCount,
+      missionNumber,
       onDetailView: handleDetailViewRequest,
     }),
-    [filteredFods, columnCount, handleDetailViewRequest]
+    [filteredFods, columnCount, missionNumber, handleDetailViewRequest]
   );
 
   if (filteredFods.length === 0) {
@@ -135,6 +146,7 @@ const FodDisplay = () => {
         rowCount={rowCount}
         columnWidth={itemWidth + 16}
         rowHeight={itemHeight + 16}
+        overscanCount={2}
         style={{ height: '100%', width: '100%' }}
       />
     </div>

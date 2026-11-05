@@ -7,6 +7,11 @@ import { AppDispatch } from "@/store";
 
 function getFodLocation(fod: any): { lat: number; lon: number } | null {
   if (!fod) return null;
+  if (fod._loc && typeof fod._loc.lat === 'number' && typeof fod._loc.lon === 'number') {
+    if (Number.isFinite(fod._loc.lat) && Number.isFinite(fod._loc.lon)) {
+      return { lat: fod._loc.lat, lon: fod._loc.lon };
+    }
+  }
   // Try fod.location if it exists
   if (fod.location && typeof fod.location === 'object' && typeof fod.location.lat === 'number' && typeof fod.location.lon === 'number') {
     if (Number.isFinite(fod.location.lat) && Number.isFinite(fod.location.lon)) {

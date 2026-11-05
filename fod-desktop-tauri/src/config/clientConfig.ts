@@ -37,8 +37,8 @@ export const config ={
          maxDeviation:10
      },
 
-     FodListsLimit:1000,
-     MissionListBatchSize:10000,
+     FodListsLimit:25000,
+     MissionListBatchSize:25000,
 
      map:{
         mapboxToken: ((import.meta as any).env?.VITE_MAPBOX_TOKEN || (import.meta as any).env?.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '') as string,

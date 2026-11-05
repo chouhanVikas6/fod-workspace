@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
@@ -8,15 +8,19 @@ import FodDetail from "./fodDetail";
 import { close_SideBarFodDetail, setSideBarVisibility } from "@/store/slices/selectedFod-slice";
 import { RootState } from "@/store";
 
+const SIDEBAR_PAGE_SIZE = 60;
+
 const FodCategoryAndDetail = () => {
   const dispatch = useDispatch();
   const [selectedList, setSelectedList] = useState<string>("ACCEPTED");
+  const [visibleLimit, setVisibleLimit] = useState<number>(SIDEBAR_PAGE_SIZE);
   const fods = useSelector((state: RootState) => state.FodReducer.fods);
   const selectedFod = useSelector((state: RootState) => state.SelectedFod);
   const { isSidebarVisible, isSidebarFodDetailVisible } = selectedFod;
 
   const setList = (listName: string) => {
     setSelectedList(listName);
+    setVisibleLimit(SIDEBAR_PAGE_SIZE);
   };
 
   const padZero = (n: number | string) => {
@@ -25,27 +29,22 @@ const FodCategoryAndDetail = () => {
     return String(n);
   };
 
-  const listLengthFn = () => {
-    let total = {
+  const listLength = useMemo(() => {
+    const total = {
       ACCEPTED: 0,
       REJECTED: 0,
-      CLEARED: 0
+      CLEARED: 0,
     };
 
-    fods.forEach((ele) => {
-      if (ele.groupStatus === "ACCEPTED") {
-        total.ACCEPTED++;
-      } else if (ele.groupStatus === "REJECTED") {
-        total.REJECTED++;
-      } else if (ele.groupStatus === "CLEARED") {
-        total.CLEARED++;
-      }
-    });
+    for (let i = 0; i < fods.length; i++) {
+      const st = fods[i].groupStatus;
+      if (st === "ACCEPTED") total.ACCEPTED++;
+      else if (st === "REJECTED") total.REJECTED++;
+      else if (st === "CLEARED") total.CLEARED++;
+    }
 
     return total;
-  };
-
-  const listLength = listLengthFn();
+  }, [fods]);
 
   const selectedListTitle = () => {
     if (selectedList === "ACCEPTED") return `Accepted FODs (${padZero(listLength.ACCEPTED)})`;
@@ -54,7 +53,17 @@ const FodCategoryAndDetail = () => {
     return "FOD List";
   };
 
-  const currentItems = fods.filter((fod) => fod.groupStatus === selectedList);
+  const currentItems = useMemo(() => {
+    if (!isSidebarVisible || isSidebarFodDetailVisible) return [];
+    return fods.filter((fod) => fod.groupStatus === selectedList);
+  }, [fods, selectedList, isSidebarVisible, isSidebarFodDetailVisible]);
+
+  const handleListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) {
+      setVisibleLimit((prev) => (prev < currentItems.length ? prev + SIDEBAR_PAGE_SIZE : prev));
+    }
+  };
 
   return (
     <div
@@ -160,13 +169,13 @@ const FodCategoryAndDetail = () => {
             </div>
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto py-2">
+            <div onScroll={handleListScroll} className="flex-1 overflow-y-auto py-2">
               {currentItems.length === 0 ? (
                 <div className="h-40 flex items-center justify-center text-slate-500 text-xs font-medium">
                   No FODs in this category
                 </div>
               ) : (
-                currentItems.map((fod, index) => (
+                currentItems.slice(0, visibleLimit).map((fod, index) => (
                   <FodListcard key={fod.id ?? index} fod={fod} />
                 ))
               )}
