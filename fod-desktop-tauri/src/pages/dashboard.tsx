@@ -14,6 +14,7 @@ import {  useState } from "react";
 import { useSelector } from "react-redux";
 //@ts-ignore
 import Setting from "@/components/setting/setting";
+import ErrorBoundary from "@/components/commen/ErrorBoundary";
 
 const MissionControl = () => {
     // Real-time channel to the internal GUI socket server (fod alerts,
@@ -53,9 +54,15 @@ const MissionControl = () => {
                         <div className='flex relative h-[92%] z-0' style={{ background }}>
                             <OperationSideBar tab={tab} setTab={handleTab} />
                             <div className='h-full flex-1 min-w-0 relative overflow-hidden'>
-                                <FodPanel open={tab == 'dashboard'} />
+                                <ErrorBoundary name="FOD Panel">
+                                    <FodPanel open={tab == 'dashboard'} />
+                                </ErrorBoundary>
                                 <Setting open={tab == 'setting'} />
-                                {isMapOpen && <Map />}
+                                {isMapOpen && (
+                                    <ErrorBoundary name="Map">
+                                        <Map />
+                                    </ErrorBoundary>
+                                )}
                             </div>
                            
                             {isFodFinalReviewOpen ? <FodFinalReview />:<></>}
@@ -73,7 +80,9 @@ const MissionControl = () => {
                             this it overflows the viewport by the header's 8% and
                             its bottom edge (incl. footer buttons) gets clipped. */}
                         <div className='h-[92%] relative z-0'>
-                            <MissionSelector />
+                            <ErrorBoundary name="Mission Selector">
+                                <MissionSelector />
+                            </ErrorBoundary>
                         </div>
                     </>
 

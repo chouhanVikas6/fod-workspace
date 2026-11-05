@@ -1,0 +1,19 @@
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+zoid_client.db*
+
+# Images and runtime assets
+fod-images/
+frames/
+
+# Build artifacts
+dist/
+target/
+node_modules/
+.env
+*.log

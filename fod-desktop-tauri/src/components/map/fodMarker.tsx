@@ -6,22 +6,36 @@ import { setSideBarVisibility } from "@/store/slices/selectedFod-slice";
 import { AppDispatch } from "@/store";
 
 function getFodLocation(fod: any): { lat: number; lon: number } | null {
+  if (!fod) return null;
   // Try fod.location if it exists
   if (fod.location && typeof fod.location === 'object' && typeof fod.location.lat === 'number' && typeof fod.location.lon === 'number') {
-    return fod.location;
+    if (Number.isFinite(fod.location.lat) && Number.isFinite(fod.location.lon)) {
+      return { lat: fod.location.lat, lon: fod.location.lon };
+    }
+  }
+  // Try stringified fod.location
+  if (typeof fod.location === 'string') {
+    try {
+      const parsed = JSON.parse(fod.location);
+      if (parsed && typeof parsed.lat === 'number' && typeof parsed.lon === 'number' && Number.isFinite(parsed.lat) && Number.isFinite(parsed.lon)) {
+        return { lat: parsed.lat, lon: parsed.lon };
+      }
+    } catch {}
   }
   // Try FodPoint if it is a stringified object or array
   if (typeof fod.FodPoint === 'string') {
     try {
       const parsed = JSON.parse(fod.FodPoint);
-      if (parsed && typeof parsed.lat === 'number' && typeof parsed.lon === 'number') {
-        return parsed;
+      if (parsed && typeof parsed.lat === 'number' && typeof parsed.lon === 'number' && Number.isFinite(parsed.lat) && Number.isFinite(parsed.lon)) {
+        return { lat: parsed.lat, lon: parsed.lon };
       }
     } catch {}
   }
   // Try FodPoint if it is an object
   if (fod.FodPoint && typeof fod.FodPoint === 'object' && typeof fod.FodPoint.lat === 'number' && typeof fod.FodPoint.lon === 'number') {
-    return fod.FodPoint;
+    if (Number.isFinite(fod.FodPoint.lat) && Number.isFinite(fod.FodPoint.lon)) {
+      return { lat: fod.FodPoint.lat, lon: fod.FodPoint.lon };
+    }
   }
   return null;
 }
@@ -211,13 +225,21 @@ const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: a
     };
   }, [map, map.current]);
 
-  // Data update: Only update source data when fods change
+  // Data update: Debounce source data update so rapid streaming updates don't lock Mapbox worker
   useEffect(() => {
     if (!map.current) return;
-    const source = map.current.getSource(sourceId);
-    if (source) {
-      source.setData(fodGeoJson);
-    }
+    const timer = setTimeout(() => {
+      try {
+        const source = map.current?.getSource(sourceId);
+        if (source) {
+          source.setData(fodGeoJson);
+        }
+      } catch (err) {
+        console.error("Failed to update mapbox fodMarkers source:", err);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
   }, [fodGeoJson]);
 
   return null;

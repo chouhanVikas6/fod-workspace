@@ -35,5 +35,17 @@ sample_images/
 data/
 **/frames/
 frames/
-
-zoid_client.db
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+zoid_client.db*

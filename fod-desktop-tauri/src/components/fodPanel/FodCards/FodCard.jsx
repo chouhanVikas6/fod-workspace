@@ -65,12 +65,14 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
     return `Grid ${row}-${col}`;
   };
 
-  const openMapAndSelectFod = () => {
+  const openMapAndSelectFod = (e) => {
+    if (e) e.stopPropagation();
     dispatch(set_Map_view);
     dispatch(updateSelectedFod(fod));
   };
 
-  const acceptFod = async (fod) => {
+  const acceptFod = async (fod, e) => {
+    if (e) e.stopPropagation();
     try {
       if (fod.groupStatus === "ACCEPTED") {
         dispatch(doubleAccept(fod.groupId));
@@ -103,7 +105,8 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
     }
   };
 
-  const rejectFod = async (fod) => {
+  const rejectFod = async (fod, e) => {
+    if (e) e.stopPropagation();
     try {
       setImageModal(true);
       const { groupId: FodId } = fod;
@@ -131,6 +134,12 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
     }
   };
 
+  const onCardClick = () => {
+    if (typeof handleDetailViewRequest === "function") {
+      handleDetailViewRequest(fod);
+    }
+  };
+
   return (
     <div
       id={fod.id}
@@ -143,68 +152,65 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
         </div>
       )}
 
-      {/* Header: Risk Pill Badge */}
-      <div className="flex justify-between items-center">
-        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider inline-flex items-center ${style.badgeStyle}`}>
-          {style.text}
-        </span>
-        <button
-          type="button"
-          title="View on map"
-          onClick={(e) => {
-            e.stopPropagation();
-            openMapAndSelectFod();
-          }}
-          className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"
-        >
-          <Image src={MapMode} alt="Map" width={18} height={18} className="brightness-200" />
-        </button>
-      </div>
-
-      {/* FOD Title */}
-      <div className="text-[17px] font-bold text-white tracking-tight mt-1 mb-2">
-        FOD #{fod.groupId || fod.id}
-      </div>
-
-      {/* Image Preview */}
-      <div
-        className="relative h-[105px] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-700/50 cursor-pointer group mb-2.5 flex items-center justify-center"
-        onClick={() => handleDetailViewRequest(fod)}
-      >
-        {!imgError ? (
-          <Image
-            src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
-            draggable={false}
-            alt="Fod Image"
-            className="h-full w-full object-cover object-center group-hover:scale-105 transition-all duration-300"
-            width={220}
-            height={105}
-            loading="lazy"
-            onError={() => setImgError(true)}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center text-slate-500 text-[11px] gap-1">
-            <span className="font-mono text-xs">FOD #{fod.groupId || fod.id}</span>
-            <span>No frame preview</span>
-          </div>
-        )}
-      </div>
-
-      {/* Key-Value Metadata rows */}
-      <div className="w-full flex flex-col gap-1 text-[11px] mb-3">
+      {/* Clickable Card Body (opens detail modal on click) */}
+      <div className="w-full flex-1 flex flex-col cursor-pointer select-none" onClick={onCardClick}>
+        {/* Header: Risk Pill Badge & Map Button */}
         <div className="flex justify-between items-center">
-          <span className="text-[#7E8691] font-medium">Type</span>
-          <span className="text-slate-100 font-semibold">{fod.class || 'Metal bolt'}</span>
-        </div>
-        <div className="flex justify-between items-center">
-          <span className="text-[#7E8691] font-medium">Size</span>
-          <span className="text-slate-100 font-semibold">
-            {fod.size ? `${Math.round(Number(fod.size))} mm` : Fod_Size(fod)}
+          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider inline-flex items-center ${style.badgeStyle}`}>
+            {style.text}
           </span>
+          <button
+            type="button"
+            title="View on map"
+            onClick={openMapAndSelectFod}
+            className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"
+          >
+            <Image src={MapMode} alt="Map" width={18} height={18} className="brightness-200" />
+          </button>
         </div>
-        <div className="flex justify-between items-center">
-          <span className="text-[#7E8691] font-medium">Location</span>
-          <span className="text-slate-100 font-semibold">{getLocationDisplay()}</span>
+
+        {/* FOD Title */}
+        <div className="text-[17px] font-bold text-white tracking-tight mt-1 mb-2">
+          FOD #{fod.groupId || fod.id}
+        </div>
+
+        {/* Image Preview */}
+        <div className="relative h-[105px] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-700/50 group mb-2.5 flex items-center justify-center">
+          {!imgError ? (
+            <Image
+              src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
+              draggable={false}
+              alt="Fod Image"
+              className="h-full w-full object-cover object-center group-hover:scale-105 transition-all duration-300"
+              width={220}
+              height={105}
+              loading="lazy"
+              onError={() => setImgError(true)}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center text-slate-500 text-[11px] gap-1">
+              <span className="font-mono text-xs">FOD #{fod.groupId || fod.id}</span>
+              <span>No frame preview</span>
+            </div>
+          )}
+        </div>
+
+        {/* Key-Value Metadata rows */}
+        <div className="w-full flex flex-col gap-1 text-[11px] mb-3">
+          <div className="flex justify-between items-center">
+            <span className="text-[#7E8691] font-medium">Type</span>
+            <span className="text-slate-100 font-semibold">{fod.class || 'Metal bolt'}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-[#7E8691] font-medium">Size</span>
+            <span className="text-slate-100 font-semibold">
+              {fod.size ? `${Math.round(Number(fod.size))} mm` : Fod_Size(fod)}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-[#7E8691] font-medium">Location</span>
+            <span className="text-slate-100 font-semibold">{getLocationDisplay()}</span>
+          </div>
         </div>
       </div>
 
@@ -213,7 +219,7 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
         <button
           type="button"
           disabled={imgModal}
-          onClick={() => acceptFod(fod)}
+          onClick={(e) => acceptFod(fod, e)}
           className="w-full h-[34px] rounded-lg bg-[#113824] hover:bg-[#16472E] active:bg-[#0E2F1E] border border-[#10B981]/50 text-[#34D399] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer"
         >
           <HiOutlineCheck className="w-4 h-4 stroke-[2.5]" />
@@ -222,7 +228,7 @@ const Fodcard = ({ fod, handleDetailViewRequest }) => {
         <button
           type="button"
           disabled={imgModal}
-          onClick={() => rejectFod(fod)}
+          onClick={(e) => rejectFod(fod, e)}
           className="w-full h-[34px] rounded-lg bg-[#222933] hover:bg-[#2B3441] active:bg-[#1A2028] border border-[#333D4B] text-[#94A3B8] hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer"
         >
           <RxCross1 className="w-3.5 h-3.5 stroke-[1.5]" />

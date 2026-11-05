@@ -39,6 +39,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
     const [activeTab, setActiveTab] = useState('map');
     const [fodList, setFodList] = useState([]);
     const [selectedGroupId, setSelectedGroupId] = useState(null);
+    const [displayLimit, setDisplayLimit] = useState(60);
     const groupRequestRef = useRef(0);
     const dispatch = useDispatch();
 
@@ -102,6 +103,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         let unlistenFn: (() => void) | null = null;
         const subId = `mission-explore-${selectedMission.id}-${Date.now()}`;
         setFodList([]);
+        setDisplayLimit(60);
 
         function getRealtimeData(data: any) {
             if (disposed) return;
@@ -224,10 +226,22 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                     <div className={`relative flex-1 min-h-0 ${activeTab === 'list' ? 'overflow-y-auto' : 'overflow-hidden'}`}>
                         {activeTab === 'map' ? <ExploreMap fods={fodList} onSelectFod={setSelectedGroup} /> :
                             fodList.length ?
-                                <div className="grid grid-cols-2 p-2 gap-2">
-                                    {fodList.map((fod) => (
-                                        <FodHorizontalcard key={fod.id + 'listonExplore'} {...{ fod, selectedMission, actionOnCard: setSelectedGroup }} />
-                                    ))}
+                                <div className="p-2 space-y-3">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {fodList.slice(0, displayLimit).map((fod: any) => (
+                                            <FodHorizontalcard key={fod.id + 'listonExplore'} {...{ fod, selectedMission, actionOnCard: setSelectedGroup }} />
+                                        ))}
+                                    </div>
+                                    {fodList.length > displayLimit && (
+                                        <div className="flex justify-center pb-4 pt-1">
+                                            <button
+                                                onClick={() => setDisplayLimit((prev) => prev + 60)}
+                                                className="px-5 py-2 bg-[#4C9FE8] hover:bg-[#3B91DC] text-white text-xs font-bold rounded-lg shadow transition-all active:scale-95 cursor-pointer"
+                                            >
+                                                Load More ({displayLimit} of {fodList.length} shown)
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                                 :
                                 <div className="h-full flex items-center justify-center text-sm text-slate-400 dark:text-slate-500">

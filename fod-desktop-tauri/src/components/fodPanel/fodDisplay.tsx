@@ -118,6 +118,14 @@ const FodDisplay = () => {
     [filteredFods, columnCount, handleDetailViewRequest]
   );
 
+  if (filteredFods.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-sm font-medium text-slate-400 dark:text-slate-500 select-none">
+        No FODs match the selected filter
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-full relative overflow-hidden select-none">
       <Grid

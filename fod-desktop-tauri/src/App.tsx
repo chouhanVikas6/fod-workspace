@@ -15,6 +15,7 @@ import MotionTransition from "@/components/transition/motion";
 import SplashScreen from "@/components/splash-screen/splashScreen";
 import Login from "@/pages/login";
 import MissionControl from "@/pages/dashboard";
+import ErrorBoundary from "@/components/commen/ErrorBoundary";
 
 export default function App() {
   const [showScreen, setShowScreen] = useState(true);
@@ -76,10 +77,11 @@ export default function App() {
           <ThemeApplier />
           <Global>
             <MotionTransition>
-              <HashRouter>
-                <Routes>
-                  {/* Public route */}
-                  <Route path="/login" element={<Login />} />
+              <ErrorBoundary name="Zoid Desktop Application">
+                <HashRouter>
+                  <Routes>
+                    {/* Public route */}
+                    <Route path="/login" element={<Login />} />
 
                   {/* Temporary Settings Preview */}
                   <Route
@@ -87,24 +89,25 @@ export default function App() {
                     element={<Setting open={true} />}
                   />
 
-                  {/* Private route */}
-                  {/* <Route
-                    path="/dashboard"
-                    element={
-                      <PrivateRoute authenticated={true}>
-                        <MissionControl />
-                      </PrivateRoute>
-                    }
-                  /> */}
+                    {/* Private route */}
+                    {/* <Route
+                      path="/dashboard"
+                      element={
+                        <PrivateRoute authenticated={true}>
+                          <MissionControl />
+                        </PrivateRoute>
+                      }
+                    /> */}
                   <Route path="/dashboard" element={<MissionControl />} />
 
-                  {/* Fallback routing */}
-                  <Route
+                    {/* Fallback routing */}
+                    <Route
                     path="*"
                     element={<Navigate to="/dashboard" replace />}
                   />
-                </Routes>
-              </HashRouter>
+                  </Routes>
+                </HashRouter>
+              </ErrorBoundary>
             </MotionTransition>
           </Global>
           <ToastContainer autoClose={2000} />
