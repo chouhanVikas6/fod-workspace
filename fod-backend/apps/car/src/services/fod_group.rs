@@ -108,17 +108,6 @@ impl FodGroupService for FodGroupServiceImpl {
 
             let desired_proto = FodGroupStatus::try_from(res.desired_status)
                 .unwrap_or(FodGroupStatus::GroupStatusUnspecified);
-            let base_vv = if res.base_version_vector.is_empty() {
-                if res.base_version > 0 {
-                    let mut b = std::collections::BTreeMap::new();
-                    b.insert("legacy".to_string(), res.base_version);
-                    Some(b)
-                } else {
-                    None
-                }
-            } else {
-                Some(zoid_replication::vv_from_map(&res.base_version_vector))
-            };
             let decided_at = if res.decided_at_ms > 0 {
                 res.decided_at_ms
             } else {
@@ -132,6 +121,15 @@ impl FodGroupService for FodGroupServiceImpl {
 
             let mutation = self.db.mutate_fod_group(res.mission_id, res.group_id, |current| {
                 let local = current.versioned();
+                let base_vv = if !res.base_version_vector.is_empty() {
+                    Some(zoid_replication::vv_from_map(&res.base_version_vector))
+                } else if res.base_version > 0 && local.vv.is_empty() {
+                    let mut b = std::collections::BTreeMap::new();
+                    b.insert("legacy".to_string(), res.base_version);
+                    Some(b)
+                } else {
+                    None
+                };
                 let (outcome, next_v) = zoid_replication::apply_local_decision(
                     &local,
                     desired_proto,

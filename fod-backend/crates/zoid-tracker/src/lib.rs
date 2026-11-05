@@ -59,9 +59,9 @@ impl Tracker {
     }
 
     /// Process a detection packet and return the assigned groupId.
-    /// Returns -1 for invalid sentinel GPS (-1.0, -1.0).
+    /// Returns -1 for invalid sentinel GPS (-1.0, -1.0) or non-finite (NaN/Inf) coordinates.
     pub fn process_packet(&mut self, lat: f64, lon: f64, now_ms: i64) -> i64 {
-        if lat == -1.0 || lon == -1.0 {
+        if !lat.is_finite() || !lon.is_finite() || lat == -1.0 || lon == -1.0 {
             return -1;
         }
 
@@ -131,9 +131,25 @@ mod tests {
     }
 
     #[test]
-    fn test_sentinel_location() {
+    fn test_sentinel_and_non_finite_locations() {
         let mut tracker = Tracker::new(0, 60000, 5.0, 15);
         assert_eq!(tracker.process_packet(-1.0, -1.0, 1000), -1);
+        assert_eq!(tracker.process_packet(f64::NAN, 77.5946, 1000), -1);
+        assert_eq!(tracker.process_packet(12.9716, f64::NAN, 1000), -1);
+        assert_eq!(tracker.process_packet(f64::INFINITY, 77.5946, 1000), -1);
+        assert_eq!(tracker.process_packet(12.9716, f64::NEG_INFINITY, 1000), -1);
+        assert_eq!(tracker.active_track_count(), 0);
+    }
+
+    #[test]
+    fn test_max_count_track_rollover() {
+        let mut tracker = Tracker::new(0, 60000, 5.0, 3);
+        // First 3 detections at same location join group 1
+        assert_eq!(tracker.process_packet(12.9716, 77.5946, 1000), 1);
+        assert_eq!(tracker.process_packet(12.9716, 77.5946, 1010), 1);
+        assert_eq!(tracker.process_packet(12.9716, 77.5946, 1020), 1);
+        // 4th detection exceeds max_count=3 and rolls over into group 2
+        assert_eq!(tracker.process_packet(12.9716, 77.5946, 1030), 2);
     }
 
     #[test]

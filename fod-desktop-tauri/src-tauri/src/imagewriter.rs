@@ -9,6 +9,20 @@
 
 use anyhow::{Context, Result};
 
+fn validate_segment(seg: &str, name: &str) -> Result<()> {
+    if seg.is_empty()
+        || seg == "."
+        || seg == ".."
+        || seg.contains("..")
+        || seg.contains('/')
+        || seg.contains('\\')
+        || seg.contains('\0')
+    {
+        anyhow::bail!("Invalid path segment for {name}: {seg:?}");
+    }
+    Ok(())
+}
+
 /// Write `bytes` to ./fod-images/mission/<mission>/<group>/<fod>.jpg
 /// (cwd-relative, same base the image route serves). Returns the /mission/...
 /// suffix like writeJpegFile returned its savePath argument.
@@ -18,6 +32,10 @@ pub async fn write_fod_jpeg(
     fod_seg: &str,
     bytes: &[u8],
 ) -> Result<String> {
+    validate_segment(mission_seg, "mission")?;
+    validate_segment(group_seg, "group")?;
+    validate_segment(fod_seg, "fod")?;
+
     let save_path = format!("/mission/{mission_seg}/{group_seg}/{fod_seg}.jpg");
     let dir = std::path::Path::new("./fod-images/mission")
         .join(mission_seg)

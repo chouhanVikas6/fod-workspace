@@ -406,4 +406,97 @@ mod tests {
         let atc = g(FodGroupStatus::Rejected, seen, 10, "atc-op");
         assert_eq!(merge_remote(&s, &atc, "car"), MergeDecision::KeepLocal);
     }
+
+    #[test]
+    fn three_node_concurrent_divergence_and_monotonic_convergence() {
+        // Initial group detected on car-primary
+        let base = g(FodGroupStatus::New, vv(&[("car-primary", 1)]), 1000, "car-primary");
+        assert_eq!(vv_sum(&base.vv), 1);
+
+        // 1. Desktop operator resolves ACCEPTED on car-primary (base_vv = None since local.vv is non-empty)
+        let (o1, s1) = apply_local_decision(
+            &base,
+            FodGroupStatus::Accepted,
+            None,
+            1100,
+            "desktop",
+            "car-primary",
+        );
+        assert_eq!(o1, CommandOutcome::Applied);
+        let car_v2 = s1.unwrap();
+        assert_eq!(vv_sum(&car_v2.vv), 2);
+        assert_eq!(car_v2.vv, vv(&[("car-primary", 2)]));
+
+        // 2. Concurrently (while disconnected from car), ATC operator resolves REJECTED at t=1200 based on initial base
+        let (o2, s2) = apply_local_decision(
+            &base,
+            FodGroupStatus::Rejected,
+            Some(&base.vv),
+            1200,
+            "atc-operator",
+            "atc-tower-01",
+        );
+        assert_eq!(o2, CommandOutcome::Applied);
+        let atc_v2 = s2.unwrap();
+        assert_eq!(vv_sum(&atc_v2.vv), 2);
+        assert_eq!(atc_v2.vv, vv(&[("car-primary", 1), ("atc-tower-01", 1)]));
+
+        // Verify vector clocks are strictly Concurrent
+        assert_eq!(vv_compare(&car_v2.vv, &atc_v2.vv), VvOrder::Concurrent);
+
+        // 3. Reconnect: Car merges ATC's state AND ATC merges Car's state -> both converge to REJECTED (t=1200 > t=1100)
+        let MergeDecision::Merged(car_merged) = merge_remote(&car_v2, &atc_v2, "car-primary") else {
+            panic!("expected Merged on car");
+        };
+        let MergeDecision::Merged(atc_merged) = merge_remote(&atc_v2, &car_v2, "atc-tower-01") else {
+            panic!("expected Merged on atc");
+        };
+        assert_eq!(car_merged.status, FodGroupStatus::Rejected);
+        assert_eq!(atc_merged.status, FodGroupStatus::Rejected);
+        assert_eq!(car_merged.decided_at_ms, 1200);
+
+        // 4. Subsequent sync stabilizes to KeepLocal / TakeIncoming
+        let final_state = match merge_remote(&car_merged, &atc_merged, "car-primary") {
+            MergeDecision::Merged(m) => m,
+            MergeDecision::TakeIncoming => atc_merged.clone(),
+            MergeDecision::KeepLocal => car_merged.clone(),
+        };
+        assert_eq!(
+            merge_remote(&car_merged, &final_state, "car-primary"),
+            MergeDecision::TakeIncoming
+        );
+        assert_eq!(
+            merge_remote(&atc_merged, &final_state, "atc-tower-01"),
+            MergeDecision::TakeIncoming
+        );
+        assert_eq!(
+            merge_remote(&final_state, &final_state, "car-primary"),
+            MergeDecision::KeepLocal
+        );
+    }
+
+    #[test]
+    fn sequential_desktop_decisions_increment_version_linearly() {
+        let mut cur = g(FodGroupStatus::New, vv(&[("car-primary", 1)]), 100, "car-primary");
+        for step in 1..=5 {
+            let desired = if step % 2 == 1 {
+                FodGroupStatus::Accepted
+            } else {
+                FodGroupStatus::New
+            };
+            // Desktop sends scalar base_version without vector; car passes base_vv = None when local.vv is non-empty
+            let (outcome, next) = apply_local_decision(
+                &cur,
+                desired,
+                None,
+                100 + step * 10,
+                "desktop",
+                "car-primary",
+            );
+            assert_eq!(outcome, CommandOutcome::Applied);
+            cur = next.unwrap();
+            assert_eq!(vv_sum(&cur.vv), 1 + step);
+            assert!(!cur.vv.contains_key("legacy"));
+        }
+    }
 }

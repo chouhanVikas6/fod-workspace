@@ -23,14 +23,16 @@ interface EventHandler {
   (payload: any): void;
 }
 
-const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = {}) => {
+const EMPTY_HANDLERS: { [eventName: string]: EventHandler } = {};
+
+const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = EMPTY_HANDLERS) => {
   // const { isOpen, fod,isFilteredFod } = useSelector((state: RootState) => state.FodDetailedView);
   const mission = useSelector((store: any) => store.MissionState);
   const missionState = useSelector((store: RootState) => store.MissionState);
   const missionRef = useRef(mission);
   missionRef.current = mission;
 
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
   const dispatch = useDispatch();
   const socketClientRef = useRef<any>(null);
 
@@ -38,17 +40,19 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = {}) =>
     // Initialize socket client when component mounts
     socketClientRef.current = getSocketServer(url, eventHandlers, {});
     const socketClient = socketClientRef.current;
-    let timeout: NodeJS.Timeout;
+    let timeout: NodeJS.Timeout | undefined;
     // Event handlers
     const handleFod = (payload: PayloadAction) => {
       // if (missionState.missionNumber != payload.missionId) return;
-      if (missionState.isNotificationOn) {
+      if (missionRef.current?.isNotificationOn) {
         timeout = setTimeout(() => {
-          clearTimeout(timeout);
-          new Audio(notificationSound).play();
-        }, 3000)
+          if (timeout) clearTimeout(timeout);
+          new Audio(notificationSound).play().catch(() => {});
+        }, 3000);
 
-        navigator.vibrate(500);
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+          navigator.vibrate(500);
+        }
       }
       dispatch(pushFod(payload));
     };
@@ -110,9 +114,11 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = {}) =>
     socketClient.addEventHandler('connect', handleConnect);
     socketClient.addEventHandler('disconnect', handleDisconnect);
     socketClient.addEventHandler('update', handleUpdates);
+    setIsConnected(true);
 
     // Clean up on unmount
     return () => {
+      if (timeout) clearTimeout(timeout);
       ['connect', 'disconnect', 'fod', 'health', 'diffMissionNumber', 'update'].forEach(event => socketClient.removeEventHandler(event));
     };
   }, [dispatch, eventHandlers]);

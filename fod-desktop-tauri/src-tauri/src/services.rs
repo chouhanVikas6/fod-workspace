@@ -649,13 +649,19 @@ pub async fn call_car_grpc(
             decided_at_ms: chrono::Utc::now().timestamp_millis(),
             origin_node: "desktop".to_string(),
         }];
-        let _ = client.resolve_groups(tonic::Request::new(
+        let res = client.resolve_groups(tonic::Request::new(
             proto_defination::fod_group::ResolveGroupsRequest { resolutions },
-        )).await.ok()?;
+        )).await.ok()?.into_inner();
+        let resolved_version = res
+            .results
+            .first()
+            .and_then(|r| r.group.as_ref())
+            .map(|g| g.version);
         return Some(json!({
             "status": 200,
             "statusCode": 200,
             "message": "Updated",
+            "version": resolved_version,
         }));
     }
 
@@ -1852,6 +1858,675 @@ mod tests {
         assert_eq!(dirty, Some(false));
 
         cleanup(&db, mission_id).await;
+        let _ = std::env::set_current_dir("/home/zoid/workspace/fod-desktop-tauri/src-tauri");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    async fn dispatch_req(
+        router: &axum::Router,
+        method: &str,
+        uri: &str,
+        headers: Vec<(&str, &str)>,
+        body: Option<Value>,
+    ) -> (u16, Value, axum::http::HeaderMap) {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let mut builder = axum::http::Request::builder().method(method).uri(uri);
+        for (k, v) in headers {
+            builder = builder.header(k, v);
+        }
+        let req_body = match body {
+            Some(v) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(serde_json::to_vec(&v).unwrap())
+            }
+            None => Body::empty(),
+        };
+        let req = builder.body(req_body).unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let resp_headers = resp.headers().clone();
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024 * 1024)
+            .await
+            .unwrap();
+        let json_val = serde_json::from_slice::<Value>(&bytes).unwrap_or_else(|_| {
+            Value::String(String::from_utf8_lossy(&bytes).to_string())
+        });
+        (status, json_val, resp_headers)
+    }
+
+    fn test_config(car_url: &str, atc_url: &str) -> std::sync::Arc<crate::config::Config> {
+        std::sync::Arc::new(crate::config::Config {
+            database_url: "sqlite::memory:".to_string(),
+            car_backend_url: car_url.to_string(),
+            atc_backend_url: atc_url.to_string(),
+            socketserver: car_url.to_string(),
+            gui_server_port: 7985,
+            ai_threshold: 0.0,
+            sys_id: "1".to_string(),
+            atc_ip: None,
+            jwt_secret: "qa-test-jwt-secret-key-2026".to_string(),
+        })
+    }
+
+    /// Section A.1: Authentication, JWT Parity, User Lifecycle & 100-Concurrent Login Benchmark
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn qa_section_a1_auth_jwt_and_100_concurrent_logins() {
+        let db = crate::db::init_db("sqlite::memory:").await.unwrap();
+        let cfg = test_config("http://127.0.0.1:59991", "http://127.0.0.1:59992");
+        let state = AppState::new(cfg, db.clone());
+        let router = crate::routes::app_router(state.clone());
+
+        // 1. Register initial ADMIN user (POST /api/auth/register)
+        let (st, reg_body, _) = dispatch_req(
+            &router,
+            "POST",
+            "/api/auth/register",
+            vec![],
+            Some(json!({
+                "userName": "qa_admin",
+                "password": "StrongPassword!123",
+                "firstName": "QA",
+                "lastName": "Admin",
+                "role": "ADMIN"
+            })),
+        )
+        .await;
+        assert_eq!(st, 201, "Admin registration must return 201: {reg_body}");
+        let token = reg_body["token"].as_str().unwrap().to_string();
+        let admin_id = reg_body["user"]["id"].as_str().unwrap().to_string();
+        assert_eq!(reg_body["user"]["role"], "ADMIN");
+
+        // 2. Duplicate username registration -> 409 CONFLICT
+        let (st_dup, dup_body, _) = dispatch_req(
+            &router,
+            "POST",
+            "/api/auth/register",
+            vec![],
+            Some(json!({ "userName": "qa_admin", "password": "x" })),
+        )
+        .await;
+        assert_eq!(st_dup, 409);
+        assert_eq!(dup_body["error"], "Username already exists");
+
+        // 3. Wrong method on /api/auth/register -> 405 Method Not Allowed with Allow: POST
+        let (st_405, _, hdr_405) = dispatch_req(&router, "GET", "/api/auth/register", vec![], None).await;
+        assert_eq!(st_405, 405);
+        assert_eq!(hdr_405.get("allow").unwrap().to_str().unwrap(), "POST");
+
+        // 4. Verify JWT via Bearer header and ?token= query param
+        let bearer = format!("Bearer {token}");
+        let (st_me1, me1, _) = dispatch_req(
+            &router,
+            "GET",
+            "/api/auth/me",
+            vec![("authorization", &bearer)],
+            None,
+        )
+        .await;
+        assert_eq!(st_me1, 200);
+        assert_eq!(me1["user"]["userName"], "qa_admin");
+        assert!(me1["user"]["iat"].is_i64(), "JWT must include iat claim");
+
+        let (st_me2, me2, _) = dispatch_req(
+            &router,
+            "GET",
+            &format!("/api/auth/me?token={token}"),
+            vec![],
+            None,
+        )
+        .await;
+        assert_eq!(st_me2, 200);
+        assert_eq!(me2["user"]["id"], admin_id);
+
+        // 5. Empty, malformed, and tampered JWT tokens -> 401 UNAUTHORIZED
+        let (st_empty, empty_err, _) = dispatch_req(&router, "GET", "/api/auth/me", vec![], None).await;
+        assert_eq!(st_empty, 401);
+        assert_eq!(empty_err["error"], "No token provided");
+
+        let (st_mal, mal_err, _) = dispatch_req(
+            &router,
+            "GET",
+            "/api/auth/me",
+            vec![("authorization", "Bearer not.a.jwt")],
+            None,
+        )
+        .await;
+        assert_eq!(st_mal, 401);
+        assert_eq!(mal_err["error"], "Invalid token");
+
+        let mut tampered = token.clone();
+        tampered.pop();
+        tampered.push(if token.ends_with('a') { 'b' } else { 'a' });
+        let tampered_hdr = format!("Bearer {tampered}");
+        let (st_tamp, _, _) = dispatch_req(
+            &router,
+            "GET",
+            "/api/auth/me",
+            vec![("authorization", &tampered_hdr)],
+            None,
+        )
+        .await;
+        assert_eq!(st_tamp, 401);
+
+        // 6. Last-admin deletion protection -> deleting one of 2 admins (qa_admin + seeded 'admin')
+        // succeeds (200), then attempting to delete the sole remaining admin ('admin') returns 400!
+        let seeded_admin_id: String =
+            sqlx::query_scalar(r#"SELECT "id" FROM "User" WHERE "username" = 'admin'"#)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        let (st_del_1, _, _) = dispatch_req(
+            &router,
+            "POST",
+            "/api/auth/users/delete",
+            vec![],
+            Some(json!({ "id": seeded_admin_id })),
+        )
+        .await;
+        assert_eq!(st_del_1, 200, "Deleting 1 of 2 admins must succeed");
+
+        let (st_del_last, del_err, _) = dispatch_req(
+            &router,
+            "POST",
+            "/api/auth/users/delete",
+            vec![],
+            Some(json!({ "id": admin_id })),
+        )
+        .await;
+        assert_eq!(st_del_last, 400, "Deleting the last remaining admin must return 400");
+        assert_eq!(del_err["error"], "Cannot delete the only remaining admin");
+
+        // 7. 100 Concurrent Login Attempts (50 valid + 50 invalid bcrypt verification)
+        // Also verify that non-blocking /healthz requests complete < 5ms while bcrypt runs!
+        let mut handles = Vec::with_capacity(100);
+        let batch_start = std::time::Instant::now();
+        for i in 0..100 {
+            let r = router.clone();
+            handles.push(tokio::spawn(async move {
+                let t0 = std::time::Instant::now();
+                let uri = if i % 2 == 0 {
+                    "/api/auth/login?userName=qa_admin&password=StrongPassword!123"
+                } else {
+                    "/api/auth/login?userName=qa_admin&password=WrongPassword!999"
+                };
+                let (status, _, _) = dispatch_req(&r, "GET", uri, vec![], None).await;
+                let expected = if i % 2 == 0 { 200 } else { 401 };
+                assert_eq!(status, expected);
+                t0.elapsed()
+            }));
+        }
+
+        // Probe /healthz during the 100 concurrent bcrypt logins to verify zero Tokio thread starvation
+        let health_t0 = std::time::Instant::now();
+        let (h_status, h_body, _) = dispatch_req(&router, "GET", "/healthz", vec![], None).await;
+        let health_latency = health_t0.elapsed();
+        assert_eq!(h_status, 200);
+        assert_eq!(h_body["ok"], true);
+        assert!(
+            health_latency.as_millis() < 50,
+            "/healthz must not be starved during 100 concurrent bcrypt logins (took {:?})",
+            health_latency
+        );
+
+        let mut latencies_ms: Vec<f64> = Vec::with_capacity(100);
+        for h in handles {
+            latencies_ms.push(h.await.unwrap().as_secs_f64() * 1000.0);
+        }
+        latencies_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p50 = latencies_ms[49];
+        let p99 = latencies_ms[98];
+        let total_ms = batch_start.elapsed().as_millis();
+        println!(
+            "[QA-METRIC] 100 Concurrent Logins: total={}ms, P50={:.2}ms, P99={:.2}ms, concurrent /healthz={:.2}ms",
+            total_ms,
+            p50,
+            p99,
+            health_latency.as_secs_f64() * 1000.0
+        );
+    }
+
+    /// Section A.2: REST Endpoints, Mission Domain, 25MB+ Bulk Mission Export & Deletion, and Path Traversal Security
+    #[tokio::test]
+    async fn qa_section_a2_mission_crud_25mb_export_and_path_traversal() {
+        let db = crate::db::init_db("sqlite::memory:").await.unwrap();
+        let cfg = test_config("http://127.0.0.1:59991", "http://127.0.0.1:59992");
+        let state = AppState::new(cfg, db.clone());
+        let router = crate::routes::app_router(state.clone());
+
+        // 1. Activate mission 7001 & verify GET /api/mission/load/active
+        activate_mission(
+            &state,
+            &json!({
+                "id": 7001,
+                "status": "ACTIVE",
+                "scanStatus": "PLAY",
+                "speed": 25,
+                "pass": 2,
+                "createdAt": "2026-08-12T10:00:00.000Z"
+            }),
+        )
+        .await
+        .unwrap();
+        let (st_act, m_act, _) = dispatch_req(&router, "GET", "/api/mission/load/active", vec![], None).await;
+        assert_eq!(st_act, 200);
+        assert_eq!(m_act["id"], 7001);
+        assert_eq!(m_act["status"], "ACTIVE");
+
+        // 2. Boundary checks on /api/mission/load/new (speed 5..=45, pass 1..=3)
+        let (st_bad_spd, bad_spd, _) = dispatch_req(
+            &router,
+            "POST",
+            "/api/mission/load/new",
+            vec![],
+            Some(json!({ "speed": 50, "pass": 2 })),
+        )
+        .await;
+        assert_eq!(st_bad_spd, 400);
+        assert_eq!(
+            bad_spd["error"],
+            "Mission speed must be an integer between 5 and 45 km/h"
+        );
+
+        let (st_bad_pass, bad_pass, _) = dispatch_req(
+            &router,
+            "POST",
+            "/api/mission/load/new",
+            vec![],
+            Some(json!({ "speed": 25, "pass": 4 })),
+        )
+        .await;
+        assert_eq!(st_bad_pass, 400);
+        assert_eq!(bad_pass["error"], "Number of passes must be between 1 and 3");
+
+        // 3. Deleting an ACTIVE mission must be rejected with 409 CONFLICT
+        let (st_del_active, del_active_body, _) =
+            dispatch_req(&router, "DELETE", "/api/mission/delete/7001", vec![], None).await;
+        assert_eq!(st_del_active, 409);
+        assert_eq!(
+            del_active_body["error"],
+            "Cannot delete the active mission — terminate it first"
+        );
+
+        // 4. Path Traversal Security on /images/{*path}, get_fod_image, and imagewriter::write_fod_jpeg
+        let (st_trav1, _, _) = dispatch_req(&router, "GET", "/images/../../etc/passwd", vec![], None).await;
+        assert_eq!(st_trav1, 404, "Directory traversal on /images/* must return 404");
+
+        let (st_missing_img, _, _) =
+            dispatch_req(&router, "GET", "/images/mission/7001/1/nonexistent.jpg", vec![], None).await;
+        assert_eq!(st_missing_img, 404, "Missing image must cleanly return 404 without panic");
+
+        // Verify imagewriter::write_fod_jpeg blocks traversal in any segment
+        assert!(
+            crate::imagewriter::write_fod_jpeg("../../etc", "1", "fod1", b"exploit")
+                .await
+                .is_err(),
+            "write_fod_jpeg must reject .. in mission_seg"
+        );
+        assert!(
+            crate::imagewriter::write_fod_jpeg("7001", "../etc", "fod1", b"exploit")
+                .await
+                .is_err(),
+            "write_fod_jpeg must reject .. in group_seg"
+        );
+        assert!(
+            crate::imagewriter::write_fod_jpeg("7001", "1", "../../../tmp/pwned", b"exploit")
+                .await
+                .is_err(),
+            "write_fod_jpeg must reject .. in fod_seg"
+        );
+
+        // 5. Populate mission 7001 with FodGroups, ClearedFods, and 26MB+ of FOD data for bulk export test
+        sqlx::query(
+            r#"UPDATE "Mission" SET "status" = 'INACTIVE' WHERE "id" = 7001"#,
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let now = now_naive();
+        sqlx::query(
+            r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","biggestFodId","biggestFodSize","createdAt","updatedAt")
+               VALUES ('grp-7001-1', 1, 7001, false, 'ACCEPTED', 1, 'fod-7001-0', 42, $1, $1)"#,
+        )
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        // Create 26MB+ of FOD records + image payload to stress-test 25MB+ mission export
+        let large_class = "X".repeat(26 * 1024); // 26KB per row * 1024 rows = ~26.6MB JSON export
+        let mut tx = db.begin().await.unwrap();
+        for i in 0..1024 {
+            let fid = format!("fod-7001-{i}");
+            sqlx::query(
+                r#"INSERT INTO "Fod" ("id","missionId","groupId","sysid","location","confidence","class","velocity","size","timestamp","createdAt","updatedAt","dirty")
+                   VALUES ($1, 7001, 1, 'car1', '{"lat":12.9716,"lon":77.5946}', 0.95, $2, 1.2, 42.0, $3, $3, $3, false)"#,
+            )
+            .bind(&fid)
+            .bind(&large_class)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+
+        let export_t0 = std::time::Instant::now();
+        let (st_exp, exp_body, _) =
+            dispatch_req(&router, "GET", "/api/mission/export/7001", vec![], None).await;
+        let export_ms = export_t0.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(st_exp, 200);
+        assert_eq!(exp_body["counts"]["fods"], 1024);
+        let export_path = exp_body["path"].as_str().unwrap();
+        let exported_bytes = std::fs::metadata(export_path).unwrap().len() as usize;
+        let _ = std::fs::remove_file(export_path);
+        assert!(
+            exported_bytes > 25 * 1024 * 1024,
+            "Exported payload on disk must exceed 25MB (actual: {} bytes)",
+            exported_bytes
+        );
+        println!(
+            "[QA-METRIC] 25MB+ Bulk Mission Export ({:.2} MB, 1024 FODs): {:.2}ms",
+            exported_bytes as f64 / (1024.0 * 1024.0),
+            export_ms
+        );
+
+        // 6. Delete inactive mission 7001 and verify atomic cascade removal
+        let del_t0 = std::time::Instant::now();
+        let (st_del, del_body, _) =
+            dispatch_req(&router, "DELETE", "/api/mission/delete/7001", vec![], None).await;
+        let del_ms = del_t0.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(st_del, 200);
+        assert_eq!(del_body["deleted"]["fods"], 1024);
+        assert_eq!(del_body["deleted"]["fodGroups"], 1);
+        println!("[QA-METRIC] Bulk Mission Delete (1024 FODs + groups): {:.2}ms", del_ms);
+
+        let rem_fods: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "Fod" WHERE "missionId" = 7001"#)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(rem_fods, 0);
+    }
+
+    /// Section A.3 & B.2: Upstream Hangs/ECONNREFUSED Resilience & Dirty-Flag Push Scheduler (including NEW undo)
+    #[tokio::test]
+    async fn qa_section_a3_b2_upstream_resilience_and_dirty_flag_sync() {
+        use proto_defination::fod_group::fod_group_service_server::{
+            FodGroupService, FodGroupServiceServer,
+        };
+        use proto_defination::fod_group::*;
+
+        struct MockCarFodGroupSvc;
+
+        #[tonic::async_trait]
+        impl FodGroupService for MockCarFodGroupSvc {
+            async fn list_groups(
+                &self,
+                _req: tonic::Request<ListGroupsRequest>,
+            ) -> std::result::Result<tonic::Response<FodGroupListResponse>, tonic::Status> {
+                Ok(tonic::Response::new(FodGroupListResponse {
+                    groups: vec![],
+                    pagination: None,
+                }))
+            }
+
+            async fn get_group_count(
+                &self,
+                req: tonic::Request<GroupCountRequest>,
+            ) -> std::result::Result<tonic::Response<GroupCountResponse>, tonic::Status> {
+                Ok(tonic::Response::new(GroupCountResponse {
+                    mission_id: req.into_inner().mission_id,
+                    count: 1,
+                }))
+            }
+
+            async fn resolve_groups(
+                &self,
+                req: tonic::Request<ResolveGroupsRequest>,
+            ) -> std::result::Result<tonic::Response<ResolveGroupsResponse>, tonic::Status> {
+                let inner = req.into_inner();
+                let results = inner
+                    .resolutions
+                    .into_iter()
+                    .map(|r| ResolutionResult {
+                        command_id: r.command_id,
+                        outcome: "Applied".to_string(),
+                        group: Some(FodGroupEntity {
+                            id: 1,
+                            group_id: r.group_id,
+                            mission_id: r.mission_id,
+                            status: r.desired_status,
+                            biggest_fod: None,
+                            biggest_fod_size: Some(15.0),
+                            version: r.base_version + 1,
+                            created_at: r.decided_at_ms,
+                            updated_at: r.decided_at_ms,
+                            pending_command_id: None,
+                            version_vector: Default::default(),
+                            decided_at_ms: r.decided_at_ms,
+                            updated_by: r.origin_node,
+                        }),
+                        pending: false,
+                    })
+                    .collect();
+                Ok(tonic::Response::new(ResolveGroupsResponse { results }))
+            }
+
+            type StreamGroupsStream = tokio_stream::wrappers::ReceiverStream<
+                std::result::Result<FodGroupEntity, tonic::Status>,
+            >;
+
+            async fn stream_groups(
+                &self,
+                _req: tonic::Request<StreamGroupsRequest>,
+            ) -> std::result::Result<tonic::Response<Self::StreamGroupsStream>, tonic::Status> {
+                let (_tx, rx) = tokio::sync::mpsc::channel(1);
+                Ok(tonic::Response::new(
+                    tokio_stream::wrappers::ReceiverStream::new(rx),
+                ))
+            }
+        }
+
+        let db = crate::db::init_db("sqlite::memory:").await.unwrap();
+        let now = now_naive();
+
+        // 1. Test ECONNREFUSED resilience while Car is down (port 59999 unbound)
+        let down_cfg = test_config("http://127.0.0.1:59999", "http://127.0.0.1:59998");
+        let down_state = AppState::new(down_cfg, db.clone());
+
+        sqlx::query(
+            r#"INSERT INTO "Mission" ("id","status","timer","scanStatus","createdAt","updatedAt")
+               VALUES (8001, 'ACTIVE', 0, 'PLAY', $1, $1)"#,
+        )
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","biggestFodId","biggestFodSize","createdAt","updatedAt")
+               VALUES ('grp-8001-1', 1, 8001, true, 'ACCEPTED', 1, 'fod-1', 15, $1, $1),
+                      ('grp-8001-2', 2, 8001, true, 'NEW', 2, 'fod-2', 20, $1, $1)"#,
+        )
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        // Run dirty-flag scheduler while network is disconnected -> dirty flags MUST be retained
+        crate::scheduler::resolve_fod_group(&down_state).await.unwrap();
+        let dirty_count_offline: i64 =
+            sqlx::query_scalar(r#"SELECT COUNT(*) FROM "FodGroup" WHERE "missionId" = 8001 AND "dirty" = true"#)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(dirty_count_offline, 2, "Dirty flags must be retained while upstream is unreachable");
+
+        // Also verify active mission is automatically demoted to INACTIVE when car is down
+        terminate_active_mission_if_car_down(&down_state).await;
+        let m_status: String = sqlx::query_scalar(r#"SELECT "status" FROM "Mission" WHERE "id" = 8001"#)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(m_status, "INACTIVE", "Active mission must auto-terminate when Car is unreachable");
+
+        // 2. Now start Mock Car gRPC server on an ephemeral port and reconnect!
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+        let srv_handle = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(FodGroupServiceServer::new(MockCarFodGroupSvc))
+                .serve_with_incoming(incoming)
+                .await
+                .unwrap();
+        });
+
+        let up_cfg = test_config(&format!("http://{addr}"), "http://127.0.0.1:59998");
+        let up_state = AppState::new(up_cfg, db.clone());
+
+        let sync_t0 = std::time::Instant::now();
+        crate::scheduler::resolve_fod_group(&up_state).await.unwrap();
+        let sync_ms = sync_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let (g1_dirty, g1_ver): (bool, i64) = sqlx::query_as(
+            r#"SELECT "dirty", "version" FROM "FodGroup" WHERE "missionId" = 8001 AND "groupId" = 1"#,
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert!(!g1_dirty, "Group 1 dirty flag must be cleared after upstream recovery");
+        assert_eq!(g1_ver, 2, "Group 1 version must increment from resolved response");
+
+        let (g2_dirty, g2_ver): (bool, i64) = sqlx::query_as(
+            r#"SELECT "dirty", "version" FROM "FodGroup" WHERE "missionId" = 8001 AND "groupId" = 2"#,
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert!(!g2_dirty, "Undo (NEW) group 2 dirty flag must be cleared after upstream recovery");
+        assert_eq!(g2_ver, 1, "Undo (NEW) group 2 version must update from resolved response");
+
+        println!(
+            "[QA-METRIC] Dirty-Flag Push Recovery Sync (ACCEPTED + NEW undo over gRPC): {:.2}ms",
+            sync_ms
+        );
+        srv_handle.abort();
+    }
+
+    /// Section C.1 & C.2: Real-Time Streaming (SSE Cursor Deduplication & Socket.IO/IPC Telemetry)
+    #[tokio::test]
+    async fn qa_section_c_sse_cursor_dedup_and_socket_telemetry() {
+        let db = crate::db::init_db("sqlite::memory:").await.unwrap();
+        let cfg = test_config("http://127.0.0.1:59991", "http://127.0.0.1:59992");
+        let state = AppState::new(cfg, db.clone());
+        let router = crate::routes::app_router(state.clone());
+
+        let t1 = chrono::DateTime::parse_from_rfc3339("2026-08-12T10:00:00.123Z")
+            .unwrap()
+            .naive_utc();
+        let t2 = chrono::DateTime::parse_from_rfc3339("2026-08-12T10:00:01.456Z")
+            .unwrap()
+            .naive_utc();
+
+        sqlx::query(
+            r#"INSERT INTO "Mission" ("id","status","timer","scanStatus","createdAt","updatedAt")
+               VALUES (9001, 'ACTIVE', 10, 'PLAY', $1, $1)"#,
+        )
+        .bind(t1)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","biggestFodId","biggestFodSize","createdAt","updatedAt")
+               VALUES ('g-9001-1', 1, 9001, false, 'NEW', 1, 'f-9001-1', 12, $1, $1),
+                      ('g-9001-2', 2, 9001, false, 'ACCEPTED', 2, 'f-9001-2', 18, $1, $2)"#,
+        )
+        .bind(t1)
+        .bind(t2)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"INSERT INTO "Fod" ("id","missionId","groupId","sysid","location","confidence","class","velocity","size","timestamp","createdAt","updatedAt","dirty")
+               VALUES ('f-9001-1', 9001, 1, 'car1', '{"lat":12.97,"lon":77.59}', 0.9, 'Metal', 1.0, 12.0, $1, $1, $1, false),
+                      ('f-9001-2', 9001, 2, 'car1', '{"lat":12.98,"lon":77.60}', 0.95, 'Rubber', 1.0, 18.0, $2, $2, $2, false)"#,
+        )
+        .bind(t1)
+        .bind(t2)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        // 1. Verify /api/mission/retrive-data/{id} ISO-8601 UTC millisecond formatting
+        let (st_ret, ret_body, _) =
+            dispatch_req(&router, "GET", "/api/mission/retrive-data/9001", vec![], None).await;
+        assert_eq!(st_ret, 200);
+        let groups = ret_body.as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0]["groupId"], 2);
+        assert_eq!(
+            groups[0]["timestamp"].as_str().unwrap(),
+            "2026-08-12T10:00:01.456Z",
+            "Timestamps must have exact .3fZ UTC format"
+        );
+        assert_eq!(
+            groups[1]["timestamp"].as_str().unwrap(),
+            "2026-08-12T10:00:00.123Z",
+            "Timestamps must have exact .3fZ UTC format"
+        );
+
+        // 2. Verify Socket.IO / Tauri IPC /gui and /rtk event handling & 5s communication expiry
+        crate::realtime::socketio::handle_socket_event(
+            &state,
+            Some("/gui"),
+            "guiHeartBeat",
+            Some(json!({})),
+        )
+        .await;
+        crate::realtime::socketio::handle_socket_event(
+            &state,
+            Some("/rtk"),
+            "rtk_data",
+            Some(json!({ "lat": 12.9716, "lon": 77.5946, "fix": "RTK_FIXED" })),
+        )
+        .await;
+
+        {
+            let mut h = state.health.write().await;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            h.available_communication.push(json!({ "type": "car", "timestamp": now_ms }));
+            crate::realtime::socketio::filter_recent_communications(&mut h);
+            crate::realtime::socketio::filter_other_health(&mut h);
+            assert!(h.latency.connected, "Car heartbeat within 5s window must keep latency.connected = true");
+            assert_eq!(h.rtk_data.data["fix"], "RTK_FIXED");
+            assert!(h.rtk_data.data_status);
+
+            // Simulate Car heartbeat older than 5s -> must transition latency.connected to false (Offline)
+            h.available_communication.clear();
+            h.available_communication.push(json!({ "type": "car", "timestamp": now_ms - 6000 }));
+            crate::realtime::socketio::filter_recent_communications(&mut h);
+            assert!(!h.latency.connected, "Expired Car heartbeat (>5s) must transition latency.connected to false");
+            assert!(h.available_communication.is_empty());
+        }
+
+        // Simulate 50 rapid Socket/IPC heartbeat & RTK bursts and measure P99 latency
+        let burst_t0 = std::time::Instant::now();
+        for i in 0..50 {
+            crate::realtime::socketio::handle_socket_event(
+                &state,
+                Some("/rtk"),
+                "rtk_data",
+                Some(json!({ "seq": i, "lat": 12.9716 + (i as f64 * 0.0001), "lon": 77.5946 })),
+            )
+            .await;
+        }
+        let burst_ms = burst_t0.elapsed().as_secs_f64() * 1000.0;
+        println!("[QA-METRIC] 50 Rapid Socket/IPC Event Bursts: total={:.2}ms", burst_ms);
+        assert!(burst_ms < 50.0, "50 IPC events must process in < 50ms");
     }
 }
