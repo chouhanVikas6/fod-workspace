@@ -130,7 +130,12 @@ async fn login(
     };
 
     // bcryptjs $2a$/$2b$ hashes verify with the rust bcrypt crate.
-    let is_match = bcrypt::verify(password, &user.password).unwrap_or(false);
+    // Offload CPU-intensive bcrypt verification to blocking threadpool to prevent Tokio worker starvation.
+    let pwd_owned = password.to_string();
+    let hash_owned = user.password.clone();
+    let is_match = tokio::task::spawn_blocking(move || bcrypt::verify(&pwd_owned, &hash_owned).unwrap_or(false))
+        .await
+        .unwrap_or(false);
     if !is_match {
         return (
             StatusCode::UNAUTHORIZED,
@@ -262,9 +267,10 @@ async fn register(method: Method, State(state): State<AppState>, body: Bytes) ->
     }
 
     // PARITY: `bcrypt.hash(password, 10)` — cost 10 (NOT the crate DEFAULT_COST 12).
-    let hashed = match bcrypt::hash(password, 10) {
-        Ok(h) => h,
-        Err(_) => return internal_error(),
+    let pwd_owned = password.to_string();
+    let hashed = match tokio::task::spawn_blocking(move || bcrypt::hash(&pwd_owned, 10)).await {
+        Ok(Ok(h)) => h,
+        _ => return internal_error(),
     };
     // id: Prisma @default(uuid()) is app-side; role GUEST/specified; isActive default true;
     // createdAt = new Date(); updatedAt (@updatedAt) = now() on create.
@@ -420,9 +426,10 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
         .and_then(Value::as_str)
         .filter(|p| !p.is_empty())
     {
-        match bcrypt::hash(new_pwd, 10) {
-            Ok(h) => h,
-            Err(_) => return internal_error(),
+        let pwd_owned = new_pwd.to_string();
+        match tokio::task::spawn_blocking(move || bcrypt::hash(&pwd_owned, 10)).await {
+            Ok(Ok(h)) => h,
+            _ => return internal_error(),
         }
     } else {
         user.password.clone()

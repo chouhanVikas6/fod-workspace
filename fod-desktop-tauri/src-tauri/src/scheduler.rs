@@ -158,14 +158,28 @@ pub async fn resolve_fod_group(state: &AppState) -> anyhow::Result<()> {
                     .and_then(|s| s.as_i64().or_else(|| s.as_str().and_then(|t| t.parse().ok())))
                     == Some(200);
             if ok {
+                let resolved_ver = data.get("version").and_then(Value::as_i64);
                 sqlx::query(
-                    r#"UPDATE "FodGroup" SET "dirty" = false, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2"#,
+                    r#"UPDATE "FodGroup" SET "dirty" = false, "version" = COALESCE($4, "version"), "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2"#,
                 )
                 .bind(row.group_id)
                 .bind(row.mission_id)
                 .bind(crate::services::now_naive())
+                .bind(resolved_ver)
                 .execute(&state.db)
                 .await?;
+
+                state.emit_gui(
+                    "update",
+                    &json!({
+                        "type": "fodGroup",
+                        "message": {
+                            "groupId": row.group_id,
+                            "missionId": row.mission_id,
+                            "status": "NEW"
+                        }
+                    }),
+                );
             }
         }
     }
