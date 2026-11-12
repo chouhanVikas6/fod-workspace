@@ -77,10 +77,10 @@ const CamerasInfo = ({ isToolTipVisible }) => {
             {(showTooltipOnHover || showTooltipOnClick) && (
                 <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute top-full mt-2.5 right-0 w-[320px] bg-white dark:bg-[#0E1626] rounded-2xl shadow-2xl border border-slate-200/90 dark:border-[#1E293B] p-4 z-[100] cursor-default animate-in fade-in slide-in-from-top-2 duration-150 select-none"
+                    className="absolute top-full mt-2.5 right-0 w-[320px] bg-white dark:bg-[#292D33] rounded-2xl shadow-2xl border border-slate-200 dark:border-[#373C43] p-4 z-[100] cursor-default animate-in fade-in slide-in-from-top-2 duration-150 select-none"
                 >
                     {/* Header */}
-                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-[#1E293B]">
+                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-[#373C43]">
                         <div>
                             <h4 className="text-xs font-bold text-slate-800 dark:text-white tracking-tight">Camera & Vision BITE</h4>
                             <p className="text-[11px] text-slate-400 dark:text-slate-400">26-Camera Array Status</p>
@@ -142,7 +142,7 @@ const CamerasInfo = ({ isToolTipVisible }) => {
 
                     {/* Selected Camera Details */}
                     {selectedCam && (
-                        <div className="mt-3 p-3 bg-slate-50 dark:bg-[#131D31] border border-slate-200/90 dark:border-[#1E293B] rounded-xl animate-in fade-in duration-150">
+                        <div className="mt-3 p-3 bg-slate-50 dark:bg-[#22262B] border border-slate-200 dark:border-[#373C43] rounded-xl animate-in fade-in duration-150">
                             <div className="flex items-center justify-between mb-1.5">
                                 <span className="font-bold text-xs text-slate-800 dark:text-white">
                                     Camera #{selectedCam.index + 1}
