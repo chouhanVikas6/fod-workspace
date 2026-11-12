@@ -11,6 +11,8 @@ export interface MissionStateType {
   isNotificationOn: boolean;
   isPauseLoading: boolean;
   isActive:boolean;
+  isExplore?: boolean;
+  status?: string;
 }
 
 const initialState: MissionStateType = {
@@ -22,7 +24,9 @@ const initialState: MissionStateType = {
   isLoading: false,
   isNotificationOn: false,
   isPauseLoading: false,
-  isActive:false
+  isActive:false,
+  isExplore: false,
+  status: undefined,
 };
 
 const MissionStateReducer = createSlice({
@@ -30,12 +34,14 @@ const MissionStateReducer = createSlice({
   initialState,
   reducers: {
     start_Mission: (state, action) => {
-      const { id:missionNumber ,isActive=true , duration=null}= action.payload;
+      const { id:missionNumber ,isActive=true , duration=null, isExplore=false, status}= action.payload;
       state.missionNumber = missionNumber;
       state.isStart = true;
       state.isLoading = false;
       state.isActive=isActive;
+      state.isExplore = isExplore || !isActive;
       state.duration=duration;
+      state.status = status;
     },
     pause_resumeMission: (state, action) => {
       const { payload: pauseStatus } = action;
@@ -66,6 +72,9 @@ const MissionStateReducer = createSlice({
       state.isLoading = false;
       state.isNotificationOn = false;
       state.isPauseLoading = false;
+      state.isActive = false;
+      state.isExplore = false;
+      state.status = undefined;
     },
   },
 });

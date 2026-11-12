@@ -40,6 +40,15 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
     ),
   );
 
+  const isMissionActive = Boolean(
+    mission?.isActive &&
+    !mission?.isExplore &&
+    (!mission?.status || mission?.status === "ACTIVE"),
+  );
+  const isPlayPauseDisabled =
+    !isMissionActive || !isCarLive || (isPauseLoading && isMissionActive);
+  const isStopDisabled = !isMissionActive || !isCarLive;
+
   // Keyboard shortcut listener
   useEffect(() => {
     function handleKeyDown(event: any) {
@@ -55,6 +64,10 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
 
   // Mission scan status toggle api
   async function handlePlayPause() {
+    if (!isMissionActive) {
+      toast.info("Scan control is disabled in explore mode");
+      return;
+    }
     if (!isCarLive) {
       toast.error("Vehicle is not in communication");
       return;
@@ -81,6 +94,7 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
   }
 
   async function syncPlayPause() {
+    if (!isMissionActive) return;
     try {
       let response = await axiosClient({
         method: "get",
@@ -97,11 +111,12 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
   }
 
   useEffect(() => {
+    if (!isMissionActive) return;
     let interval = setInterval(() => {
       syncPlayPause();
     }, 1500);
     return () => clearInterval(interval);
-  }, []);
+  }, [isMissionActive]);
 
   return (
    <div className="h-full min-h-0 w-full flex flex-col items-center justify-between py-3 bg-transparent border-t-0 mt-0">
@@ -210,33 +225,35 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
       
 <div className="flex flex-col items-center sm:gap-3 lg:gap-5">
       {/* 6. PAUSE / RESUME */}
-       {/* Divider */}
+      {/* Divider */}
       <div className="w-7 h-[1px] bg-[#4A5059] my-0.5" />
 
       <button
         type="button"
         onClick={handlePlayPause}
-        disabled={!isCarLive || (isPauseLoading && mission.isActive)}
+        disabled={isPlayPauseDisabled}
         title={
-          !isCarLive
-            ? "Vehicle not in communication"
-            : isPause
-              ? "Resume scan"
-              : "Pause scan"
+          !isMissionActive
+            ? "Scan control disabled in explore mode"
+            : !isCarLive
+              ? "Vehicle not in communication"
+              : isPause
+                ? "Resume scan"
+                : "Pause scan"
         }
-        className={`w-14 h-14 rounded-[10px] flex flex-col items-center justify-center text-[#F0B44A] hover:bg-[#F0B44A]/20 transition-all active:scale-95 cursor-pointer relative ${
-          !isCarLive || (isPauseLoading && mission.isActive)
-            ? "cursor-not-allowed"
-            : ""
+        className={`w-14 h-14 rounded-[10px] flex flex-col items-center justify-center text-[#F0B44A] transition-all relative ${
+          isPlayPauseDisabled
+            ? "opacity-40 cursor-not-allowed hover:bg-transparent"
+            : "hover:bg-[#F0B44A]/20 active:scale-95 cursor-pointer"
         }`}
       >
-        {isPauseLoading && (
+        {isPauseLoading && isMissionActive && (
           <div className="absolute inset-0 flex items-center justify-center">
             <BarLoader />
           </div>
         )}
         {isPause ? (
-          <RxPlay className="w-5 h-5 mb-2 " />
+          <RxPlay className="w-5 h-5 mb-2" />
         ) : (
           <RxPause className="w-5 h-5 mb-2" />
         )}
@@ -246,18 +263,25 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
       </button>
 
       {/* 7. STOP */}
-      {/* {mission.isActive && ( */}
       <button
         type="button"
-        disabled={!isCarLive}
-        title={!isCarLive ? "Vehicle not in communication" : "Stop Mission"}
+        disabled={isStopDisabled}
+        title={
+          !isMissionActive
+            ? "Cannot stop mission in explore mode"
+            : !isCarLive
+              ? "Vehicle not in communication"
+              : "Stop Mission"
+        }
         onClick={() => {
-          if (isCarLive) {
+          if (!isStopDisabled) {
             dispatch(terminateMission);
           }
         }}
-        className={`w-14 h-14 rounded-[10px] flex flex-col items-center justify-center text-[#FF5A6A] hover:bg-[#FF5A6A]/20 transition-all active:scale-95 cursor-pointer ${
-          !isCarLive ? "cursor-not-allowed" : ""
+        className={`w-14 h-14 rounded-[10px] flex flex-col items-center justify-center text-[#FF5A6A] transition-all ${
+          isStopDisabled
+            ? "opacity-40 cursor-not-allowed hover:bg-transparent"
+            : "hover:bg-[#FF5A6A]/20 active:scale-95 cursor-pointer"
         }`}
       >
         <RxStop className="w-5 h-5 mb-0.5" />
@@ -265,7 +289,6 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
           STOP
         </span>
       </button>
-      {/* )} */}
 
       {/* 8. EXIT */}
       <button
