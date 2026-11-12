@@ -15,7 +15,7 @@ const formatElapsed = (ms: number) => {
 
 const MissionProgress = () => {
   const [groupCount,setGroupCount]=useState(0);
-  const {missionNumber,duration,isStart} = useSelector((state:RootState) => state.MissionState)
+  const {missionNumber,duration,isStart,isActive} = useSelector((state:RootState) => state.MissionState)
   // Waypoint progress is only defined for template/search-area missions; there
   // is no source for free-run missions, so this stays null ("--"). Wire to the
   // mission's waypoint field here once the template planner provides one.
@@ -29,10 +29,10 @@ const MissionProgress = () => {
     const base = typeof duration === 'number' ? duration : 0;
     const joinedAt = Date.now();
     setElapsed(base);
-    if (!isStart) return; // explore mode: show frozen recorded duration
+    if (!isStart || !isActive) return; // explore mode: show frozen recorded duration
     const t = setInterval(() => setElapsed(base + (Date.now() - joinedAt)), 1000);
     return () => clearInterval(t);
-  }, [missionNumber, duration, isStart]);
+  }, [missionNumber, duration, isStart, isActive]);
   const fods=useSelector((state:RootState)=>state.FodReducer.fods)
   const count=useMemo(()=>{
     return fods.reduce((prvs,current)=>{

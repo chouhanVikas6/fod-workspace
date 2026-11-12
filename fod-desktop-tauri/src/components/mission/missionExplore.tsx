@@ -49,7 +49,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
             url: RestPath.EXPLOREMISSION(selectedMission?.id),
         }).then((response) => {
             if (!!response?.data?.id) {
-                dispatch(start_Mission({ ...response.data, isActive: false }));
+                dispatch(start_Mission({ ...response.data, isActive: false, isExplore: true }));
             } else {
                 toast.error(response?.data?.error || 'Mission not found')
             }
