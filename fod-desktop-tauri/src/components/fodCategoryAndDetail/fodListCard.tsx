@@ -1,3 +1,4 @@
+
 import React from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Fod_FodId, Fod_Velocity } from "../../utils/FodParser.js";
@@ -7,7 +8,7 @@ import { updateSelectedFod } from "@/store/actions/SelectedFod";
 import { AppDispatch, RootState } from "@/store/index.js";
 import { updateClearedDetailViewFod } from "@/store/actions/ClearedFodDetailView";
 import { undoFod } from "@/store/actions/FodActions";
-import MapMode from '@/assets/images/svg/MissionControl/MapMode.svg';
+import MapMode from "@/assets/images/svg/MissionControl/MapMode.svg";
 import { set_Mapview } from "@/store/slices/mapReducer-slice";
 import { config } from "@/config/clientConfig";
 
@@ -29,6 +30,11 @@ const FodListcard = ({ fod }: any) => {
     }
   };
 
+  const size = Number(fod.size);
+  const formattedSize = Number.isFinite(size)
+    ? `${size.toFixed(2)} mm`
+    : "-";
+
   return (
     <div className="w-full p-2">
       <div
@@ -44,10 +50,12 @@ const FodListcard = ({ fod }: any) => {
             width={120}
             height={100}
           />
+
           <div className="absolute top-1.5 left-1.5 right-1.5 flex justify-between items-center">
             <div className="text-white font-bold text-xs px-2 py-0.5 bg-black/70 rounded-full font-mono backdrop-blur-xs">
               {Fod_FodId(fod)}
             </div>
+
             {canUndo ? (
               <button
                 type="button"
@@ -75,18 +83,29 @@ const FodListcard = ({ fod }: any) => {
             )}
           </div>
         </div>
+
         <div className="h-full flex-1 flex flex-col justify-center px-3 py-2 text-xs">
           <div className="flex justify-between items-center py-0.5">
             <span className="text-[#7E8691] font-medium">CAM ID</span>
-            <span className="text-slate-200 font-semibold">{fod.sysid || '-'}</span>
+            <span className="text-slate-200 font-semibold">
+              {fod.sysid || "-"}
+            </span>
           </div>
+
           <div className="flex justify-between items-center py-0.5">
             <span className="text-[#7E8691] font-medium">Size</span>
-            <span className="text-slate-200 font-semibold">{fod.size ? `${fod.size} mm` : '-'}</span>
+            <span className="text-slate-200 font-semibold">
+              {fod.size !== undefined && fod.size !== null && fod.size !== ""
+                ? formattedSize
+                : "-"}
+            </span>
           </div>
+
           <div className="flex justify-between items-center py-0.5">
             <span className="text-[#7E8691] font-medium">Vel</span>
-            <span className="text-slate-200 font-semibold">{Fod_Velocity(fod)}</span>
+            <span className="text-slate-200 font-semibold">
+              {Fod_Velocity(fod)}
+            </span>
           </div>
         </div>
       </div>

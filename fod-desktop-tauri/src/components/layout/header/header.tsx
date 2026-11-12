@@ -12,8 +12,8 @@ const Header = () => {
           <img src={Zoid_logo} alt="ZOID Logo" className="w-6 h-6 object-contain" />
           <p className="text-white font-serif font-bold text-lg tracking-[0.05em]">ZOID</p>
         </div>
-        <div className="h-4 w-[1px] bg-[#4A5059] mx-3" />
-          <p className="text-[#A8B0BA] font-medium text-medium tracking-[0]">Vehicle Operator Console</p>
+       
+         
       </div>
 
       {/* Health status & User info */}
