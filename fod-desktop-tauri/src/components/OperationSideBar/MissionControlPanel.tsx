@@ -108,26 +108,28 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
 
 <div className="flex flex-col items-center sm:gap-3 lg:gap-5">
       {/* 1. HOME */}
-      <button
-        type="button"
-        onClick={() => {
-          setTab("dashboard");
-          if (isMapOpen) {
-            dispatch(toggle_Mapview());
-          }
-        }}
-        title="Home"
-        className={`w-14 h-14 flex flex-col items-center justify-center transition-all hover:text-white active:scale-95 cursor-pointer ${
-          tab === "dashboard" && !isMapOpen
-            ? "bg-[#4C9FE8]/20 rounded-[10px] text-[#4C9FE8]"
-            : "text-[#A8B0BA] hover:text-white "
-        }`}
-      >
-        <RxHome className="w-5 h-5 mb-0.5" />
-        <span className="sm:text-[10px] lg:text-[12px] font-semibold tracking-wider">
-          Home
-        </span>
-      </button>
+    {/* 1. HOME */}
+<button
+  type="button"
+  onClick={() => {
+    setTab("home");
+
+    if (isMapOpen) {
+      dispatch(toggle_Mapview());
+    }
+  }}
+  title="Home"
+  className={`w-14 h-14 flex flex-col items-center justify-center transition-all hover:text-white active:scale-95 cursor-pointer ${
+    tab === "home" && !isMapOpen
+      ? "bg-[#4C9FE8]/20 rounded-[10px] text-[#4C9FE8]"
+      : "text-[#A8B0BA] hover:text-white"
+  }`}
+>
+  <RxHome className="w-5 h-5 mb-0.5" />
+  <span className="sm:text-[10px] lg:text-[12px] font-semibold tracking-wider">
+    Home
+  </span>
+</button>
 
       {/* 2. SETUP */}
       <button

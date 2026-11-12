@@ -3,7 +3,6 @@ import FilterBar from "./filterBar";
 import FodDisplay from "./fodDisplay";
 import { useDispatch, useSelector } from "react-redux";
 import { syncFod, resetFods } from "@/store/slices/fodReducer-slice";
-import FilteredFods from "./filteredFod";
 import { CircleLoader } from "../commen/loader";
 import { RootState } from "@/store";
 import { invoke } from "@tauri-apps/api/core";
@@ -134,7 +133,7 @@ const FodPanel = ({ open }) => {
           )}
         </div>
       </div>
-      <FilteredFods />
+    
     </div>
   );
 };

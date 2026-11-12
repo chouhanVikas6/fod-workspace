@@ -27,14 +27,5 @@ const ZoomIcon = ({ map }) => {
 
       <div className="h-[60%] w-[1px] bg-gray-800"></div>
 
-      <button className="active:bg-blue-600 active:scale-95 active:shadow w-[50px] h-full pl-2">
-           <Image src={Substract} height={35} width={35} alt={""} onClick={MapZoomOut}/>
-      </button>
-      
-     
-
-    </div>
-  );
-};
-
-export default ZoomIcon;
+      {/* <button className="active:bg-blue-600 active:scale-95 active:shadow w-[50px] h-full pl-2">
+           <Image srcdecar */}
