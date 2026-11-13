@@ -90,15 +90,15 @@ export default function App() {
                   />
 
                     {/* Private route */}
-                    {/* <Route
+                    <Route
                       path="/dashboard"
                       element={
                         <PrivateRoute authenticated={true}>
                           <MissionControl />
                         </PrivateRoute>
                       }
-                    /> */}
-                  <Route path="/dashboard" element={<MissionControl />} />
+                    />
+                  {/* <Route path="/dashboard" element={<MissionControl />} /> */}
 
                     {/* Fallback routing */}
                     <Route

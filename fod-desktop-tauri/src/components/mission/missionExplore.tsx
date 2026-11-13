@@ -206,14 +206,14 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                 <div className="flex items-center gap-2">
                     <button
                         onClick={exploreMission}
-                        className="h-10 px-5 rounded-lg bg-[#4C9FE8] text-white font-semibold hover:bg-[#3B91DC] active:scale-95 transition-all shadow"
+                        className="h-[44px] px-5 rounded-lg bg-[#4C9FE8] text-white font-semibold hover:bg-[#3B91DC] active:scale-95 transition-all shadow"
                     >
                         Explore Mission
                     </button>
                     <button
                         onClick={stopTemplateView}
                         title="Close"
-                        className="h-10 w-10 rounded-lg border border-slate-200 dark:border-[#373C43] bg-white dark:bg-[#292D33] text-slate-500 dark:text-[#8C939C] hover:bg-slate-100 dark:hover:bg-[#373C43] hover:text-slate-900 dark:hover:text-white active:scale-95 transition-all flex items-center justify-center font-bold"
+                        className="h-[44px] w-[44px] rounded-lg border border-slate-200 dark:border-[#373C43] bg-white dark:bg-[#292D33] text-slate-500 dark:text-[#8C939C] hover:bg-slate-100 dark:hover:bg-[#373C43] hover:text-slate-900 dark:hover:text-white active:scale-95 transition-all flex items-center justify-center font-bold"
                     >
                         ✕
                     </button>
@@ -255,7 +255,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                         {activeTab === 'map' ? <ExploreMap fods={fodList} onSelectFod={setSelectedGroup} /> :
                             fodList.length ?
                                 <div className="p-2 space-y-3">
-                                    <div className="grid grid-cols-2 gap-2">
+                                   <div className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
                                         {fodList.slice(0, displayLimit).map((fod: any) => (
                                             <FodHorizontalcard key={fod.id + 'listonExplore'} {...{ fod, selectedMission, actionOnCard: setSelectedGroup }} />
                                         ))}

@@ -6,14 +6,29 @@ import { updateSelectedFod } from "@/store/actions/SelectedFod";
 import { AppDispatch } from "@/store/index.js";
 import { updateClearedDetailViewFod } from "@/store/actions/ClearedFodDetailView";
 import { undoFod } from "@/store/actions/FodActions";
-import MapMode from '@/assets/images/svg/MissionControl/MapMode.svg';
+import MapMode from "@/assets/images/svg/MissionControl/MapMode.svg";
 import { config } from "@/config/clientConfig";
 
-const FodHorizontalcard = ({ fod,selectedMission,openMapAndSelectFod,actionOnCard }:any) => {
+const formatSize = (value: any) => {
+    const size = Number(value);
+
+    if (value == null || value === "" || !Number.isFinite(size)) {
+        return "—";
+    }
+
+    return size.toFixed(2);
+};
+
+const FodHorizontalcard = ({
+  fod,
+  selectedMission,
+  openMapAndSelectFod,
+  actionOnCard,
+}: any) => {
   const dispatch = useDispatch<AppDispatch>();
   const canUndo = fod.groupStatus !== "CLEARED";
   const { frame } = fod;
-  const base64String = frame
+  const base64String = frame;
 
   return (
     <div className="h-40 w-full p-2.5">
@@ -22,23 +37,47 @@ const FodHorizontalcard = ({ fod,selectedMission,openMapAndSelectFod,actionOnCar
         onClick={() => actionOnCard(fod)}
       >
         <div className="relative h-full w-1/2">
-          <Image src={`${config.ImagesBase}/${selectedMission.id}/${fod.groupId}/${fod.id}.jpg`} className="h-full w-full object-cover object-center" draggable={false} alt={""} width={100} height={100}/>
+          <Image
+            src={`${config.ImagesBase}/${selectedMission.id}/${fod.groupId}/${fod.id}.jpg`}
+            className="h-full w-full object-cover object-center"
+            draggable={false}
+            alt={""}
+            width={100}
+            height={100}
+          />
           <div className="absolute top-1.5 w-full h-7 px-1.5 flex justify-between items-center">
-            <div className="text-white font-bold text-xl px-2 bg-gray-600 rounded-full bg-opacity-30">{fod.groupId}</div>
-            {canUndo ? 
-              <ImUndo2 className="cursor-pointer h-5 w-5 mr-1 text-white drop-shadow" onClick={() => dispatch(undoFod(fod))} /> : 
-              <Image src={MapMode} onClick={() => openMapAndSelectFod()} className="cursor-pointer" alt={""} width={35} height={35} />
-            }
+            <div className="text-white font-bold text-xl px-2 bg-gray-600 rounded-full bg-opacity-30">
+              {fod.groupId}
+            </div>
+            {canUndo ? (
+              <ImUndo2
+                className="cursor-pointer h-5 w-5 mr-1 text-white drop-shadow"
+                onClick={() => dispatch(undoFod(fod))}
+              />
+            ) : (
+              <Image
+                src={MapMode}
+                onClick={() => openMapAndSelectFod()}
+                className="cursor-pointer"
+                alt={""}
+                width={35}
+                height={35}
+              />
+            )}
           </div>
         </div>
         <div className="h-full w-1/2 flex flex-col justify-between items-center p-2.5 text-xs">
           <div className="w-full h-1/5 flex justify-between text-[#696972] dark:text-[#8C939C]">
             <span>CAM ID</span>
-            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{fod.sysid}</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+              {fod.sysid}
+            </span>
           </div>
           <div className="w-full h-1/5 flex justify-between text-[#696972] dark:text-[#8C939C]">
             <span>Size</span>
-            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{fod.size}</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+              {formatSize(fod.size)} mm
+            </span>
           </div>
           {/* <div className="w-full h-1/5 flex justify-between text-[#696972]">
             <span>Risk</span>
@@ -46,12 +85,14 @@ const FodHorizontalcard = ({ fod,selectedMission,openMapAndSelectFod,actionOnCar
           </div> */}
           <div className="w-full h-1/5 flex justify-between text-[#696972] dark:text-[#8C939C]">
             <span>Vel</span>
-            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{(fod.velocity)}</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+              {fod.velocity}
+            </span>
           </div>
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
 export default FodHorizontalcard;

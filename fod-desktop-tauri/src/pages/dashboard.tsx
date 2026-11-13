@@ -93,7 +93,9 @@ const MissionControl = () => {
             {isFodFinalReviewOpen ? <FodFinalReview /> : <></>}
             <ClearedFodDetailView />
             {isOpen ? <DetailedView /> : <></>}
-            <FodCategoryAndDetail />
+            {(tab === "dashboard" || isMapOpen) && (
+  <FodCategoryAndDetail />
+)}
           </div>
         </>
       ) : (
