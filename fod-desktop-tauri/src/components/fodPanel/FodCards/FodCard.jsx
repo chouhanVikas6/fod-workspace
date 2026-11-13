@@ -1,19 +1,27 @@
+
 import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
+
 import MapMode from "@/assets/images/svg/MissionControl/MapMode.svg";
+
 import { Fod_Velocity, Fod_Size } from "../../../utils/FodParser";
 import { set_Map_view } from "@/store/actions/MapOperations";
 import { updateSelectedFod } from "@/store/actions/SelectedFod";
+
 import BarLoader from "../../../utils/Helper/BarLoader.jsx";
 import { config } from "@/config/clientConfig";
+
 import Image from "next/image";
+
 import {
   accept_Fod,
   doubleAccept,
   reject_Fod,
 } from "../../../store/slices/fodReducer-slice";
+
 import axiosClient from "@/utils/axios";
 import { toast } from "react-toastify";
 
@@ -27,15 +35,17 @@ const Fodcard = ({
   const storeMissionNumber = useSelector((store) =>
     propMissionNumber !== undefined
       ? propMissionNumber
-      : store.MissionState?.missionNumber,
+      : store.MissionState?.missionNumber
   );
 
   const missionNumber = propMissionNumber ?? storeMissionNumber;
+
   const { FodSize } = config.FodCard;
 
   const [fade, setFade] = useState(false);
   const [imgModal, setImageModal] = useState(false);
   const [imgError, setImgError] = useState(false);
+
   const isFodFound = fod.groupStatus === "ACCEPTED";
 
   const getStyleBySize = (value) => {
@@ -58,8 +68,10 @@ const Fodcard = ({
       };
     } else {
       return {
-        badgeStyle: "bg-[#374151] text-slate-200",
-        borderStyle: "border border-[#2B333E]",
+        badgeStyle:
+          "bg-[#E2E8F0] text-[#334155] border border-[#CBD5E1] dark:border-transparent dark:bg-[#374151] dark:text-slate-200",
+        borderStyle:
+          "border border-[#E2E8F0] dark:border-[#2B333E] shadow-[0_4px_16px_-2px_rgba(15,23,42,0.08)] dark:shadow-none",
         text: "LOW RISK",
       };
     }
@@ -72,7 +84,8 @@ const Fodcard = ({
     if (fod?.grid) return `Grid ${fod.grid}`;
 
     const loc =
-      fod?._loc ?? (typeof fod?.location === "object" ? fod.location : null);
+      fod?._loc ??
+      (typeof fod?.location === "object" ? fod.location : null);
 
     if (loc) {
       if (loc.grid) return `Grid ${loc.grid}`;
@@ -144,7 +157,10 @@ const Fodcard = ({
     } catch (e) {
       console.error(e);
       setImageModal(false);
-      toast.error(e?.data?.message || e?.data?.error || "Failed to accept FOD");
+
+      toast.error(
+        e?.data?.message || e?.data?.error || "Failed to accept FOD"
+      );
     }
   };
 
@@ -177,7 +193,10 @@ const Fodcard = ({
     } catch (e) {
       console.error(e);
       setImageModal(false);
-      toast.error(e?.data?.message || e?.data?.error || "Failed to reject FOD");
+
+      toast.error(
+        e?.data?.message || e?.data?.error || "Failed to reject FOD"
+      );
     }
   };
 
@@ -191,10 +210,12 @@ const Fodcard = ({
     <div
       id={fod.id}
       key={fod.id}
-      className={`w-[225px] h-[350px] relative rounded-xl p-3.5 flex flex-col justify-between transition-all duration-200 ease-out bg-[#1C2129] text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${fade ? "fade-out opacity-40" : ""}`}
+      className={`w-[225px] h-[350px] relative rounded-xl p-3.5 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${
+        fade ? "fade-out opacity-40" : ""
+      }`}
     >
       {imgModal && (
-        <div className="absolute inset-0 rounded-xl bg-black/60 backdrop-blur-xs z-30 flex items-center justify-center">
+        <div className="absolute inset-0 rounded-xl bg-black/20 dark:bg-black/60 backdrop-blur-xs z-30 flex items-center justify-center">
           <BarLoader />
         </div>
       )}
@@ -216,25 +237,25 @@ const Fodcard = ({
             type="button"
             title="View on map"
             onClick={openMapAndSelectFod}
-            className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"
+            className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-white/10 transition-colors"
           >
             <Image
               src={MapMode}
               alt="Map"
               width={18}
               height={18}
-              className="brightness-200"
+              className="brightness-50 dark:brightness-200"
             />
           </button>
         </div>
 
         {/* FOD Title */}
-        <div className="text-[17px] font-bold text-white tracking-tight mt-1 mb-2">
+        <div className="text-[17px] font-bold text-[#1E293B] dark:text-white tracking-tight mt-1 mb-2">
           FOD #{fod.groupId || fod.id}
         </div>
 
         {/* Image Preview */}
-        <div className="relative h-[105px] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-700/50 group mb-2.5 flex items-center justify-center">
+        <div className="relative h-[105px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mb-2.5 flex items-center justify-center">
           {!imgError ? (
             <Image
               src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
@@ -247,7 +268,7 @@ const Fodcard = ({
               onError={() => setImgError(true)}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center text-slate-500 text-[11px] gap-1">
+            <div className="flex flex-col items-center justify-center text-[#64748B] dark:text-slate-500 text-[11px] gap-1">
               <span className="font-mono text-xs">
                 FOD #{fod.groupId || fod.id}
               </span>
@@ -259,22 +280,33 @@ const Fodcard = ({
         {/* Metadata */}
         <div className="w-full flex flex-col gap-1 text-[11px] mb-3">
           <div className="flex justify-between items-center">
-            <span className="text-[#7E8691] font-medium">Type</span>
-            <span className="text-slate-100 font-semibold">
+            <span className="text-[#64748B] dark:text-[#7E8691] font-medium">
+              Type
+            </span>
+
+            <span className="text-[#1E293B] dark:text-slate-100 font-semibold">
               {fod.class || "Metal bolt"}
             </span>
           </div>
 
           <div className="flex justify-between items-center">
-            <span className="text-[#7E8691] font-medium">Size</span>
-            <span className="text-slate-100 font-semibold">
-              {fod.size ? `${Math.round(Number(fod.size))} mm` : Fod_Size(fod)}
+            <span className="text-[#64748B] dark:text-[#7E8691] font-medium">
+              Size
+            </span>
+
+            <span className="text-[#1E293B] dark:text-slate-100 font-semibold">
+              {fod.size
+                ? `${Math.round(Number(fod.size))} mm`
+                : Fod_Size(fod)}
             </span>
           </div>
 
           <div className="flex justify-between items-center">
-            <span className="text-[#7E8691] font-medium">Location</span>
-            <span className="text-slate-100 font-semibold">
+            <span className="text-[#64748B] dark:text-[#7E8691] font-medium">
+              Location
+            </span>
+
+            <span className="text-[#1E293B] dark:text-slate-100 font-semibold">
               {getLocationDisplay()}
             </span>
           </div>
@@ -290,7 +322,7 @@ const Fodcard = ({
           onClick={(e) => acceptFod(fod, e)}
           className={`w-full h-[34px] rounded-[5px] border font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors ${
             isFodFound
-              ? " border-[#414B57] text-white cursor-not-allowed"
+              ? "bg-slate-100 dark:bg-[#303640] border-slate-200 dark:border-[#414B57] text-slate-400 dark:text-white cursor-not-allowed"
               : "bg-[#4C9FE8] hover:bg-[#398BD5] active:bg-[#2F7FC5] border-[#4C9FE8] text-white cursor-pointer"
           }`}
         >
@@ -298,14 +330,12 @@ const Fodcard = ({
           <span>CONFIRM FOD</span>
         </button>
 
-       
-
         {/* Not FOD */}
         <button
           type="button"
           disabled={imgModal}
           onClick={(e) => rejectFod(fod, e)}
-          className="w-full h-[34px] rounded-[5px] bg-[#303640] hover:bg-[#39414C] active:bg-[#252C35] border border-[#414B57] text-[#A8B0BA] hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full h-[34px] rounded-[5px] bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RxCross1 className="w-3.5 h-3.5 stroke-[1.5]" />
           <span>NOT FOD</span>
