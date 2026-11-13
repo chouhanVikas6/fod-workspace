@@ -72,45 +72,47 @@ const LoginInfo: React.FC = () => {
   return (
     <>
       <div className="flex h-full items-center justify-end space-x-3.5 px-1 flex-shrink-0 select-none">
-        {/* Date & Time */}
-        <div className="flex flex-col justify-center items-end text-right whitespace-nowrap leading-tight">
-          <span className="text-sm font-bold text-slate-800 dark:text-white tracking-tight">
-            {date.toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })}
-          </span>
-          <span className="text-[11px] text-slate-500 dark:text-[#8C939C] font-medium mt-0.5">
-            {date.toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            })}
-          </span>
-        </div>
+  {/* Date & Time */}
+  <div className="flex flex-col justify-center items-end text-right whitespace-nowrap leading-tight">
+    <span className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
+      {date.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })}
+    </span>
 
-        {/* Separator */}
-        <div className="h-4 w-[1px] bg-slate-200 dark:bg-[#4A5059] mx-0.5" />
+    <span className="text-[11px] text-slate-500 dark:text-[#8C939C] font-medium mt-0.5">
+      {date.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })}
+    </span>
+  </div>
 
-        {/* User profile dropdown trigger */}
-        <div ref={dropdownRef} className="relative flex items-center h-full">
-          <button
-            type="button"
-            onClick={() => setIsDropdownOpen((prev) => !prev)}
-            className="flex items-center space-x-2 px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-[#373C43]/50 active:bg-slate-200 dark:active:bg-[#373C43] transition-colors focus:outline-none"
-            aria-haspopup="true"
-            aria-expanded={isDropdownOpen}
-            title="User menu"
-          >
-            <div className="w-8 h-8 rounded-full border-[1.5px] border-[#4B9BE2] flex items-center justify-center text-[#4B9BE2] shrink-0">
-              <RxPerson className="w-4 h-4" />
-            </div>
-            <span className="text-sm font-semibold text-slate-800 dark:text-white">
-              {displayName || 'User1'}
-            </span>
-          </button>
+  {/* Separator */}
+  <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#4A5059] mx-0.5" />
 
+  {/* User profile dropdown trigger */}
+  <div ref={dropdownRef} className="relative flex items-center h-full">
+    <button
+      type="button"
+      onClick={() => setIsDropdownOpen((prev) => !prev)}
+      className="flex items-center space-x-2 px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-[#373C43]/50 active:bg-slate-200 dark:active:bg-[#373C43] transition-colors focus:outline-none"
+      aria-haspopup="true"
+      aria-expanded={isDropdownOpen}
+      title="User menu"
+    >
+      <div className="w-8 h-8 rounded-full border-[1.5px] border-[#4B9BE2] flex items-center justify-center text-[#4B9BE2] shrink-0">
+        <RxPerson className="w-4 h-4" />
+      </div>
+
+      <span className="text-sm font-semibold text-slate-900 dark:text-white mt-0.5">
+        {displayName || "User1"}
+      </span>
+    </button>
+ 
           {/* Dropdown Menu */}
           {isDropdownOpen && (
             <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-[#292D33] rounded-xl shadow-xl border border-slate-200 dark:border-[#383D44] py-1.5 z-[100] animate-in fade-in slide-in-from-top-2 duration-150">
