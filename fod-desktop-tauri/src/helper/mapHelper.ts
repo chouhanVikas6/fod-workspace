@@ -41,12 +41,20 @@ export function pointsOnLine(P1, P4, spacing, offset = 0) {
 }
 
 export function isWithinBoundary(point, boundaryPoints) {
-    const [p1, p2, p3, p4] = boundaryPoints;
+    if (!boundaryPoints || boundaryPoints.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = boundaryPoints.length - 1; i < boundaryPoints.length; j = i++) {
+        const xi = boundaryPoints[i].x;
+        const yi = boundaryPoints[i].y;
+        const xj = boundaryPoints[j].x;
+        const yj = boundaryPoints[j].y;
 
-    const isWithinX = point.x >= Math.min(p1.x, p2.x, p3.x, p4.x) && point.x <= Math.max(p1.x, p2.x, p3.x, p4.x);
-    const isWithinY = point.y >= Math.min(p1.y, p2.y, p3.y, p4.y) && point.y <= Math.max(p1.y, p2.y, p3.y, p4.y);
-
-    return isWithinX && isWithinY;
+        const intersect =
+            (yi > point.y) !== (yj > point.y) &&
+            point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+        if (intersect) inside = !inside;
+    }
+    return inside;
 }
 
 export type PathDirection = 'LENGTHWISE' | 'CROSSWISE' | 'OPTIMAL';
@@ -58,58 +66,123 @@ export function mapArea(
     direction: PathDirection = 'OPTIMAL',
     reverse: boolean = false
 ) {
-    if (!boundaryPoints || boundaryPoints.length < 4) return [];
-    const cartesianBoundaryPoints = boundaryPoints.slice(0, 4).map(p => latLonToCartesian(p.lat, p.lon));
-    const [p1, p2, p3, p4] = cartesianBoundaryPoints;
+    if (!boundaryPoints || boundaryPoints.length < 3) return [];
+    const spacing = Math.max(0.5, lateralDistance || 5);
+    const pts = boundaryPoints.map((p) => latLonToCartesian(p.lat, p.lon));
+    const n = pts.length;
 
-    const lenPair1 = (distance(p1, p2) + distance(p4, p3)) / 2;
-    const lenPair2 = (distance(p1, p4) + distance(p2, p3)) / 2;
+    // Pick orientation from the longest polygon edge
+    let longestLen = -1;
+    let edgeAngle = 0;
+    for (let i = 0; i < n; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % n];
+        const len = distance(a, b);
+        if (len > longestLen) {
+            longestLen = len;
+            edgeAngle = Math.atan2(b.y - a.y, b.x - a.x);
+        }
+    }
 
-    // For LENGTHWISE / OPTIMAL: sweeps run parallel to the longer pair of edges
-    // For CROSSWISE: sweeps run parallel to the shorter pair of edges
-    const wantParallelToPair2 = direction === 'CROSSWISE' ? (lenPair2 < lenPair1) : (lenPair2 >= lenPair1);
+    const rotatePts = (angle: number) => {
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        return pts.map((p) => ({
+            u: p.x * cosA + p.y * sinA,
+            v: -p.x * sinA + p.y * cosA,
+        }));
+    };
 
-    let startSideA: Array<{ x: number; y: number }>;
-    let startSideB: Array<{ x: number; y: number }>;
-    let stepWidth: number;
+    const boundsFor = (rot: Array<{ u: number; v: number }>) => {
+        let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+        for (const p of rot) {
+            if (p.u < uMin) uMin = p.u;
+            if (p.u > uMax) uMax = p.u;
+            if (p.v < vMin) vMin = p.v;
+            if (p.v > vMax) vMax = p.v;
+        }
+        return { uSpan: uMax - uMin, vSpan: vMax - vMin, vMin, vMax };
+    };
 
-    if (wantParallelToPair2) {
-        startSideA = pointsOnLine(p1, p2, lateralDistance, offset);
-        startSideB = pointsOnLine(p4, p3, lateralDistance, offset);
-        stepWidth = lenPair1;
+    // Ensure LENGTHWISE/OPTIMAL sweeps along the longer axis of the polygon,
+    // and CROSSWISE sweeps along the shorter axis.
+    let sweepAngle = edgeAngle;
+    let rotated = rotatePts(sweepAngle);
+    let bounds = boundsFor(rotated);
+    const wantLengthwise = direction !== 'CROSSWISE';
+    if ((wantLengthwise && bounds.vSpan > bounds.uSpan) || (!wantLengthwise && bounds.uSpan > bounds.vSpan)) {
+        sweepAngle += Math.PI / 2;
+        rotated = rotatePts(sweepAngle);
+        bounds = boundsFor(rotated);
+    }
+
+    const { vMin, vMax } = bounds;
+    const totalSpan = vMax - vMin;
+    if (totalSpan <= 0) return [];
+
+    // Generate scanline v positions inside [vMin, vMax]
+    const scanVs: number[] = [];
+    const startOffset = Math.min(spacing / 2 + Math.max(0, offset) * 0.1, totalSpan / 2);
+    if (totalSpan <= spacing) {
+        scanVs.push((vMin + vMax) / 2);
     } else {
-        startSideA = pointsOnLine(p1, p4, lateralDistance, offset);
-        startSideB = pointsOnLine(p2, p3, lateralDistance, offset);
-        stepWidth = lenPair2;
+        for (let v = vMin + startOffset; v < vMax; v += spacing) {
+            scanVs.push(v);
+        }
+        if (scanVs.length === 0) {
+            scanVs.push((vMin + vMax) / 2);
+        }
     }
 
     if (reverse) {
-        startSideA.reverse();
-        startSideB.reverse();
+        scanVs.reverse();
     }
 
-    const numSweeps = Math.min(
-        Math.ceil(stepWidth / lateralDistance),
-        startSideA.length,
-        startSideB.length
-    );
+    const cosA = Math.cos(sweepAngle);
+    const sinA = Math.sin(sweepAngle);
+    const unrotate = (u: number, v: number) => ({
+        x: u * cosA - v * sinA,
+        y: u * sinA + v * cosA,
+    });
 
     const linesCoordinatesData: number[][][] = [];
 
-    for (let i = 0; i < numSweeps; i++) {
-        if (!startSideA[i] || !startSideB[i]) continue;
-        const point1 = cartesianToLatLon(startSideA[i].x, startSideA[i].y);
-        const point2 = cartesianToLatLon(startSideB[i].x, startSideB[i].y);
-        if (i % 2 === 0) {
-            linesCoordinatesData.push([
-                [point1.lon, point1.lat],
-                [point2.lon, point2.lat]
-            ]);
-        } else {
-            linesCoordinatesData.push([
-                [point2.lon, point2.lat],
-                [point1.lon, point1.lat]
-            ]);
+    for (let i = 0; i < scanVs.length; i++) {
+        const vLine = scanVs[i];
+        const intersections: number[] = [];
+
+        for (let e = 0; e < n; e++) {
+            const p1 = rotated[e];
+            const p2 = rotated[(e + 1) % n];
+            if ((p1.v <= vLine && p2.v > vLine) || (p2.v <= vLine && p1.v > vLine)) {
+                const t = (vLine - p1.v) / (p2.v - p1.v);
+                intersections.push(p1.u + t * (p2.u - p1.u));
+            }
+        }
+
+        intersections.sort((a, b) => a - b);
+
+        for (let k = 0; k + 1 < intersections.length; k += 2) {
+            const uStart = intersections[k];
+            const uEnd = intersections[k + 1];
+            if (Math.abs(uEnd - uStart) < 0.1) continue;
+
+            const c1 = unrotate(uStart, vLine);
+            const c2 = unrotate(uEnd, vLine);
+            const ll1 = cartesianToLatLon(c1.x, c1.y);
+            const ll2 = cartesianToLatLon(c2.x, c2.y);
+
+            if (i % 2 === 0) {
+                linesCoordinatesData.push([
+                    [ll1.lon, ll1.lat],
+                    [ll2.lon, ll2.lat],
+                ]);
+            } else {
+                linesCoordinatesData.push([
+                    [ll2.lon, ll2.lat],
+                    [ll1.lon, ll1.lat],
+                ]);
+            }
         }
     }
 

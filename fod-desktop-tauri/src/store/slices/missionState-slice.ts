@@ -3,6 +3,7 @@ import { createSlice } from "@reduxjs/toolkit";
 
 export interface MissionStateType {
   missionNumber: number | null;
+  displayId?: number | null;
   duration:number|null;
   isStart: boolean;
   isTerminate: boolean;
@@ -17,6 +18,7 @@ export interface MissionStateType {
 
 const initialState: MissionStateType = {
   missionNumber: null,
+  displayId: null,
   duration:null,
   isStart: false,
   isTerminate: false,
@@ -34,8 +36,9 @@ const MissionStateReducer = createSlice({
   initialState,
   reducers: {
     start_Mission: (state, action) => {
-      const { id:missionNumber ,isActive=true , duration=null, isExplore=false, status}= action.payload;
+      const { id:missionNumber, displayId=null, isActive=true, duration=null, isExplore=false, status}= action.payload;
       state.missionNumber = missionNumber;
+      state.displayId = displayId;
       state.isStart = true;
       state.isLoading = false;
       state.isActive=isActive;
@@ -69,6 +72,7 @@ const MissionStateReducer = createSlice({
       state.isStart = false;
       state.isPause = true;
       state.missionNumber = null;
+      state.displayId = null;
       state.isLoading = false;
       state.isNotificationOn = false;
       state.isPauseLoading = false;

@@ -14,6 +14,7 @@ import {
   Layers,
   Sun,
   Moon,
+  Cpu,
 } from 'lucide-react';
 
 export default function Header() {
@@ -93,6 +94,29 @@ export default function Header() {
                 <AlertCircle className="w-3.5 h-3.5" /> Offline
               </span>
             )}
+          </div>
+
+          {/* Connected Devices Selector */}
+          <div
+            title="Number of simulated devices with independent gRPC connections and streams"
+            className="flex items-center gap-2 bg-slate-100 border border-slate-200 dark:bg-[#131926] dark:border-[#222d40] px-3 py-1.5 rounded-lg text-xs"
+          >
+            <Cpu className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span className="text-slate-600 dark:text-slate-300 font-medium">Devices:</span>
+            <input
+              type="number"
+              min="1"
+              max="32"
+              step="1"
+              value={config.device_count}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val)) {
+                  updateConfig({ device_count: Math.min(32, Math.max(1, val)) });
+                }
+              }}
+              className="w-12 bg-white dark:bg-[#0c101a] border border-slate-300 dark:border-[#2c3b54] rounded px-1.5 py-0.5 text-center font-mono font-bold text-cyan-700 dark:text-cyan-300 outline-none"
+            />
           </div>
 
           {/* Theme Toggle Button */}
@@ -266,6 +290,19 @@ export default function Header() {
               {Math.round(config.throughput_hz * config.batch_size).toLocaleString()} FOD/s{' '}
               <span className="text-slate-400 dark:text-slate-500 font-normal">
                 ({config.throughput_hz.toFixed(1)} Hz)
+              </span>
+            </div>
+          </div>
+
+          {/* Streams */}
+          <div>
+            <div className="text-slate-500 dark:text-slate-400 text-[10px] uppercase tracking-wider font-semibold">
+              Streams
+            </div>
+            <div className="font-mono font-bold text-slate-900 dark:text-white">
+              {telemetry.connected_devices}
+              <span className="text-slate-400 dark:text-slate-500 font-normal">
+                /{config.device_count}
               </span>
             </div>
           </div>

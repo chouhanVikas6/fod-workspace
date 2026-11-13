@@ -83,8 +83,9 @@ export default function Login() {
       }
 
       await Auth.login(res.data.token, res.data.user);
+      const role = res.data?.user?.role || Auth.getCurrentUser()?.role;
+      toast.success(role ? `You logged in as ${role}` : 'You logged in successfully');
       setToken(res.data.token);
-      toast.success('Authentication successful');
     } catch (err: any) {
       const message =
         err?.response?.data?.message ||

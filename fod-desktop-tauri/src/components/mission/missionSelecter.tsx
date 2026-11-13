@@ -78,11 +78,29 @@ const MissionSelector = () => {
         setSelectedMission(null);
     };
 
+    // Assign incremental 1-based displayId chronologically (oldest = 1, newest = N)
+    const missionsWithDisplayId = useMemo(() => {
+        if (!missions?.length) return [];
+        const chronological = [...missions].sort((a, b) => {
+            const ta = new Date(a.createdAt || a.created_at || 0).getTime() || Number(a.mission_id ?? a.id ?? 0);
+            const tb = new Date(b.createdAt || b.created_at || 0).getTime() || Number(b.mission_id ?? b.id ?? 0);
+            return ta - tb;
+        });
+        const displayIdMap = new Map<string, number>();
+        chronological.forEach((m, i) => {
+            displayIdMap.set(String(m.mission_id ?? m.id), i + 1);
+        });
+        return missions.map((m) => ({
+            ...m,
+            displayId: m.displayId ?? displayIdMap.get(String(m.mission_id ?? m.id)),
+        }));
+    }, [missions]);
+
     // Live active mission
     const activeMission = useMemo(() => {
         if (!isCarLive) return [];
-        return missions?.filter((mission: any) => mission.status === 'ACTIVE') || [];
-    }, [missions, isCarLive]);
+        return missionsWithDisplayId?.filter((mission: any) => mission.status === 'ACTIVE') || [];
+    }, [missionsWithDisplayId, isCarLive]);
 
     if (loading) return <CircleLoader />;
 
@@ -118,7 +136,7 @@ const MissionSelector = () => {
                 </div>
 
                 {/* Previous Missions List */}
-                <PastMission {...{ missions, setMission, selectedMission }} />
+                <PastMission {...{ missions: missionsWithDisplayId, setMission, selectedMission }} />
             </div>
 
             {/* Right Main Area */}
@@ -130,7 +148,7 @@ const MissionSelector = () => {
                     : ""
             }`}>
                 {currentScreen === 'MissionTemplate' ? (
-                    <MissionTemplate {...{ stopTemplateView }} />
+                    <MissionTemplate {...{ stopTemplateView, nextDisplayId: missions.length + 1 }} />
                 ) : currentScreen === 'MissionExplore' ? (
                     <MissionExplore {...{ stopTemplateView, selectedMission }} />
                 ) : (

@@ -13,6 +13,7 @@ import { RootState } from "@/store";
 import { useState } from "react";
 import { useSelector } from "react-redux";
 import HomeDashboard from "@/components/homeDashboard";
+import MissionReport from "@/components/mission/missionReport";
 //@ts-ignore
 import Setting from "@/components/setting/setting";
 import ErrorBoundary from "@/components/commen/ErrorBoundary";
@@ -78,6 +79,12 @@ const MissionControl = () => {
               {tab === "dashboard" && (
                 <ErrorBoundary name="FOD Panel">
                   <FodPanel open={true} />
+                </ErrorBoundary>
+              )}
+
+              {tab === "reports" && (
+                <ErrorBoundary name="Mission Reports">
+                  <MissionReport />
                 </ErrorBoundary>
               )}
 

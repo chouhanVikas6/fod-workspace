@@ -49,7 +49,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
             url: RestPath.EXPLOREMISSION(selectedMission?.id),
         }).then((response) => {
             if (!!response?.data?.id) {
-                dispatch(start_Mission({ ...response.data, isActive: false, isExplore: true }));
+                dispatch(start_Mission({ ...response.data, displayId: selectedMission?.displayId, isActive: false, isExplore: true }));
             } else {
                 toast.error(response?.data?.error || 'Mission not found')
             }
@@ -104,6 +104,8 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         let rafId: number | null = null;
         const pendingRows: any[] = [];
         const subId = `mission-explore-${selectedMission.id}-${Date.now()}`;
+        groupRequestRef.current += 1;
+        setSelectedGroupId(null);
         setFodList([]);
         setDisplayLimit(60);
 
@@ -194,7 +196,9 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
             {/* Header */}
             <div className="flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
-                    <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-wide">Mission {selectedMission.id}</h1>
+                    <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-wide" title={selectedMission?.id ? `ID: ${selectedMission.id}` : undefined}>
+                        Mission #{selectedMission.displayId ?? selectedMission.id}
+                    </h1>
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide border ${
                         isActive 
                             ? 'bg-[#01B656]/20 text-[#01B656] border-[#01B656]/50' 

@@ -47,6 +47,7 @@
     "framer-motion": "^12.42.2",
     "geolib": "^3.3.14",
     "jsonwebtoken": "^9.0.3",
+    "jspdf": "^4.2.1",
     "lucide-react": "^1.72.0",
     "mapbox-gl": "^3.26.0",
     "msgpack-lite": "^0.1.26",

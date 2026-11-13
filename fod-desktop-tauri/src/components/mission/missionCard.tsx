@@ -21,7 +21,8 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
             (health?.availableCommunication as any[])?.some((c: any) => c?.type === 'car' || c?.type?.startsWith('car'))
         );
 
-    const { mission_id, total, cleared, rejected } = missionData || {};
+    const { mission_id, displayId, total, cleared, rejected } = missionData || {};
+    const missionLabel = displayId ?? mission_id;
     const isSelected = selectedMission?.mission_id === mission_id;
 
     function loadMission(id: any) {
@@ -37,7 +38,7 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
             const mid = data?.missionId || data?.id;
             if (mid) {
                 const duration = data?.duration ?? (data?.timer ? data.timer * 1000 : 0);
-                dispatch(start_Mission({ id: mid, isActive: true, duration }));
+                dispatch(start_Mission({ id: mid, displayId, isActive: true, duration }));
             } else {
                 toast.error(data?.error || 'Failed to join mission');
             }
@@ -64,8 +65,8 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
                         </span>
                         <span className="font-bold text-[11px] uppercase tracking-wider text-[#01B656]">Live Mission</span>
                     </div>
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 truncate">
-                        Mission {mission_id}
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 truncate" title={mission_id ? `ID: ${mission_id}` : undefined}>
+                        Mission #{missionLabel}
                     </h4>
                 </div>
                 <button
@@ -93,8 +94,8 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
         >
             {/* Left stats info */}
             <div className="flex-1 min-w-0 pr-1">
-                <h4 className="text-[13px] font-bold text-slate-800 dark:text-white tracking-tight truncate">
-                    Mission {mission_id}
+                <h4 className="text-[13px] font-bold text-slate-800 dark:text-white tracking-tight truncate" title={mission_id ? `ID: ${mission_id}` : undefined}>
+                    Mission #{missionLabel}
                 </h4>
 
                 <div className="flex items-center gap-5 mt-2">

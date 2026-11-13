@@ -240,10 +240,17 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         {/* 5. REPORTS */}
         <button
           type="button"
-          onClick={() => setTab("setting")}
+          onClick={() => {
+            if (isMapOpen) dispatch(toggle_Mapview());
+            setTab("reports");
+          }}
           title="Mission Reports"
           aria-label="Mission Reports"
-          className={`${navButtonBase} ${navButtonInactive}`}
+          className={`${navButtonBase} ${
+            tab === "reports" && !isMapOpen
+              ? navButtonActive
+              : navButtonInactive
+          }`}
         >
           <RxFileText className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
           <span className={navLabel}>Reports</span>

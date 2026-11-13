@@ -1,8 +1,15 @@
 import { useSimulatorStore } from '../../store';
-import { Gauge, ShieldAlert, Sparkles } from 'lucide-react';
+import { Gauge, ShieldAlert, Sparkles, Server } from 'lucide-react';
 
 export default function ThroughputTab() {
-  const { config, random, custom, updateConfig, updateRandom, updateCustom } = useSimulatorStore();
+  const { config, random, custom, telemetry, updateConfig, updateRandom, updateCustom } =
+    useSimulatorStore();
+
+  const devicePresets = [1, 2, 4, 8, 16];
+  const perDeviceRate =
+    config.device_count > 0
+      ? Math.round((config.throughput_hz * config.batch_size) / config.device_count)
+      : 0;
 
   const presetFrequencies = [0.5, 1.0, 5.0, 10.0, 20.0, 50.0, 60.0, 100.0, 200.0, 360.0, 1800.0];
   const presetFodPerSec = [
@@ -182,6 +189,126 @@ export default function ThroughputTab() {
                   </span>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* Card: Connected Devices & Individual Streams */}
+        <div className="bg-white border border-slate-200 dark:bg-[#0f1422] dark:border-[#1e293b] rounded-xl p-5 shadow-xs dark:shadow-md transition-colors">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-semibold text-sm">
+              <Server className="w-4 h-4" />
+              <span>CONNECTED DEVICES &amp; INDIVIDUAL STREAMS</span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700">
+              {telemetry.connected_devices}/{config.device_count} Active
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {/* Device Count Controls */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-slate-600 dark:text-slate-300 font-medium mr-1">
+                  Devices:
+                </span>
+                {devicePresets.map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => updateConfig({ device_count: n })}
+                    className={`px-2.5 py-1 rounded text-xs font-mono font-semibold border cursor-pointer transition-colors ${
+                      config.device_count === n
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-700 dark:bg-indigo-950 dark:border-indigo-500 dark:text-indigo-300'
+                        : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200 dark:bg-[#161f30] dark:border-[#243147] dark:text-slate-300 dark:hover:bg-[#1e2a40]'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min="1"
+                  max="32"
+                  step="1"
+                  value={config.device_count}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val)) {
+                      updateConfig({ device_count: Math.min(32, Math.max(1, val)) });
+                    }
+                  }}
+                  className="w-16 bg-slate-50 dark:bg-[#141b29] border border-slate-300 dark:border-[#253248] rounded px-2 py-1 font-mono text-xs font-bold text-slate-800 dark:text-slate-100 text-right outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 dark:text-slate-400">Base ID:</span>
+                <input
+                  type="text"
+                  value={config.sysid}
+                  onChange={(e) => updateConfig({ sysid: e.target.value })}
+                  placeholder="sim-vehicle-01"
+                  className="w-32 bg-slate-50 dark:bg-[#141b29] border border-slate-300 dark:border-[#253248] rounded px-2 py-1 font-mono text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              Opens {config.device_count} independent gRPC connection{config.device_count > 1 ? 's' : ''} &amp; stream pair{config.device_count > 1 ? 's' : ''} (~{perDeviceRate.toLocaleString()} FOD/s per device).
+            </span>
+
+            {/* Individual Streams List */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pt-2 border-t border-slate-100 dark:border-[#1a2333]">
+              {(telemetry.devices.length > 0
+                ? telemetry.devices
+                : Array.from({ length: config.device_count }, (_, idx) => {
+                    const base = config.sysid.trim() || 'sim-vehicle';
+                    const id =
+                      config.device_count <= 1
+                        ? base
+                        : `${base}-${String(idx + 1).padStart(2, '0')}`;
+                    return {
+                      device_id: id,
+                      node_name: `sim-pc-node-${String(idx + 1).padStart(2, '0')}`,
+                      connected: false,
+                      sent: 0,
+                      accepted: 0,
+                      rejected: 0,
+                      duplicate: 0,
+                    };
+                  })
+              ).map((dev) => (
+                <div
+                  key={dev.device_id}
+                  className="flex items-center justify-between px-2.5 py-2 rounded-lg bg-slate-50 border border-slate-200 dark:bg-[#141b29] dark:border-[#222d42] text-[11px]"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        dev.connected
+                          ? 'bg-emerald-500 animate-pulse'
+                          : 'bg-slate-400 dark:bg-slate-600'
+                      }`}
+                    />
+                    <div className="truncate">
+                      <div className="font-mono font-bold text-slate-800 dark:text-slate-200 truncate">
+                        {dev.device_id}
+                      </div>
+                      <div className="font-mono text-[10px] text-slate-400 dark:text-slate-500 truncate">
+                        {dev.node_name}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="font-mono text-right shrink-0 ml-2">
+                    <div className="text-slate-700 dark:text-slate-300 font-semibold">
+                      {dev.sent.toLocaleString()} sent
+                    </div>
+                    <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                      {dev.accepted} acc{dev.rejected > 0 ? ` · ${dev.rejected} rej` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
