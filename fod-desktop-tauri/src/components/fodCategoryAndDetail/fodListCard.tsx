@@ -14,7 +14,10 @@ import { config } from "@/config/clientConfig";
 
 const FodListcard = ({ fod }: any) => {
   const dispatch = useDispatch<AppDispatch>();
-  const missionState = useSelector((store: RootState) => store.MissionState);
+  const missionState = useSelector(
+    (store: RootState) => store.MissionState
+  );
+
   const canUndo = fod.groupStatus !== "CLEARED";
 
   const openMapAndSelectFod = () => {
@@ -22,7 +25,10 @@ const FodListcard = ({ fod }: any) => {
     dispatch(set_Mapview());
   };
 
-  const handleWhichDetailViewToOpen = (fod: any, notClearedFod: any) => {
+  const handleWhichDetailViewToOpen = (
+    fod: any,
+    notClearedFod: any
+  ) => {
     if (notClearedFod) {
       dispatch(updateSelectedFod(fod) as any);
     } else {
@@ -38,10 +44,20 @@ const FodListcard = ({ fod }: any) => {
   return (
     <div className="w-full p-2">
       <div
-        className="w-full flex h-[100px] overflow-hidden rounded-xl bg-[#1E232B] border border-[#2B3542] hover:border-slate-500 transition-all cursor-pointer active:scale-[0.99]"
-        onDoubleClick={() => handleWhichDetailViewToOpen(fod, canUndo)}
+        className="
+          w-full flex h-[100px] overflow-hidden rounded-xl
+          bg-white dark:bg-[#1E232B]
+          border border-slate-200 dark:border-[#2B3542]
+          hover:border-slate-300 dark:hover:border-slate-500
+          shadow-sm dark:shadow-none
+          transition-all cursor-pointer active:scale-[0.99]
+        "
+        onDoubleClick={() =>
+          handleWhichDetailViewToOpen(fod, canUndo)
+        }
       >
-        <div className="relative h-full w-[45%] bg-slate-900 shrink-0">
+        {/* Image Section */}
+        <div className="relative h-full w-[45%] bg-slate-100 dark:bg-slate-900 shrink-0">
           <Image
             src={`${config.ImagesBase}/${missionState.missionNumber}/${fod.groupId}/${fod.id}.jpg`}
             className="h-full w-full object-cover object-center"
@@ -51,8 +67,9 @@ const FodListcard = ({ fod }: any) => {
             height={100}
           />
 
+          {/* Image Actions */}
           <div className="absolute top-1.5 left-1.5 right-1.5 flex justify-between items-center">
-            <div className="text-white font-bold text-xs px-2 py-0.5 bg-black/70 rounded-full font-mono backdrop-blur-xs">
+            <div className="text-white font-bold text-[10px] min-[900px]:text-xs px-2 py-0.5 bg-black/70 rounded-full font-mono backdrop-blur-xs">
               {Fod_FodId(fod)}
             </div>
 
@@ -69,41 +86,59 @@ const FodListcard = ({ fod }: any) => {
                 <ImUndo2 className="h-3.5 w-3.5" />
               </button>
             ) : (
-              <Image
-                src={MapMode}
+              <button
+                type="button"
+                title="View on map"
+                className="p-0.5 rounded bg-black/50 hover:bg-black/80 transition-colors"
                 onClick={(e) => {
                   e.stopPropagation();
                   openMapAndSelectFod();
                 }}
-                className="cursor-pointer brightness-200"
-                alt=""
-                width={20}
-                height={20}
-              />
+              >
+                <Image
+                  src={MapMode}
+                  className="brightness-200"
+                  alt="View on map"
+                  width={18}
+                  height={18}
+                />
+              </button>
             )}
           </div>
         </div>
 
-        <div className="h-full flex-1 flex flex-col justify-center px-3 py-2 text-xs">
-          <div className="flex justify-between items-center py-0.5">
-            <span className="text-[#7E8691] font-medium">CAM ID</span>
-            <span className="text-slate-200 font-semibold">
+        {/* FOD Information */}
+        <div className="h-full min-w-0 flex-1 flex flex-col justify-center px-2 min-[900px]:px-3 py-2 text-[10px] min-[900px]:text-xs">
+          {/* CAM ID */}
+          <div className="flex justify-between items-center gap-1 py-0.5 min-w-0">
+            <span className="text-slate-500 dark:text-[#7E8691] font-medium shrink-0">
+              CAM ID
+            </span>
+            <span className="text-slate-800 dark:text-slate-200 font-semibold truncate text-right min-w-0">
               {fod.sysid || "-"}
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-0.5">
-            <span className="text-[#7E8691] font-medium">Size</span>
-            <span className="text-slate-200 font-semibold">
-              {fod.size !== undefined && fod.size !== null && fod.size !== ""
+          {/* Size */}
+          <div className="flex justify-between items-center gap-1 py-0.5 min-w-0">
+            <span className="text-slate-500 dark:text-[#7E8691] font-medium shrink-0">
+              Size
+            </span>
+            <span className="text-slate-800 dark:text-slate-200 font-semibold truncate text-right min-w-0">
+              {fod.size !== undefined &&
+              fod.size !== null &&
+              fod.size !== ""
                 ? formattedSize
                 : "-"}
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-0.5">
-            <span className="text-[#7E8691] font-medium">Vel</span>
-            <span className="text-slate-200 font-semibold">
+          {/* Velocity */}
+          <div className="flex justify-between items-center gap-1 py-0.5 min-w-0">
+            <span className="text-slate-500 dark:text-[#7E8691] font-medium shrink-0">
+              Vel
+            </span>
+            <span className="text-slate-800 dark:text-slate-200 font-semibold truncate text-right min-w-0">
               {Fod_Velocity(fod)}
             </span>
           </div>
