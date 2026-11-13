@@ -9,7 +9,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { config } from "@/config/clientConfig";
 
-const INGEST_CHUNK_SIZE = 1250;
+const INGEST_CHUNK_SIZE = 2000;
+const DEBOUNCE_MS = 250;
+const MAX_WAIT_MS = 500;
+const CHUNK_FLUSH_DELAY_MS = 100;
 
 const FodPanel = ({ open }) => {
   const [fodLoading, setFodLoading] = useState(true);
@@ -17,30 +20,48 @@ const FodPanel = ({ open }) => {
   const missionNumber = useSelector((store: RootState) => store.MissionState.missionNumber);
   const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
   const dispatch = useDispatch();
-  const pendingQueueRef = useRef<any[]>([]);
-  const rafIdRef = useRef<number | null>(null);
+  const pendingMapRef = useRef<Map<string | number, any>>(new Map());
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const firstQueuedAtRef = useRef<number>(0);
 
   useEffect(() => {
     if (!missionNumber) return;
     dispatch(resetFods());
     setFodLoading(true);
     setStreamingCount(0);
-    pendingQueueRef.current = [];
+    pendingMapRef.current.clear();
+    firstQueuedAtRef.current = 0;
     let disposed = false;
     let unlistenFn: (() => void) | null = null;
     const subId = `fod-panel-${missionNumber}-${Date.now()}`;
 
+    const clearFlushTimer = () => {
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+    };
+
     const flushPendingChunks = () => {
-      rafIdRef.current = null;
+      flushTimerRef.current = null;
       if (disposed) return;
-      const queue = pendingQueueRef.current;
-      if (queue.length === 0) {
+
+      const pending = pendingMapRef.current;
+      if (pending.size === 0) {
+        firstQueuedAtRef.current = 0;
         setStreamingCount(0);
         return;
       }
 
-      const chunk = queue.splice(0, INGEST_CHUNK_SIZE);
-      const remaining = queue.length;
+      const chunk: any[] = [];
+      for (const [key, value] of pending) {
+        chunk.push(value);
+        pending.delete(key);
+        if (chunk.length >= INGEST_CHUNK_SIZE) break;
+      }
+
+      const remaining = pending.size;
+      firstQueuedAtRef.current = remaining > 0 ? Date.now() : 0;
 
       startTransition(() => {
         dispatch(syncFod(chunk));
@@ -49,8 +70,21 @@ const FodPanel = ({ open }) => {
       });
 
       if (remaining > 0 && !disposed) {
-        rafIdRef.current = window.requestAnimationFrame(flushPendingChunks);
+        flushTimerRef.current = setTimeout(flushPendingChunks, CHUNK_FLUSH_DELAY_MS);
       }
+    };
+
+    const scheduleFlush = () => {
+      if (disposed) return;
+      const now = Date.now();
+      if (firstQueuedAtRef.current === 0) {
+        firstQueuedAtRef.current = now;
+      }
+      const elapsed = now - firstQueuedAtRef.current;
+      const delay = elapsed >= MAX_WAIT_MS ? 0 : Math.min(DEBOUNCE_MS, MAX_WAIT_MS - elapsed);
+
+      clearFlushTimer();
+      flushTimerRef.current = setTimeout(flushPendingChunks, delay);
     };
 
     function getRealtimeData(data: any) {
@@ -63,12 +97,16 @@ const FodPanel = ({ open }) => {
             return;
           }
           const maxPending = config?.FodListsLimit ?? 25000;
-          if (pendingQueueRef.current.length < maxPending) {
-            pendingQueueRef.current.push(...rows);
+          const pending = pendingMapRef.current;
+          for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row) continue;
+            const key = row.groupId ?? row.id ?? `idx-${i}-${pending.size}`;
+            if (pending.has(key) || pending.size < maxPending) {
+              pending.set(key, row);
+            }
           }
-          if (rafIdRef.current === null) {
-            rafIdRef.current = window.requestAnimationFrame(flushPendingChunks);
-          }
+          scheduleFlush();
         }
       } catch (err) {
         console.error("Failed to parse IPC retrive-data:", err);
@@ -98,11 +136,9 @@ const FodPanel = ({ open }) => {
 
     return () => {
       disposed = true;
-      pendingQueueRef.current = [];
-      if (rafIdRef.current !== null) {
-        window.cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
+      pendingMapRef.current.clear();
+      firstQueuedAtRef.current = 0;
+      clearFlushTimer();
       if (unlistenFn) {
         unlistenFn();
       }

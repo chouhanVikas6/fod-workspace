@@ -35,6 +35,7 @@ async fn resume_simulation(engine: State<'_, Arc<SimulatorEngine>>) -> Result<()
 #[tauri::command]
 async fn stop_simulation(engine: State<'_, Arc<SimulatorEngine>>) -> Result<(), String> {
     engine.stop();
+    engine.disconnect_all().await;
     engine.emit_current_telemetry().await;
     Ok(())
 }

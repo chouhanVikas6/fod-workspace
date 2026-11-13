@@ -1,10 +1,12 @@
-use crate::geo_engine::GeoEngine;
-use crate::grpc_client::{GrpcClientManager, GrpcDispatchHandle};
+use crate::geo_engine::{GeoEngine, VehiclePosition};
+use crate::grpc_client::{CumulativeCounters, DeviceConnection, GrpcClientManager};
 use crate::image_feeder::ImageFeeder;
 use crate::models::{
-    default_cameras, CameraConfig, CommandLogEntry, CustomPayloadConfig, HealthConfig,
-    LocationConfig, RandomizationConfig, SimulatorConfig, SimulatorTelemetry,
+    default_cameras, device_identity, CameraConfig, CommandLogEntry, CustomPayloadConfig,
+    DeviceStreamStatus, HealthConfig, LocationConfig, RandomizationConfig, SimulatorConfig,
+    SimulatorTelemetry,
 };
+use futures::future::{join_all, try_join_all};
 use proto_defination::ingest::{
     telemetry_frame::Kind, CameraHealth, CameraHealthBatch, CarData, Detection, DetectionBatch,
     GpsFix, PcHealth, TelemetryFrame,
@@ -34,8 +36,153 @@ pub struct SimulatorEngine {
     running: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     total_sent: Arc<AtomicU64>,
-    batch_seq: Arc<AtomicU64>,
-    grpc_handle: Arc<Mutex<Option<GrpcDispatchHandle>>>,
+    next_device_cursor: Arc<AtomicU64>,
+    cumulative: CumulativeCounters,
+    grpc_connections: Arc<Mutex<Vec<DeviceConnection>>>,
+}
+
+async fn ensure_device_connections(
+    connections_lock: &Arc<Mutex<Vec<DeviceConnection>>>,
+    endpoint: &str,
+    base_sysid: &str,
+    desired_count: usize,
+    cumulative: &CumulativeCounters,
+) -> Result<Vec<DeviceConnection>, String> {
+    let target = desired_count.clamp(1, 32);
+    let existing = {
+        let guard = connections_lock.lock().await;
+        guard.clone()
+    };
+
+    let mut slots: Vec<Option<DeviceConnection>> = vec![None; target];
+    let mut missing = Vec::new();
+
+    for idx in 0..target {
+        let (expected_id, expected_node) = device_identity(base_sysid, idx, target);
+        if let Some(conn) = existing
+            .iter()
+            .find(|c| c.device_index == idx && c.device_id == expected_id && c.handle.is_connected())
+        {
+            slots[idx] = Some(conn.clone());
+        } else {
+            missing.push((idx, expected_id, expected_node));
+        }
+    }
+
+    if !missing.is_empty() {
+        let futs = missing.into_iter().map(|(idx, dev_id, node_name)| {
+            let ep = endpoint.to_string();
+            let cum = cumulative.clone();
+            async move {
+                let handle = GrpcClientManager::start_streams(&ep, Some(cum)).await?;
+                Ok::<DeviceConnection, String>(DeviceConnection {
+                    device_index: idx,
+                    device_id: dev_id,
+                    node_name,
+                    handle,
+                })
+            }
+        });
+        let newly_connected = try_join_all(futs).await?;
+        for conn in newly_connected {
+            let idx = conn.device_index;
+            slots[idx] = Some(conn);
+        }
+    }
+
+    let final_conns: Vec<DeviceConnection> = slots.into_iter().flatten().collect();
+    *connections_lock.lock().await = final_conns.clone();
+    Ok(final_conns)
+}
+
+fn build_device_statuses(connections: &[DeviceConnection]) -> Vec<DeviceStreamStatus> {
+    connections
+        .iter()
+        .map(|c| DeviceStreamStatus {
+            device_id: c.device_id.clone(),
+            node_name: c.node_name.clone(),
+            connected: c.handle.is_connected(),
+            sent: c.handle.sent_count.load(Ordering::Relaxed),
+            accepted: c.handle.accepted_count.load(Ordering::Relaxed),
+            rejected: c.handle.rejected_count.load(Ordering::Relaxed),
+            duplicate: c.handle.duplicate_count.load(Ordering::Relaxed),
+        })
+        .collect()
+}
+
+async fn send_telemetry_to_devices(
+    connections: &[DeviceConnection],
+    h_cfg: &HealthConfig,
+    car_pos: &VehiclePosition,
+    cam_health_list: Vec<CameraHealth>,
+) {
+    let now = chrono::Utc::now().timestamp_millis();
+    let futs = connections.iter().enumerate().map(|(pos, dev)| {
+        let h_cfg = h_cfg.clone();
+        let cam_list = if pos == 0 {
+            Some(cam_health_list.clone())
+        } else {
+            None
+        };
+        let car_data = if pos == 0 {
+            Some(CarData {
+                primary: Some(GpsFix {
+                    fix: h_cfg.gnss_fix.clone(),
+                    sd: h_cfg.gnss_sd,
+                    lat: car_pos.lat,
+                    lon: car_pos.lon,
+                    heading: car_pos.heading_deg,
+                }),
+                secondary: Some(GpsFix {
+                    fix: h_cfg.gnss_fix.clone(),
+                    sd: h_cfg.gnss_sd,
+                    lat: car_pos.lat,
+                    lon: car_pos.lon,
+                    heading: car_pos.heading_deg,
+                }),
+                velocity: car_pos.speed_kmh,
+            })
+        } else {
+            None
+        };
+
+        async move {
+            if let Some(cd) = car_data {
+                let _ = dev
+                    .handle
+                    .send_telemetry(TelemetryFrame {
+                        sampled_at_ms: now,
+                        kind: Some(Kind::Car(cd)),
+                    })
+                    .await;
+            }
+            if let Some(cams) = cam_list {
+                let _ = dev
+                    .handle
+                    .send_telemetry(TelemetryFrame {
+                        sampled_at_ms: now,
+                        kind: Some(Kind::Cameras(CameraHealthBatch { cameras: cams })),
+                    })
+                    .await;
+            }
+            let pc_health = PcHealth {
+                node: dev.node_name.clone(),
+                cpu_pct: h_cfg.cpu_pct,
+                mem_pct: h_cfg.mem_pct,
+                disk_pct: h_cfg.disk_pct,
+                temp_c: h_cfg.temp_c,
+            };
+            let _ = dev
+                .handle
+                .send_telemetry(TelemetryFrame {
+                    sampled_at_ms: now,
+                    kind: Some(Kind::Pc(pc_health)),
+                })
+                .await;
+        }
+    });
+
+    join_all(futs).await;
 }
 
 pub fn make_camera_health_list(cams: &[CameraConfig]) -> Vec<CameraHealth> {
@@ -75,8 +222,13 @@ impl SimulatorEngine {
             running: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             total_sent: Arc::new(AtomicU64::new(0)),
-            batch_seq: Arc::new(AtomicU64::new(1)),
-            grpc_handle: Arc::new(Mutex::new(None)),
+            next_device_cursor: Arc::new(AtomicU64::new(0)),
+            cumulative: CumulativeCounters {
+                accepted: Arc::new(AtomicU64::new(0)),
+                rejected: Arc::new(AtomicU64::new(0)),
+                duplicate: Arc::new(AtomicU64::new(0)),
+            },
+            grpc_connections: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -86,9 +238,15 @@ impl SimulatorEngine {
             return Ok(());
         }
 
-        let endpoint = self.config.read().await.grpc_endpoint.clone();
-        let dispatch_handle = GrpcClientManager::start_streams(&endpoint).await?;
-        *self.grpc_handle.lock().await = Some(dispatch_handle);
+        let cfg = self.config.read().await.clone();
+        ensure_device_connections(
+            &self.grpc_connections,
+            &cfg.grpc_endpoint,
+            &cfg.sysid,
+            cfg.device_count,
+            &self.cumulative,
+        )
+        .await?;
 
         self.running.store(true, Ordering::SeqCst);
         self.paused.store(false, Ordering::SeqCst);
@@ -102,9 +260,10 @@ impl SimulatorEngine {
         let rand_arc = self.random_config.clone();
         let custom_arc = self.custom_config.clone();
         let feeder = self.image_feeder.clone();
-        let grpc_lock = self.grpc_handle.clone();
+        let grpc_lock = self.grpc_connections.clone();
         let total_sent_counter = self.total_sent.clone();
-        let batch_seq_counter = self.batch_seq.clone();
+        let device_cursor = self.next_device_cursor.clone();
+        let cumulative = self.cumulative.clone();
         let app = self.app_handle.clone();
 
         tauri::async_runtime::spawn(async move {
@@ -172,127 +331,136 @@ impl SimulatorEngine {
                     to_send = to_send.min(max_per_tick);
 
                     if to_send > 0 {
-                        let chunk_limit = batch_size.max(50);
-                        let mut remaining_to_build = to_send;
-                        let mut batches_to_send = Vec::new();
-                        let base_sent = total_sent_counter.load(Ordering::Relaxed) as usize;
-                        let mut built_offset = 0usize;
-
+                        if let Ok(connections) = ensure_device_connections(
+                            &grpc_lock,
+                            &cfg.grpc_endpoint,
+                            &cfg.sysid,
+                            cfg.device_count,
+                            &cumulative,
+                        )
+                        .await
                         {
-                            let mut rng = rand::thread_rng();
-                            let weights = [
-                                rand_cfg.weight_metallic.max(1.0),
-                                rand_cfg.weight_non_metallic.max(1.0),
-                                rand_cfg.weight_organic.max(1.0),
-                                rand_cfg.weight_rock.max(1.0),
-                            ];
-                            let dist = WeightedIndex::new(&weights)
-                                .unwrap_or_else(|_| WeightedIndex::new([1.0, 1.0, 1.0, 1.0]).unwrap());
-                            let class_names = ["Metallic", "Non-Metallic", "Organic", "Rocks/Asphalt"];
-                            let captured_at_ms = chrono::Utc::now().timestamp_millis();
+                            let num_devices = connections.len();
+                            if num_devices > 0 {
+                                let chunk_limit = batch_size.max(50);
+                                let base_sent = total_sent_counter.load(Ordering::Relaxed) as usize;
+                                let start_cursor =
+                                    device_cursor.fetch_add(to_send as u64, Ordering::Relaxed)
+                                        as usize;
 
-                            while remaining_to_build > 0 {
-                                let this_chunk = remaining_to_build.min(chunk_limit);
-                                remaining_to_build -= this_chunk;
-                                let mut detections = Vec::with_capacity(this_chunk);
+                                let mut per_device_dets: Vec<Vec<Detection>> =
+                                    (0..num_devices).map(|_| Vec::new()).collect();
 
-                                for _ in 0..this_chunk {
-                                    let cam = active_cameras.choose(&mut rng).unwrap();
-                                    let class_name = if let Some(ref c) = custom_cfg.custom_class {
-                                        c.clone()
-                                    } else {
-                                        class_names[dist.sample(&mut rng)].to_string()
-                                    };
+                                {
+                                    let mut rng = rand::thread_rng();
+                                    let weights = [
+                                        rand_cfg.weight_metallic.max(1.0),
+                                        rand_cfg.weight_non_metallic.max(1.0),
+                                        rand_cfg.weight_organic.max(1.0),
+                                        rand_cfg.weight_rock.max(1.0),
+                                    ];
+                                    let dist = WeightedIndex::new(&weights).unwrap_or_else(|_| {
+                                        WeightedIndex::new([1.0, 1.0, 1.0, 1.0]).unwrap()
+                                    });
+                                    let class_names =
+                                        ["Metallic", "Non-Metallic", "Organic", "Rocks/Asphalt"];
+                                    let captured_at_ms = chrono::Utc::now().timestamp_millis();
 
-                                    let size = rng.gen_range(rand_cfg.min_size_cm..=rand_cfg.max_size_cm);
-                                    let confidence =
-                                        rng.gen_range(rand_cfg.min_confidence..=rand_cfg.max_confidence);
-
-                                    let (det_lat, det_lon) = if custom_cfg.force_invalid_coords {
-                                        (-1.0, -1.0)
-                                    } else {
-                                        let forward_jitter = rng.gen_range(-1.0..=4.0);
-                                        let (cand_lat, cand_lon) = GeoEngine::offset_coordinate(
-                                            car_pos.lat,
-                                            car_pos.lon,
-                                            car_pos.heading_deg,
-                                            cam.lateral_offset_m,
-                                            forward_jitter,
-                                        );
-                                        if geo_engine.is_inside_boundary(cand_lat, cand_lon) {
-                                            (cand_lat, cand_lon)
+                                    for offset in 0..to_send {
+                                        let dev_idx = (start_cursor + offset) % num_devices;
+                                        let dev_id = &connections[dev_idx].device_id;
+                                        let cam = active_cameras.choose(&mut rng).unwrap();
+                                        let class_name = if let Some(ref c) = custom_cfg.custom_class
+                                        {
+                                            c.clone()
                                         } else {
-                                            geo_engine.clamp_to_boundary(
-                                                cand_lat,
-                                                cand_lon,
+                                            class_names[dist.sample(&mut rng)].to_string()
+                                        };
+
+                                        let size = rng
+                                            .gen_range(rand_cfg.min_size_cm..=rand_cfg.max_size_cm);
+                                        let confidence = rng.gen_range(
+                                            rand_cfg.min_confidence..=rand_cfg.max_confidence,
+                                        );
+
+                                        let (det_lat, det_lon) = if custom_cfg.force_invalid_coords
+                                        {
+                                            (-1.0, -1.0)
+                                        } else {
+                                            let forward_jitter = rng.gen_range(-1.0..=4.0);
+                                            let (cand_lat, cand_lon) = GeoEngine::offset_coordinate(
                                                 car_pos.lat,
                                                 car_pos.lon,
-                                            )
+                                                car_pos.heading_deg,
+                                                cam.lateral_offset_m,
+                                                forward_jitter,
+                                            );
+                                            if geo_engine.is_inside_boundary(cand_lat, cand_lon) {
+                                                (cand_lat, cand_lon)
+                                            } else {
+                                                geo_engine.clamp_to_boundary(
+                                                    cand_lat,
+                                                    cand_lon,
+                                                    car_pos.lat,
+                                                    car_pos.lon,
+                                                )
+                                            }
+                                        };
+
+                                        let sample_idx = base_sent + offset;
+                                        let (crop_jpeg, _sha) = feeder
+                                            .get_sample_frame(sample_idx, custom_cfg.corrupt_image);
+
+                                        let uid = if let Some(ref dup) = custom_cfg.duplicate_uuid {
+                                            dup.clone()
+                                        } else {
+                                            Uuid::new_v4().to_string()
+                                        };
+
+                                        per_device_dets[dev_idx].push(Detection {
+                                            uid,
+                                            cam_id: cam.cam_id.clone(),
+                                            lat: det_lat,
+                                            lon: det_lon,
+                                            sd: 0.015,
+                                            confidence,
+                                            class_name,
+                                            velocity: car_pos.speed_kmh,
+                                            size,
+                                            captured_at_ms,
+                                            crop_jpeg,
+                                            sysid: dev_id.clone(),
+                                        });
+                                    }
+                                }
+
+                                let send_futs = connections
+                                    .into_iter()
+                                    .zip(per_device_dets.into_iter())
+                                    .filter(|(_, dets)| !dets.is_empty())
+                                    .map(|(dev, dets)| async move {
+                                        let mut sent_for_dev = 0u64;
+                                        for chunk in dets.chunks(chunk_limit) {
+                                            let count = chunk.len() as u64;
+                                            let batch = DetectionBatch {
+                                                producer_id: dev.device_id.clone(),
+                                                batch_seq: dev.handle.next_batch_seq(),
+                                                detections: chunk.to_vec(),
+                                            };
+                                            if dev.handle.send_detection_batch(batch).await.is_ok()
+                                            {
+                                                sent_for_dev += count;
+                                            } else {
+                                                break;
+                                            }
                                         }
-                                    };
-
-                                    let sample_idx = base_sent + built_offset;
-                                    built_offset += 1;
-                                    let (crop_jpeg, _sha) =
-                                        feeder.get_sample_frame(sample_idx, custom_cfg.corrupt_image);
-
-                                    let uid = if let Some(ref dup) = custom_cfg.duplicate_uuid {
-                                        dup.clone()
-                                    } else {
-                                        Uuid::new_v4().to_string()
-                                    };
-
-                                    detections.push(Detection {
-                                        uid,
-                                        cam_id: cam.cam_id.clone(),
-                                        lat: det_lat,
-                                        lon: det_lon,
-                                        sd: 0.015,
-                                        confidence,
-                                        class_name,
-                                        velocity: car_pos.speed_kmh,
-                                        size,
-                                        captured_at_ms,
-                                        crop_jpeg,
-                                        sysid: cfg.sysid.clone(),
+                                        sent_for_dev
                                     });
-                                }
 
-                                batches_to_send.push(DetectionBatch {
-                                    producer_id: cfg.sysid.clone(),
-                                    batch_seq: batch_seq_counter.fetch_add(1, Ordering::Relaxed),
-                                    detections,
-                                });
-                            }
-                        }
-
-                        let handle_opt = {
-                            let guard = grpc_lock.lock().await;
-                            guard.clone()
-                        };
-
-                        if let Some(handle) = handle_opt {
-                            let mut stream_ok = true;
-                            for batch in batches_to_send {
-                                let count = batch.detections.len() as u64;
-                                if handle.send_detection_batch(batch).await.is_ok() {
-                                    total_sent_counter.fetch_add(count, Ordering::Relaxed);
-                                    epoch_dispatched += count;
-                                } else {
-                                    stream_ok = false;
-                                    break;
-                                }
-                            }
-                            if !stream_ok {
-                                let endpoint = cfg.grpc_endpoint.clone();
-                                if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
-                                    *grpc_lock.lock().await = Some(new_handle);
-                                }
-                            }
-                        } else {
-                            let endpoint = cfg.grpc_endpoint.clone();
-                            if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
-                                *grpc_lock.lock().await = Some(new_handle);
+                                let results = join_all(send_futs).await;
+                                let total_dispatched: u64 = results.into_iter().sum();
+                                total_sent_counter.fetch_add(total_dispatched, Ordering::Relaxed);
+                                epoch_dispatched += total_dispatched;
                             }
                         }
                     }
@@ -303,82 +471,31 @@ impl SimulatorEngine {
                     last_telemetry_tick = Instant::now();
 
                     let h_cfg = health_arc.read().await.clone();
-                    let car_data = CarData {
-                        primary: Some(GpsFix {
-                            fix: h_cfg.gnss_fix.clone(),
-                            sd: h_cfg.gnss_sd,
-                            lat: car_pos.lat,
-                            lon: car_pos.lon,
-                            heading: car_pos.heading_deg,
-                        }),
-                        secondary: Some(GpsFix {
-                            fix: h_cfg.gnss_fix.clone(),
-                            sd: h_cfg.gnss_sd,
-                            lat: car_pos.lat,
-                            lon: car_pos.lon,
-                            heading: car_pos.heading_deg,
-                        }),
-                        velocity: car_pos.speed_kmh,
-                    };
-
                     let cam_health_list: Vec<CameraHealth> = {
                         let cams = cameras_arc.read().await;
                         make_camera_health_list(&cams)
                     };
 
-                    let pc_health = PcHealth {
-                        node: "sim-pc-node-01".to_string(),
-                        cpu_pct: h_cfg.cpu_pct,
-                        mem_pct: h_cfg.mem_pct,
-                        disk_pct: h_cfg.disk_pct,
-                        temp_c: h_cfg.temp_c,
-                    };
-
-                    let handle_opt = {
-                        let guard = grpc_lock.lock().await;
-                        guard.clone()
-                    };
-
-                    if let Some(handle) = handle_opt {
-                        let now = chrono::Utc::now().timestamp_millis();
-                        let r1 = handle.send_telemetry(TelemetryFrame {
-                            sampled_at_ms: now,
-                            kind: Some(Kind::Car(car_data)),
-                        }).await;
-                        let r2 = handle.send_telemetry(TelemetryFrame {
-                            sampled_at_ms: now,
-                            kind: Some(Kind::Cameras(CameraHealthBatch { cameras: cam_health_list })),
-                        }).await;
-                        let r3 = handle.send_telemetry(TelemetryFrame {
-                            sampled_at_ms: now,
-                            kind: Some(Kind::Pc(pc_health)),
-                        }).await;
-                        if r1.is_err() || r2.is_err() || r3.is_err() {
-                            let endpoint = cfg.grpc_endpoint.clone();
-                            if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
-                                *grpc_lock.lock().await = Some(new_handle);
-                            }
-                        }
-                    } else {
-                        let endpoint = cfg.grpc_endpoint.clone();
-                        if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
-                            *grpc_lock.lock().await = Some(new_handle);
-                        }
+                    if let Ok(connections) = ensure_device_connections(
+                        &grpc_lock,
+                        &cfg.grpc_endpoint,
+                        &cfg.sysid,
+                        cfg.device_count,
+                        &cumulative,
+                    )
+                    .await
+                    {
+                        send_telemetry_to_devices(&connections, &h_cfg, &car_pos, cam_health_list)
+                            .await;
                     }
 
                     // Emit Telemetry to Tauri UI
-                    let (acc, rej, dup) = {
+                    let current_conns = {
                         let guard = grpc_lock.lock().await;
-                        if let Some(ref h) = *guard {
-                            (
-                                h.accepted_count.load(Ordering::Relaxed),
-                                h.rejected_count.load(Ordering::Relaxed),
-                                h.duplicate_count.load(Ordering::Relaxed),
-                            )
-                        } else {
-                            (0, 0, 0)
-                        }
+                        guard.clone()
                     };
+                    let devices = build_device_statuses(&current_conns);
+                    let connected_devices = devices.iter().filter(|d| d.connected).count();
 
                     let status_str = if !running_flag.load(Ordering::SeqCst) {
                         "Idle".to_string()
@@ -392,9 +509,9 @@ impl SimulatorEngine {
                         running: running_flag.load(Ordering::SeqCst),
                         paused: is_paused,
                         total_sent: total_sent_counter.load(Ordering::Relaxed),
-                        total_accepted: acc,
-                        total_rejected: rej,
-                        total_duplicate: dup,
+                        total_accepted: cumulative.accepted.load(Ordering::Relaxed),
+                        total_rejected: cumulative.rejected.load(Ordering::Relaxed),
+                        total_duplicate: cumulative.duplicate.load(Ordering::Relaxed),
                         current_hz: hz,
                         current_lat: car_pos.lat,
                         current_lon: car_pos.lon,
@@ -403,6 +520,8 @@ impl SimulatorEngine {
                         active_camera_count: active_cameras.len(),
                         last_status: status_str,
                         uptime_secs: start_time.elapsed().as_secs(),
+                        connected_devices,
+                        devices,
                     };
 
                     let _ = app.emit("simulator-telemetry", telemetry_ui);
@@ -429,6 +548,10 @@ impl SimulatorEngine {
         self.paused.store(false, Ordering::SeqCst);
     }
 
+    pub async fn disconnect_all(&self) {
+        self.grpc_connections.lock().await.clear();
+    }
+
     pub async fn emit_current_telemetry(&self) {
         let running = self.running.load(Ordering::SeqCst);
         let paused = self.paused.load(Ordering::SeqCst);
@@ -438,18 +561,12 @@ impl SimulatorEngine {
         let cams = self.cameras.read().await;
         let active_count = cams.iter().filter(|c| c.enabled && c.connected && !c.paused).count();
 
-        let (acc, rej, dup) = {
-            let guard = self.grpc_handle.lock().await;
-            if let Some(ref h) = *guard {
-                (
-                    h.accepted_count.load(Ordering::Relaxed),
-                    h.rejected_count.load(Ordering::Relaxed),
-                    h.duplicate_count.load(Ordering::Relaxed),
-                )
-            } else {
-                (0, 0, 0)
-            }
+        let current_conns = {
+            let guard = self.grpc_connections.lock().await;
+            guard.clone()
         };
+        let devices = build_device_statuses(&current_conns);
+        let connected_devices = devices.iter().filter(|d| d.connected).count();
 
         let last_status = if !running {
             "Idle".to_string()
@@ -465,9 +582,9 @@ impl SimulatorEngine {
             running,
             paused,
             total_sent,
-            total_accepted: acc,
-            total_rejected: rej,
-            total_duplicate: dup,
+            total_accepted: self.cumulative.accepted.load(Ordering::Relaxed),
+            total_rejected: self.cumulative.rejected.load(Ordering::Relaxed),
+            total_duplicate: self.cumulative.duplicate.load(Ordering::Relaxed),
             current_hz: hz,
             current_lat: car_pos.lat,
             current_lon: car_pos.lon,
@@ -476,72 +593,32 @@ impl SimulatorEngine {
             active_camera_count: active_count,
             last_status,
             uptime_secs: 0,
+            connected_devices,
+            devices,
         };
 
         let _ = self.app_handle.emit("simulator-telemetry", telemetry_ui);
     }
 
     pub async fn send_immediate_telemetry(&self) {
-        let handle_opt = {
-            let mut guard = self.grpc_handle.lock().await;
-            if guard.is_none() {
-                let endpoint = self.config.read().await.grpc_endpoint.clone();
-                if let Ok(new_handle) = GrpcClientManager::start_streams(&endpoint).await {
-                    *guard = Some(new_handle);
-                }
-            }
-            guard.clone()
-        };
-
-        let h_cfg = self.health_config.read().await.clone();
-        let loc_cfg = self.location_config.read().await.clone();
-        let car_pos = GeoEngine::new(&loc_cfg).get_position_at_time(0.0);
-
-        let car_data = CarData {
-            primary: Some(GpsFix {
-                fix: h_cfg.gnss_fix.clone(),
-                sd: h_cfg.gnss_sd,
-                lat: car_pos.lat,
-                lon: car_pos.lon,
-                heading: car_pos.heading_deg,
-            }),
-            secondary: Some(GpsFix {
-                fix: h_cfg.gnss_fix.clone(),
-                sd: h_cfg.gnss_sd,
-                lat: car_pos.lat,
-                lon: car_pos.lon,
-                heading: car_pos.heading_deg,
-            }),
-            velocity: car_pos.speed_kmh,
-        };
-
-        let cam_health_list = {
-            let cams = self.cameras.read().await;
-            make_camera_health_list(&cams)
-        };
-
-        let pc_health = PcHealth {
-            node: "sim-pc-node-01".to_string(),
-            cpu_pct: h_cfg.cpu_pct,
-            mem_pct: h_cfg.mem_pct,
-            disk_pct: h_cfg.disk_pct,
-            temp_c: h_cfg.temp_c,
-        };
-
-        if let Some(handle) = handle_opt {
-            let now = chrono::Utc::now().timestamp_millis();
-            let _ = handle.send_telemetry(TelemetryFrame {
-                sampled_at_ms: now,
-                kind: Some(Kind::Car(car_data)),
-            }).await;
-            let _ = handle.send_telemetry(TelemetryFrame {
-                sampled_at_ms: now,
-                kind: Some(Kind::Cameras(CameraHealthBatch { cameras: cam_health_list })),
-            }).await;
-            let _ = handle.send_telemetry(TelemetryFrame {
-                sampled_at_ms: now,
-                kind: Some(Kind::Pc(pc_health)),
-            }).await;
+        let cfg = self.config.read().await.clone();
+        if let Ok(connections) = ensure_device_connections(
+            &self.grpc_connections,
+            &cfg.grpc_endpoint,
+            &cfg.sysid,
+            cfg.device_count,
+            &self.cumulative,
+        )
+        .await
+        {
+            let h_cfg = self.health_config.read().await.clone();
+            let loc_cfg = self.location_config.read().await.clone();
+            let car_pos = GeoEngine::new(&loc_cfg).get_position_at_time(0.0);
+            let cam_health_list = {
+                let cams = self.cameras.read().await;
+                make_camera_health_list(&cams)
+            };
+            send_telemetry_to_devices(&connections, &h_cfg, &car_pos, cam_health_list).await;
         }
 
         self.emit_current_telemetry().await;
@@ -549,21 +626,27 @@ impl SimulatorEngine {
 
     pub async fn step_single_fod(&self) -> Result<(), String> {
         let cfg = self.config.read().await.clone();
-        let handle = {
-            let mut guard = self.grpc_handle.lock().await;
-            if guard.is_none() {
-                let new_handle = GrpcClientManager::start_streams(&cfg.grpc_endpoint).await?;
-                *guard = Some(new_handle);
-            }
-            guard.clone().ok_or_else(|| "gRPC stream is not connected.".to_string())?
-        };
+        let connections = ensure_device_connections(
+            &self.grpc_connections,
+            &cfg.grpc_endpoint,
+            &cfg.sysid,
+            cfg.device_count,
+            &self.cumulative,
+        )
+        .await?;
+        let dev_idx = (self.next_device_cursor.fetch_add(1, Ordering::Relaxed) as usize)
+            % connections.len();
+        let dev = &connections[dev_idx];
 
         let loc_cfg = self.location_config.read().await.clone();
         let geo_engine = GeoEngine::new(&loc_cfg);
         let car_pos = geo_engine.get_position_at_time(0.0);
 
         let cams = self.cameras.read().await.clone();
-        let cam = cams.iter().find(|c| c.enabled && c.connected).ok_or_else(|| "No active camera enabled".to_string())?;
+        let cam = cams
+            .iter()
+            .find(|c| c.enabled && c.connected)
+            .ok_or_else(|| "No active camera enabled".to_string())?;
 
         let sample_idx = self.total_sent.load(Ordering::Relaxed) as usize;
         let (crop_jpeg, _) = self.image_feeder.get_sample_frame(sample_idx, false);
@@ -580,16 +663,16 @@ impl SimulatorEngine {
             size: 5.5,
             captured_at_ms: chrono::Utc::now().timestamp_millis(),
             crop_jpeg,
-            sysid: cfg.sysid.clone(),
+            sysid: dev.device_id.clone(),
         };
 
         let batch = DetectionBatch {
-            producer_id: cfg.sysid.clone(),
-            batch_seq: self.batch_seq.fetch_add(1, Ordering::Relaxed),
+            producer_id: dev.device_id.clone(),
+            batch_seq: dev.handle.next_batch_seq(),
             detections: vec![detection],
         };
 
-        handle.send_detection_batch(batch).await?;
+        dev.handle.send_detection_batch(batch).await?;
         self.total_sent.fetch_add(1, Ordering::Relaxed);
         self.emit_current_telemetry().await;
         Ok(())
@@ -597,77 +680,92 @@ impl SimulatorEngine {
 
     pub async fn burst_fods(&self, count: u32) -> Result<(), String> {
         let cfg = self.config.read().await.clone();
-        let handle = {
-            let mut guard = self.grpc_handle.lock().await;
-            if guard.is_none() {
-                let new_handle = GrpcClientManager::start_streams(&cfg.grpc_endpoint).await?;
-                *guard = Some(new_handle);
-            }
-            guard.clone().ok_or_else(|| "gRPC stream is not connected.".to_string())?
-        };
+        let connections = ensure_device_connections(
+            &self.grpc_connections,
+            &cfg.grpc_endpoint,
+            &cfg.sysid,
+            cfg.device_count,
+            &self.cumulative,
+        )
+        .await?;
 
         let loc_cfg = self.location_config.read().await.clone();
         let geo_engine = GeoEngine::new(&loc_cfg);
         let car_pos = geo_engine.get_position_at_time(0.0);
         let cams = self.cameras.read().await.clone();
-        let active_cams: Vec<_> = cams.iter().filter(|c| c.enabled && c.connected).cloned().collect();
+        let active_cams: Vec<_> = cams
+            .iter()
+            .filter(|c| c.enabled && c.connected)
+            .cloned()
+            .collect();
 
         if active_cams.is_empty() {
             return Err("No active cameras enabled for burst".to_string());
         }
 
-        // Generate chunked batches in scoped block so RNG doesn't cross await
-        let batches = {
-            let chunk_size = 50usize;
-            let total = count as usize;
-            let mut batches = Vec::with_capacity((total + chunk_size - 1) / chunk_size);
+        let num_devices = connections.len();
+        let total = count as usize;
+        let start_cursor = self
+            .next_device_cursor
+            .fetch_add(total as u64, Ordering::Relaxed) as usize;
+
+        // Generate per-device detections in scoped block so RNG doesn't cross await
+        let per_device_dets = {
+            let mut per_dev: Vec<Vec<Detection>> = (0..num_devices).map(|_| Vec::new()).collect();
             let mut rng = rand::thread_rng();
             let captured_at_ms = chrono::Utc::now().timestamp_millis();
             let base_idx = self.total_sent.load(Ordering::Relaxed) as usize;
-            let mut idx = 0usize;
 
-            while idx < total {
-                let this_chunk = (total - idx).min(chunk_size);
-                let mut detections = Vec::with_capacity(this_chunk);
+            for idx in 0..total {
+                let dev_idx = (start_cursor + idx) % num_devices;
+                let dev_id = &connections[dev_idx].device_id;
+                let cam = active_cams.choose(&mut rng).unwrap();
+                let (crop_jpeg, _) = self.image_feeder.get_sample_frame(base_idx + idx, false);
+                let (burst_lat, burst_lon) = geo_engine.random_point_in_boundary(&mut rng);
 
-                for _ in 0..this_chunk {
-                    let cam = active_cams.choose(&mut rng).unwrap();
-                    let (crop_jpeg, _) = self.image_feeder.get_sample_frame(base_idx + idx, false);
-                    idx += 1;
-
-                    let (burst_lat, burst_lon) = geo_engine.random_point_in_boundary(&mut rng);
-
-                    detections.push(Detection {
-                        uid: Uuid::new_v4().to_string(),
-                        cam_id: cam.cam_id.clone(),
-                        lat: burst_lat,
-                        lon: burst_lon,
-                        sd: 0.01,
-                        confidence: rng.gen_range(0.85..=0.99),
-                        class_name: "Metallic".to_string(),
-                        velocity: car_pos.speed_kmh,
-                        size: rng.gen_range(2.0..=15.0),
-                        captured_at_ms,
-                        crop_jpeg,
-                        sysid: cfg.sysid.clone(),
-                    });
-                }
-
-                batches.push(DetectionBatch {
-                    producer_id: cfg.sysid.clone(),
-                    batch_seq: self.batch_seq.fetch_add(1, Ordering::Relaxed),
-                    detections,
+                per_dev[dev_idx].push(Detection {
+                    uid: Uuid::new_v4().to_string(),
+                    cam_id: cam.cam_id.clone(),
+                    lat: burst_lat,
+                    lon: burst_lon,
+                    sd: 0.01,
+                    confidence: rng.gen_range(0.85..=0.99),
+                    class_name: "Metallic".to_string(),
+                    velocity: car_pos.speed_kmh,
+                    size: rng.gen_range(2.0..=15.0),
+                    captured_at_ms,
+                    crop_jpeg,
+                    sysid: dev_id.clone(),
                 });
             }
 
-            batches
+            per_dev
         };
 
-        for batch in batches {
-            let len = batch.detections.len() as u64;
-            handle.send_detection_batch(batch).await?;
-            self.total_sent.fetch_add(len, Ordering::Relaxed);
-        }
+        let chunk_size = 50usize;
+        let send_futs = connections
+            .into_iter()
+            .zip(per_device_dets.into_iter())
+            .filter(|(_, dets)| !dets.is_empty())
+            .map(|(dev, dets)| async move {
+                let mut sent_for_dev = 0u64;
+                for chunk in dets.chunks(chunk_size) {
+                    let len = chunk.len() as u64;
+                    let batch = DetectionBatch {
+                        producer_id: dev.device_id.clone(),
+                        batch_seq: dev.handle.next_batch_seq(),
+                        detections: chunk.to_vec(),
+                    };
+                    dev.handle.send_detection_batch(batch).await?;
+                    sent_for_dev += len;
+                }
+                Ok::<u64, String>(sent_for_dev)
+            });
+
+        let results = try_join_all(send_futs).await?;
+        let total_dispatched: u64 = results.into_iter().sum();
+        self.total_sent
+            .fetch_add(total_dispatched, Ordering::Relaxed);
         self.emit_current_telemetry().await;
         Ok(())
     }

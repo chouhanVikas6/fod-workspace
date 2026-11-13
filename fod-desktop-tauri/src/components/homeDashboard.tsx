@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { useSelector } from "react-redux";
 
 import { RootState } from "@/store";
@@ -16,6 +16,10 @@ const HomeDashboard = () => {
   const missionNumber = useSelector(
     (state: RootState) => state.MissionState?.missionNumber
   );
+  const missionDisplayId = useSelector(
+    (state: RootState) => state.MissionState?.displayId
+  );
+  const missionLabel = missionDisplayId ? `#${missionDisplayId}` : missionNumber || "—";
 
   // Live FOD data from Redux
   const fods = useSelector((state: RootState) => state.FodReducer.fods);
@@ -79,8 +83,8 @@ const HomeDashboard = () => {
             <span className={`text-[11px] uppercase font-medium ${secondaryText}`}>
               Mission:
             </span>
-            <span className="text-xs font-bold tabular-nums">
-              {missionNumber || "—"}
+            <span className="text-xs font-bold tabular-nums" title={missionNumber ? `ID: ${missionNumber}` : undefined}>
+              {missionLabel}
             </span>
           </div>
 
@@ -174,8 +178,8 @@ const HomeDashboard = () => {
             {/* Active mission */}
             <div>
               <p className={`text-xs ${secondaryText}`}>Active Mission</p>
-              <p className="mt-1 text-lg font-semibold">
-                {missionNumber || "—"}
+              <p className="mt-1 text-lg font-semibold" title={missionNumber ? `ID: ${missionNumber}` : undefined}>
+                {missionLabel}
               </p>
             </div>
 

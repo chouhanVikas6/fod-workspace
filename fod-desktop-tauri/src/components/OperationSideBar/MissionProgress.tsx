@@ -15,7 +15,7 @@ const formatElapsed = (ms: number) => {
 
 const MissionProgress = () => {
   const [groupCount,setGroupCount]=useState(0);
-  const {missionNumber,duration,isStart,isActive} = useSelector((state:RootState) => state.MissionState)
+  const {missionNumber,displayId,duration,isStart,isActive} = useSelector((state:RootState) => state.MissionState)
   // Waypoint progress is only defined for template/search-area missions; there
   // is no source for free-run missions, so this stays null ("--"). Wire to the
   // mission's waypoint field here once the template planner provides one.
@@ -75,8 +75,8 @@ const MissionProgress = () => {
       
       <div className="flex flex-col items-center w-full px-1">
         <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">Mission</span>
-        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700 dark:text-slate-200 truncate max-w-full" title={missionNumber ? String(missionNumber) : 'NA'}>
-          {missionNumber ? missionNumber : 'NA'}
+        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-700 dark:text-slate-200 truncate max-w-full" title={missionNumber ? `ID: ${missionNumber}` : 'NA'}>
+          {displayId ? `#${displayId}` : missionNumber ? missionNumber : 'NA'}
         </span>
       </div>
 

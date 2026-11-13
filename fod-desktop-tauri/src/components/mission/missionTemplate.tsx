@@ -109,9 +109,10 @@ const DEFAULT_TEMPLATES: MissionTemplateItem[] = [
 
 interface MissionTemplateProps {
   stopTemplateView: () => void;
+  nextDisplayId?: number;
 }
 
-const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) => {
+const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nextDisplayId }) => {
   const dispatch = useDispatch();
   const [activeTab, setActiveTab] = useState<"PE" | "CN" | "FR">("PE");
   const [apiLoading, setApiLoading] = useState<boolean>(false);
@@ -186,7 +187,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
 
   // Calculate generated path lines based on boundary, overlap, direction, and reverse
   const calculatedPathLines = useMemo(() => {
-    if (activeBoundaryPoints.length < 4) return [];
+    if (activeBoundaryPoints.length < 3) return [];
     try {
       const baseWidth = 10; // Base camera FOV swath in meters
       const effectiveLateralDistance = Math.max(
@@ -343,13 +344,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
         lon: Number(e.lngLat.lng.toFixed(7)),
       };
 
-      setCreatorPoints((prev) => {
-        if (prev.length >= 4) {
-          toast.info("4 boundary points defined. Click Clear to start over, or tweak below.");
-          return prev;
-        }
-        return [...prev, newPt];
-      });
+      setCreatorPoints((prev) => [...prev, newPt]);
     };
 
     map.current.on("click", handleMapClick);
@@ -545,7 +540,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
 
     try {
       // Sync boundary and lateral spacing into clientConfig for live map tracking
-      if (!opts?.isFreeRun && activeBoundaryPoints.length >= 4) {
+      if (!opts?.isFreeRun && activeBoundaryPoints.length >= 3) {
         config.map.boundaryPoints = activeBoundaryPoints;
         const baseWidth = 10;
         const effectiveLateral = Math.max(
@@ -571,6 +566,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
         dispatch(
           start_Mission({
             ...res.data,
+            displayId: nextDisplayId ?? res.data.displayId ?? null,
             isActive: true,
             duration: res.data.timer ?? 0,
           })
@@ -785,9 +781,9 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
                   <div className="bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-slate-200 shadow-sm text-xs font-bold text-slate-700 flex items-center space-x-2">
                     <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                     <span>
-                      {creatorPoints.length < 4
-                        ? `Click map to place boundary corner (${creatorPoints.length}/4)`
-                        : "Boundary closed • Path calculated"}
+                      {creatorPoints.length < 3
+                        ? `Click map to add polygon vertex (${creatorPoints.length}/3 min)`
+                        : `Polygon closed (${creatorPoints.length} pts) • Path calculated`}
                     </span>
                   </div>
 
@@ -1055,7 +1051,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
             {/* Boundary Points Summary */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                <span>Boundary Coordinates ({creatorPoints.length}/4)</span>
+                <span>Polygon Vertices ({creatorPoints.length})</span>
                 <span
                   className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
                     creatorPoints.length >= 3
@@ -1067,18 +1063,26 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
                 </span>
               </div>
 
-              <div className="space-y-1 text-[11px] font-mono text-slate-600 max-h-24 overflow-y-auto">
+              <div className="space-y-1 text-[11px] font-mono text-slate-600 max-h-28 overflow-y-auto">
                 {creatorPoints.length === 0 ? (
                   <p className="text-slate-400 font-sans text-xs italic py-2 text-center">
-                    Click the map to add 4 boundary corners, or select a preset above.
+                    Click the map to add polygon vertices (3+ points), or select a preset above.
                   </p>
                 ) : (
                   creatorPoints.map((p, idx) => (
-                    <div key={idx} className="flex justify-between items-center py-0.5 border-b border-slate-100 last:border-0">
+                    <div key={idx} className="flex justify-between items-center py-0.5 border-b border-slate-100 last:border-0 gap-2">
                       <span className="font-bold text-slate-800">Point #{idx + 1}</span>
-                      <span>
+                      <span className="ml-auto">
                         {p.lat.toFixed(5)}, {p.lon.toFixed(5)}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => setCreatorPoints((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-slate-400 hover:text-red-500 px-1 font-sans cursor-pointer"
+                        title={`Remove Point #${idx + 1}`}
+                      >
+                        ×
+                      </button>
                     </div>
                   ))
                 )}

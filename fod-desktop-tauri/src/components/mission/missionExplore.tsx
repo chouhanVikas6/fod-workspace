@@ -92,23 +92,15 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         axiosClient({
             method: 'GET',
             url: RestPath.EXPLOREMISSION(selectedMission?.id),
+        }).then((response) => {
+            if (!!response?.data?.id) {
+                dispatch(start_Mission({ ...response.data, displayId: selectedMission?.displayId, isActive: false, isExplore: true }));
+            } else {
+                toast.error(response?.data?.error || 'Mission not found')
+            }
+        }).catch((error) => {
+            toast.error(error?.data?.error || 'Failed to explore mission');
         })
-            .then((response) => {
-                if (!!response?.data?.id) {
-                    dispatch(
-                        start_Mission({
-                            ...response.data,
-                            isActive: false,
-                            isExplore: true,
-                        })
-                    );
-                } else {
-                    toast.error(response?.data?.error || 'Mission not found');
-                }
-            })
-            .catch((error) => {
-                toast.error(error?.data?.error || 'Failed to explore mission');
-            });
     }
 
     function handleSelectFod(fod: any, fromMap = false) {
@@ -145,7 +137,6 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         const pendingRows: any[] = [];
 
         const subId = `mission-explore-${selectedMission.id}-${Date.now()}`;
-
         setFodList([]);
         setSelectedFod(null);
         setDisplayLimit(60);
@@ -262,21 +253,16 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         <div className="w-full h-full flex flex-col gap-2 xl:gap-3 p-3 xl:p-4 bg-[#F8FAFC] dark:bg-[#22262B] text-slate-800 dark:text-slate-100 transition-colors duration-200 select-none">
 
             {/* Header */}
-            <div className="flex items-center justify-between gap-2 shrink-0 min-w-0 flex-nowrap">
-
-                {/* Mission title and status */}
-                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                    <h1 className="text-sm sm:text-base lg:text-lg font-bold text-slate-900 dark:text-white tracking-wide truncate">
-                        Mission {selectedMission.id}
+            <div className="flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                    <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-wide" title={selectedMission?.id ? `ID: ${selectedMission.id}` : undefined}>
+                        Mission #{selectedMission.displayId ?? selectedMission.id}
                     </h1>
-
-                    <span
-                        className={`shrink-0 px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] lg:text-xs font-semibold tracking-wide border ${
-                            isActive
-                                ? 'bg-[#01B656]/20 text-[#01B656] border-[#01B656]/50'
-                                : 'bg-white dark:bg-[#292D33] text-slate-600 dark:text-[#8C939C] border-slate-200 dark:border-[#373C43]'
-                        }`}
-                    >
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide border ${
+                        isActive 
+                            ? 'bg-[#01B656]/20 text-[#01B656] border-[#01B656]/50' 
+                            : 'bg-white dark:bg-[#292D33] text-slate-600 dark:text-[#8C939C] border-slate-200 dark:border-[#373C43]'
+                    }`}>
                         {selectedMission.status}
                     </span>
                 </div>

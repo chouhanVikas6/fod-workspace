@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 import getSocketServer from '@/utils/SocketClient/socketClient';
 import { config } from '@/config/clientConfig';
 import { useDispatch, useSelector } from 'react-redux';
-import { accept_Fod, add_ToClearedFod, pushFod, reject_Fod, undo_fod } from '@/store/slices/fodReducer-slice';
+import { accept_Fod, add_ToClearedFod, reject_Fod, syncFod, undo_fod } from '@/store/slices/fodReducer-slice';
 import { PayloadAction } from '@reduxjs/toolkit';
 import { updateSystemHealth } from '@/store/actions/systemHealth';
 import { handleServerError } from '@/utils/alerts';
@@ -41,20 +41,48 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = EMPTY_
     socketClientRef.current = getSocketServer(url, eventHandlers, {});
     const socketClient = socketClientRef.current;
     let timeout: NodeJS.Timeout | undefined;
+    let fodFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let firstQueuedAt = 0;
+    const pendingFodMap = new Map<string | number, any>();
+    const FOD_DEBOUNCE_MS = 250;
+    const FOD_MAX_WAIT_MS = 500;
+
+    const flushFods = () => {
+      fodFlushTimer = null;
+      firstQueuedAt = 0;
+      if (pendingFodMap.size === 0) return;
+      const batch = Array.from(pendingFodMap.values());
+      pendingFodMap.clear();
+      startTransition(() => {
+        dispatch(syncFod(batch));
+      });
+    };
+
     // Event handlers
-    const handleFod = (payload: PayloadAction) => {
+    const handleFod = (payload: any) => {
       // if (missionState.missionNumber != payload.missionId) return;
       if (missionRef.current?.isNotificationOn) {
-        timeout = setTimeout(() => {
-          if (timeout) clearTimeout(timeout);
-          new Audio(notificationSound).play().catch(() => {});
-        }, 3000);
+        if (!timeout) {
+          timeout = setTimeout(() => {
+            timeout = undefined;
+            new Audio(notificationSound).play().catch(() => {});
+          }, 3000);
+        }
 
         if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
           navigator.vibrate(500);
         }
       }
-      dispatch(pushFod(payload));
+      if (!payload) return;
+      const key = payload.groupId ?? payload.id ?? `ws-${pendingFodMap.size}`;
+      pendingFodMap.set(key, payload);
+
+      const now = Date.now();
+      if (firstQueuedAt === 0) firstQueuedAt = now;
+      const elapsed = now - firstQueuedAt;
+      const delay = elapsed >= FOD_MAX_WAIT_MS ? 0 : Math.min(FOD_DEBOUNCE_MS, FOD_MAX_WAIT_MS - elapsed);
+      if (fodFlushTimer !== null) clearTimeout(fodFlushTimer);
+      fodFlushTimer = setTimeout(flushFods, delay);
     };
 
     const handleSystemHealth = (payload: PayloadAction) => {
@@ -119,6 +147,8 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = EMPTY_
     // Clean up on unmount
     return () => {
       if (timeout) clearTimeout(timeout);
+      if (fodFlushTimer !== null) clearTimeout(fodFlushTimer);
+      pendingFodMap.clear();
       ['connect', 'disconnect', 'fod', 'health', 'diffMissionNumber', 'update'].forEach(event => socketClient.removeEventHandler(event));
     };
   }, [dispatch, eventHandlers]);

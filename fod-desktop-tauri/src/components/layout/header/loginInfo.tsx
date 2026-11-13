@@ -226,15 +226,6 @@ const LoginInfo: React.FC = () => {
                   <span className="text-slate-500 dark:text-[#8E95A2]">Role</span>
                   <span className="font-semibold text-slate-800 dark:text-slate-100">{userRole}</span>
                 </div>
-                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-[#383D44]/70">
-                  <span className="text-slate-500 dark:text-[#8E95A2]">User ID</span>
-                  <span
-                    className="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-[200px] truncate"
-                    title={user?.id || ""}
-                  >
-                    {user?.id || "—"}
-                  </span>
-                </div>
                 <div className="flex justify-between items-center py-2">
                   <span className="text-slate-500 dark:text-[#8E95A2]">Status</span>
                   <span className="inline-flex items-center space-x-1.5 font-semibold text-[#00B957]">

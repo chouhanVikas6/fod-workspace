@@ -9,6 +9,12 @@ pub struct SimulatorConfig {
     pub mission_id: i64,
     pub sysid: String,
     pub auto_react: bool,
+    #[serde(default = "default_device_count")]
+    pub device_count: usize,
+}
+
+fn default_device_count() -> usize {
+    1
 }
 
 impl Default for SimulatorConfig {
@@ -21,6 +27,7 @@ impl Default for SimulatorConfig {
             mission_id: 1,
             sysid: "sim-vehicle-01".to_string(),
             auto_react: true,
+            device_count: 1,
         }
     }
 }
@@ -197,6 +204,33 @@ pub struct ImageFolderItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceStreamStatus {
+    pub device_id: String,
+    pub node_name: String,
+    pub connected: bool,
+    pub sent: u64,
+    pub accepted: u64,
+    pub rejected: u64,
+    pub duplicate: u64,
+}
+
+pub fn device_identity(base_sysid: &str, index: usize, total_devices: usize) -> (String, String) {
+    let trimmed = base_sysid.trim();
+    let base = if trimmed.is_empty() {
+        "sim-vehicle"
+    } else {
+        trimmed
+    };
+    let node_name = format!("sim-pc-node-{:02}", index + 1);
+    let device_id = if total_devices <= 1 {
+        base.to_string()
+    } else {
+        format!("{}-{:02}", base, index + 1)
+    };
+    (device_id, node_name)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulatorTelemetry {
     pub running: bool,
     pub paused: bool,
@@ -212,6 +246,10 @@ pub struct SimulatorTelemetry {
     pub active_camera_count: usize,
     pub last_status: String,
     pub uptime_secs: u64,
+    #[serde(default)]
+    pub connected_devices: usize,
+    #[serde(default)]
+    pub devices: Vec<DeviceStreamStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,7 +343,24 @@ mod tests {
         assert_eq!(cfg.throughput_hz, 5.0);
         assert_eq!(cfg.batch_size, 5);
         assert_eq!(cfg.total_target_count, Some(2000));
+        assert_eq!(cfg.device_count, 1);
         assert!(cfg.auto_react);
+    }
+
+    #[test]
+    fn test_device_identity_single_and_multi() {
+        assert_eq!(
+            device_identity("sim-vehicle-01", 0, 1),
+            ("sim-vehicle-01".to_string(), "sim-pc-node-01".to_string())
+        );
+        assert_eq!(
+            device_identity("sim-vehicle", 0, 3),
+            ("sim-vehicle-01".to_string(), "sim-pc-node-01".to_string())
+        );
+        assert_eq!(
+            device_identity("sim-vehicle", 2, 3),
+            ("sim-vehicle-03".to_string(), "sim-pc-node-03".to_string())
+        );
     }
 }
 

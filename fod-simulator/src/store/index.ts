@@ -10,6 +10,7 @@ export interface SimulatorConfig {
   mission_id: number;
   sysid: string;
   auto_react: boolean;
+  device_count: number;
 }
 
 export interface CameraConfig {
@@ -69,6 +70,16 @@ export interface CustomPayloadConfig {
   extra_metadata: string;
 }
 
+export interface DeviceStreamStatus {
+  device_id: string;
+  node_name: string;
+  connected: boolean;
+  sent: number;
+  accepted: number;
+  rejected: number;
+  duplicate: number;
+}
+
 export interface SimulatorTelemetry {
   running: boolean;
   paused: boolean;
@@ -84,6 +95,8 @@ export interface SimulatorTelemetry {
   active_camera_count: number;
   last_status: string;
   uptime_secs: number;
+  connected_devices: number;
+  devices: DeviceStreamStatus[];
 }
 
 export interface CommandLogEntry {
@@ -169,6 +182,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     mission_id: 1,
     sysid: 'sim-vehicle-01',
     auto_react: true,
+    device_count: 1,
   },
   cameras: [],
   location: {
@@ -228,6 +242,8 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     active_camera_count: 26,
     last_status: 'Idle',
     uptime_secs: 0,
+    connected_devices: 0,
+    devices: [],
   },
   commandLogs: [],
   folderImages: [],
