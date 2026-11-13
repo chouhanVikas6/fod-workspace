@@ -11,7 +11,7 @@ const OperationSideBar = ({ tab, setTab }: any) => {
 
   return (
     <aside
-      className={`sidebar-native-theme h-full sm:w-[60px] lg:w-[80px] shrink-0 flex flex-col items-center overflow-hidden border-r select-none transition-colors duration-200 ${
+      className={`sidebar-native-theme h-full sm:w-[70px] lg:w-[80px] shrink-0 flex flex-col items-center overflow-hidden select-none transition-colors duration-200 ${
         isDark
           ? 'bg-[#262A30] border-[#252B35]'
           : 'bg-[#FCFCFC] border-[#DDDDE7]'

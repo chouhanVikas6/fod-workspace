@@ -9,13 +9,50 @@ import SelectedFodDistance from "./selectedFodDistance";
 import { config } from "@/config/clientConfig";
 import { mapArea } from "@/helper/mapHelper";
 import SelectedLineDistance from "./selectedLineDistance";
-mapboxgl.accessToken = config.map.mapboxToken || (import.meta as any).env?.VITE_MAPBOX_TOKEN || (import.meta as any).env?.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
-const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectFod?: ((fod: any) => void) | null }) => {
+mapboxgl.accessToken =
+  config.map.mapboxToken ||
+  (import.meta as any).env?.VITE_MAPBOX_TOKEN ||
+  (import.meta as any).env?.NEXT_PUBLIC_MAPBOX_TOKEN ||
+  process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
+  '';
+
+function getFodCoordinates(fod: any): [number, number] | null {
+  if (!fod) return null;
+
+  const lon = Number(
+    fod.lon ?? fod.lng ?? fod.longitude ?? fod.long ?? fod.coordinates?.[0]
+  );
+  const lat = Number(
+    fod.lat ?? fod.latitude ?? fod.coordinates?.[1]
+  );
+
+  if (!isFinite(lon) || !isFinite(lat) || (lon === 0 && lat === 0)) {
+    return null;
+  }
+
+  return [lon, lat];
+}
+
+interface ExploreMapProps {
+  fods?: any[];
+  selectedFod?: any;
+  selectedGroupId?: string | number | null;
+  onSelectFod?: ((fod: any) => void) | null;
+}
+
+const ExploreMap = ({
+  fods = [],
+  selectedFod = null,
+  selectedGroupId = null,
+  onSelectFod = null,
+}: ExploreMapProps) => {
   const mapContainer = useRef<any>(null);
   const map = useRef<any>(null);
+  const selectedMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const [isMapReady, setMapReady] = useState(false);
   const [refrenceIndex, setRefrenceIndex] = useState<number>(0);
+
   const linesCoordinatesData = useMemo(() => {
     return mapArea(
       config.map.boundaryPoints,
@@ -24,17 +61,23 @@ const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectF
       config.map.pathDirection || 'OPTIMAL',
       config.map.reversePath || false
     );
-  }, [config.map.boundaryPoints, config.map.lateraldistance, config.map.OFFSET, config.map.pathDirection, config.map.reversePath]);
-  // Making mission polygon
-  const coordinates = config.map.boundaryPoints.map(point => [point.lon, point.lat]);
-  coordinates.push(coordinates[0]); // Close the polygon
+  }, [
+    config.map.boundaryPoints,
+    config.map.lateraldistance,
+    config.map.OFFSET,
+    config.map.pathDirection,
+    config.map.reversePath,
+  ]);
 
+  const coordinates = config.map.boundaryPoints.map((point) => [
+    point.lon,
+    point.lat,
+  ]);
+  coordinates.push(coordinates[0]);
 
-
-  // Merge polygons using Turf.js
-  // const mergedPolygon = mergePolygonJson.data;
   useEffect(() => {
-    if (map.current) return; // initialize map only once
+    if (map.current) return;
+
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: {
@@ -52,24 +95,29 @@ const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectF
             source: "satellite",
           },
         ],
-        // center: [76.2673, 9.9312], // Coordinates for Kochi (Longitude, Latitude)
         center: [76.27697671171512, 9.941217376520802],
-        zoom: 19, // Zoom level
+        zoom: 19,
       },
       attributionControl: false,
     });
+
     map.current.setMaxPitch(0);
     map.current.setMinPitch(0);
-    // The explore map's container gets its height from a grid cell that sizes
-    // after mount; if it's 0 at creation mapbox never starts rendering and
-    // never fires 'load'. Kick a resize once the container has real size.
-    const kickResize = () => { try { map.current && map.current.resize(); } catch {} };
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(kickResize) : null;
+
+    const kickResize = () => {
+      try {
+        map.current && map.current.resize();
+      } catch {}
+    };
+    const ro =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(kickResize)
+        : null;
     if (ro && mapContainer.current) ro.observe(mapContainer.current);
     setTimeout(kickResize, 100);
     setTimeout(kickResize, 400);
+
     map.current.on("load", () => {
-      //source for line
       map.current.addSource("lines", {
         type: "geojson",
         data: {
@@ -78,7 +126,6 @@ const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectF
         },
       });
 
-      //layer for boundaries
       map.current.addLayer({
         id: 'polygon',
         type: 'line',
@@ -98,8 +145,7 @@ const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectF
         },
       });
 
-      // Create a layer for drawing lines
-      let lineLayer=map.current.addLayer({
+      map.current.addLayer({
         id: "lines-layer",
         type: "line",
         source: "lines",
@@ -120,14 +166,12 @@ const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectF
             19, 3,
             20, 3,
             21, 4,
-            22, 7, // Maximum line width when zoom is 22
+            22, 7,
           ],
           "line-dasharray": [2, 3],
         },
       });
 
-
-      // Add arrow lines
       linesCoordinatesData.forEach((lineCoordinates, index) => {
         map.current.addSource(`route${index}`, {
           type: 'geojson',
@@ -158,53 +202,130 @@ const ExploreMap = ({ fods = [], onSelectFod = null }: { fods?: any[]; onSelectF
               19, 3,
               20, 3,
               21, 4,
-              22, 7, // Maximum line width when zoom is 22
+              22, 7,
             ],
             "line-dasharray": [2, 3],
           },
         });
+      });
 
-        map.current.on('click', (e) => {
-          // Create a bounding box around the clicked point
-          let bboxPadding = config.map.boundingBoxPadding;
-          const bbox = [
-            [e.point.x - bboxPadding, e.point.y - bboxPadding],
-            [e.point.x + bboxPadding, e.point.y + bboxPadding],
-          ];
+      map.current.on('click', (e: any) => {
+        const bboxPadding = config.map.boundingBoxPadding;
+        const bbox = [
+          [e.point.x - bboxPadding, e.point.y - bboxPadding],
+          [e.point.x + bboxPadding, e.point.y + bboxPadding],
+        ];
 
-          // Query rendered features within the bounding box
-          const features = map.current.queryRenderedFeatures(bbox, {
-            layers: linesCoordinatesData.map((_, index) => `route${index}`),
-          });
-
-          // If features are found, extract the clicked line index
-          if (features.length) {
-            const clickedFeature = features[0];
-            const lineIndex = parseInt(clickedFeature.layer.id.split('route')[1], 10);
-
-            // Print the line index
-            console.log('Clicked Line Index:', lineIndex);
-
-            // Optional: Set the line index to a state variable
-            setRefrenceIndex(lineIndex);
-          }
+        const features = map.current.queryRenderedFeatures(bbox, {
+          layers: linesCoordinatesData.map((_, index) => `route${index}`),
         });
+
+        if (features.length) {
+          const clickedFeature = features[0];
+          const lineIndex = parseInt(
+            clickedFeature.layer.id.split('route')[1],
+            10
+          );
+          setRefrenceIndex(lineIndex);
+        }
       });
     });
 
     setMapReady(true);
+
+    return () => {
+      if (ro) ro.disconnect();
+      if (selectedMarkerRef.current) {
+        selectedMarkerRef.current.remove();
+        selectedMarkerRef.current = null;
+      }
+    };
   }, []);
+
+  // Fly to and highlight the selected FOD with #4C9FE8
+  useEffect(() => {
+    if (!map.current) return;
+
+    if (selectedMarkerRef.current) {
+      selectedMarkerRef.current.remove();
+      selectedMarkerRef.current = null;
+    }
+
+    if (!selectedFod) return;
+
+    const coords = getFodCoordinates(selectedFod);
+    if (!coords) return;
+
+    map.current.flyTo({
+      center: coords,
+      zoom: Math.max(map.current.getZoom() || 19, 20),
+      duration: 650,
+      essential: true,
+    });
+
+    const el = document.createElement('div');
+    el.className = 'pointer-events-none flex flex-col items-center';
+    const fodLabel = selectedFod.groupId ?? selectedFod.id;
+    el.innerHTML = `
+      <div style="
+        position: relative;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <span style="
+          position: absolute;
+          inset: 0;
+          border-radius: 9999px;
+          border: 2px solid #4C9FE8;
+          background: rgba(76, 159, 232, 0.22);
+        "></span>
+        <span style="
+          width: 14px;
+          height: 14px;
+          border-radius: 9999px;
+          background: #4C9FE8;
+          border: 2px solid #ffffff;
+          box-shadow: 0 0 8px rgba(0,0,0,0.6);
+        "></span>
+      </div>
+      <div style="
+        margin-top: 2px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(15, 23, 42, 0.88);
+        color: #4C9FE8;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+        border: 1px solid rgba(76, 159, 232, 0.5);
+      ">
+        FOD #${fodLabel}
+      </div>
+    `;
+
+    selectedMarkerRef.current = new mapboxgl.Marker({
+      element: el,
+      anchor: 'center',
+    })
+      .setLngLat(coords)
+      .addTo(map.current);
+  }, [selectedFod]);
 
   return (
     <div className="relative h-full w-full">
       <div ref={mapContainer} className="absolute w-full h-full" />
       {isMapReady && map.current && (
         <>
-          <FodMarkers map={map} fods={fods} onSelectFod={onSelectFod} />
-          {/* <SelfLocation map={map} />
-          <SelectedFodDistance  {...{map}}/>
-          <SelectedLineDistance refrenceLine={linesCoordinatesData[refrenceIndex]} {...{map}}/>
-          <MapControls map = {map} /> */}
+          <FodMarkers
+            map={map}
+            fods={fods}
+            selectedFod={selectedFod}
+            selectedGroupId={selectedGroupId}
+            onSelectFod={onSelectFod}
+          />
         </>
       )}
     </div>

@@ -69,8 +69,8 @@ const HomeDashboard = () => {
     <div
       className={`flex flex-col h-full w-full min-h-0 min-w-0 overflow-hidden p-2.5 sm:p-3 ${primaryText}`}
     >
-      {/* MOBILE / TABLET (< 900px): Top Summary & Segmented Tab Navigation */}
-      <div className="mb-2.5 flex flex-col gap-2 shrink-0 min-[900px]:hidden">
+      {/* MOBILE / GETAC TABLET (< 1400px): Top Summary & Segmented Tab Navigation */}
+      <div className="mb-2.5 flex flex-col gap-2 shrink-0 min-[1400px]:hidden">
         {/* Compact Live Status Strip */}
         <div
           className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 ${panelBg} ${borderColor}`}
@@ -154,12 +154,12 @@ const HomeDashboard = () => {
       </div>
 
       {/* MAIN CONTENT GRID */}
-      <div className="grid flex-1 min-h-0 min-w-0 grid-cols-1 gap-3 min-[900px]:grid-cols-[240px_minmax(0,1fr)_250px] xl:grid-cols-[250px_minmax(0,1fr)_280px]">
+      <div className="grid flex-1 min-h-0 min-w-0 grid-cols-1 gap-3 min-[1400px]:grid-cols-[250px_minmax(0,1fr)_280px]">
         {/* LEFT: Mission overview */}
         <section
           className={`${
             activeTab === "mission" ? "flex" : "hidden"
-          } min-[900px]:flex flex-col min-h-0 min-w-0 overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
+          } min-[1400px]:flex flex-col min-h-0 min-w-0 overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
         >
           <div
             className={`shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
@@ -180,7 +180,7 @@ const HomeDashboard = () => {
             </div>
 
             {/* FOD statistics */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 min-[900px]:grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 min-[1400px]:grid-cols-2 gap-2">
               <Stat
                 label="FOD Detected"
                 value={fodDetected}
@@ -282,7 +282,7 @@ const HomeDashboard = () => {
         <section
           className={`${
             activeTab === "fod" ? "flex" : "hidden"
-          } min-[900px]:flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
+          } min-[1400px]:flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
         >
           <div
             className={`shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
@@ -300,7 +300,7 @@ const HomeDashboard = () => {
         <section
           className={`${
             activeTab === "alerts" ? "flex" : "hidden"
-          } min-[900px]:flex flex-col min-h-0 min-w-0 overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
+          } min-[1400px]:flex flex-col min-h-0 min-w-0 overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
         >
           <div
             className={`shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
