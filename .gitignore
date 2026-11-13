@@ -35,17 +35,11 @@ sample_images/
 data/
 **/frames/
 frames/
-# Database files
+
+# Database files (local only)
 *.db
 *.db-shm
 *.db-wal
 *.db-journal
 *.sqlite
 *.sqlite3
-**/*.db
-**/*.db-shm
-**/*.db-wal
-**/*.db-journal
-**/*.sqlite
-**/*.sqlite3
-zoid_client.db*

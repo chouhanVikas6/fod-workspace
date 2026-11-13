@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
@@ -5,7 +6,10 @@ import { HiOutlineCheck } from "react-icons/hi";
 import { FiThumbsUp } from "react-icons/fi";
 import FodListcard from "./fodListCard";
 import FodDetail from "./fodDetail";
-import { close_SideBarFodDetail, setSideBarVisibility } from "@/store/slices/selectedFod-slice";
+import {
+  close_SideBarFodDetail,
+  setSideBarVisibility,
+} from "@/store/slices/selectedFod-slice";
 import { RootState } from "@/store";
 
 const SIDEBAR_PAGE_SIZE = 60;
@@ -14,6 +18,7 @@ const FodCategoryAndDetail = () => {
   const dispatch = useDispatch();
   const [selectedList, setSelectedList] = useState<string>("ACCEPTED");
   const [visibleLimit, setVisibleLimit] = useState<number>(SIDEBAR_PAGE_SIZE);
+
   const fods = useSelector((state: RootState) => state.FodReducer.fods);
   const selectedFod = useSelector((state: RootState) => state.SelectedFod);
   const { isSidebarVisible, isSidebarFodDetailVisible } = selectedFod;
@@ -47,9 +52,12 @@ const FodCategoryAndDetail = () => {
   }, [fods]);
 
   const selectedListTitle = () => {
-    if (selectedList === "ACCEPTED") return `Accepted FODs (${padZero(listLength.ACCEPTED)})`;
-    if (selectedList === "REJECTED") return `Rejected FODs (${padZero(listLength.REJECTED)})`;
-    if (selectedList === "CLEARED") return `Cleared FODs (${padZero(listLength.CLEARED)})`;
+    if (selectedList === "ACCEPTED")
+      return `Accepted FODs (${padZero(listLength.ACCEPTED)})`;
+    if (selectedList === "REJECTED")
+      return `Rejected FODs (${padZero(listLength.REJECTED)})`;
+    if (selectedList === "CLEARED")
+      return `Cleared FODs (${padZero(listLength.CLEARED)})`;
     return "FOD List";
   };
 
@@ -61,7 +69,9 @@ const FodCategoryAndDetail = () => {
   const handleListScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) {
-      setVisibleLimit((prev) => (prev < currentItems.length ? prev + SIDEBAR_PAGE_SIZE : prev));
+      setVisibleLimit((prev) =>
+        prev < currentItems.length ? prev + SIDEBAR_PAGE_SIZE : prev,
+      );
     }
   };
 
@@ -71,11 +81,13 @@ const FodCategoryAndDetail = () => {
         isSidebarVisible ? "translate-x-0" : "translate-x-[320px]"
       }`}
     >
-      {/* Floating vertical pill counter on the left side of the drawer */}
+      {/* Floating vertical pill counter */}
       <div className="h-full flex items-center pr-2">
         <div
-          className="w-[48px] py-4 rounded-2xl bg-[#181D25] border border-[#2B3542] shadow-2xl flex flex-col items-center gap-3.5 pointer-events-auto select-none cursor-pointer"
-          onDoubleClick={() => dispatch(setSideBarVisibility(!isSidebarVisible))}
+          className="w-[48px] py-4 rounded-2xl bg-white dark:bg-[#181D25] border border-slate-200 dark:border-[#2B3542] shadow-[0_8px_24px_rgba(15,23,42,0.12)] dark:shadow-2xl flex flex-col items-center gap-3.5 pointer-events-auto select-none cursor-pointer transition-colors"
+          onDoubleClick={() =>
+            dispatch(setSideBarVisibility(!isSidebarVisible))
+          }
           onClick={() => {
             if (!isSidebarVisible) {
               dispatch(setSideBarVisibility(true));
@@ -88,7 +100,9 @@ const FodCategoryAndDetail = () => {
             type="button"
             title="Cleared FODs"
             className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
-              selectedList === "CLEARED" ? "text-blue-400 scale-105" : "text-slate-400 hover:text-white"
+              selectedList === "CLEARED"
+                ? "text-[#4C9FE8] scale-105"
+                : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
             onClick={(e) => {
               e.stopPropagation();
@@ -97,18 +111,22 @@ const FodCategoryAndDetail = () => {
               dispatch(close_SideBarFodDetail());
             }}
           >
-            <FiThumbsUp className="w-4 h-4 stroke-[2]" />
-            <span className="text-[11px] font-mono font-bold">{padZero(listLength.CLEARED)}</span>
+            <FiThumbsUp className="w-4 h-4 stroke-[2.5]  text-[#4C9FE8]" />
+            <span className="text-[11px] font-mono font-bold">
+              {padZero(listLength.CLEARED)}
+            </span>
           </button>
 
-          <div className="w-5 h-[1px] bg-[#2B3542]" />
+          <div className="w-5 h-px bg-slate-200 dark:bg-[#2B3542]" />
 
           {/* Accepted */}
           <button
             type="button"
             title="Accepted FODs"
             className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
-              selectedList === "ACCEPTED" ? "text-emerald-400 scale-105" : "text-slate-400 hover:text-emerald-400"
+              selectedList === "ACCEPTED"
+                ? "text-[#00B957] scale-105"
+                : "text-slate-500 dark:text-slate-400 hover:text-[#00B957]"
             }`}
             onClick={(e) => {
               e.stopPropagation();
@@ -117,20 +135,22 @@ const FodCategoryAndDetail = () => {
               dispatch(close_SideBarFodDetail());
             }}
           >
-            <HiOutlineCheck className="w-4 h-4 stroke-[2.5] text-emerald-400" />
-            <span className="text-[11px] font-mono font-bold text-emerald-400">
+            <HiOutlineCheck className="w-4 h-4 stroke-[2.5] text-[#00B957]" />
+            <span className="text-[11px] font-mono font-bold text-[#00B957]">
               {padZero(listLength.ACCEPTED)}
             </span>
           </button>
 
-          <div className="w-5 h-[1px] bg-[#2B3542]" />
+          <div className="w-5 h-px bg-slate-200 dark:bg-[#2B3542]" />
 
           {/* Rejected */}
           <button
             type="button"
             title="Rejected FODs"
             className={`w-full flex flex-col items-center justify-center gap-0.5 py-1 transition-all ${
-              selectedList === "REJECTED" ? "text-rose-400 scale-105" : "text-slate-400 hover:text-rose-400"
+              selectedList === "REJECTED"
+                ? "text-[#D51F32] scale-105"
+                : "text-slate-500 dark:text-slate-400 hover:text-[#D51F32]"
             }`}
             onClick={(e) => {
               e.stopPropagation();
@@ -139,8 +159,8 @@ const FodCategoryAndDetail = () => {
               dispatch(close_SideBarFodDetail());
             }}
           >
-            <RxCross1 className="w-3.5 h-3.5 stroke-[1.5] text-rose-400" />
-            <span className="text-[11px] font-mono font-bold text-rose-400">
+            <RxCross1 className="w-3.5 h-3.5 stroke-[1.5] text-[#D51F32]" />
+            <span className="text-[11px] font-mono font-bold text-[#D51F32]">
               {padZero(listLength.REJECTED)}
             </span>
           </button>
@@ -148,20 +168,21 @@ const FodCategoryAndDetail = () => {
       </div>
 
       {/* Slideout Content Drawer */}
-      <div className="w-[320px] h-full bg-[#181C23] border-l border-[#2B3542] flex flex-col pointer-events-auto shadow-2xl">
+      <div className="w-[320px] h-full bg-white dark:bg-[#181C23] border-l border-slate-200 dark:border-[#2B3542] flex flex-col pointer-events-auto shadow-2xl transition-colors duration-200">
         {isSidebarFodDetailVisible ? (
           <FodDetail />
         ) : (
           <div className="h-full flex flex-col">
             {/* Drawer Header */}
-            <div className="h-12 px-4 flex items-center justify-between border-b border-[#252B35] shrink-0">
-              <span className="text-xs font-bold text-white tracking-wide uppercase">
+            <div className="h-12 px-4 flex items-center justify-between border-b border-slate-200 dark:border-[#252B35] bg-slate-50 dark:bg-[#181C23] shrink-0">
+              <span className="text-xs font-bold text-slate-900 dark:text-white tracking-wide uppercase">
                 {selectedListTitle()}
               </span>
+
               <button
                 type="button"
                 title="Close drawer"
-                className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                className="w-7 h-7 rounded-md flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/10 transition-colors"
                 onClick={() => dispatch(setSideBarVisibility(false))}
               >
                 <RxCross1 className="w-3.5 h-3.5" />
@@ -169,15 +190,20 @@ const FodCategoryAndDetail = () => {
             </div>
 
             {/* List */}
-            <div onScroll={handleListScroll} className="flex-1 overflow-y-auto py-2">
+            <div
+              onScroll={handleListScroll}
+              className="flex-1 overflow-y-auto py-2 bg-white dark:bg-[#181C23]"
+            >
               {currentItems.length === 0 ? (
-                <div className="h-40 flex items-center justify-center text-slate-500 text-xs font-medium">
+                <div className="h-40 flex items-center justify-center text-slate-500 dark:text-slate-500 text-xs font-medium">
                   No FODs in this category
                 </div>
               ) : (
-                currentItems.slice(0, visibleLimit).map((fod, index) => (
-                  <FodListcard key={fod.id ?? index} fod={fod} />
-                ))
+                currentItems
+                  .slice(0, visibleLimit)
+                  .map((fod, index) => (
+                    <FodListcard key={fod.id ?? index} fod={fod} />
+                  ))
               )}
             </div>
           </div>

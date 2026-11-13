@@ -1,199 +1,545 @@
-import React, { useRef, useEffect, useState } from "react";
+
+import React, { useRef, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { Fod_FodId, Fod_Riskfactor, Fod_ClearenceTime, Fod_Confidence } from "@/utils/FodParser";
-import { validateSelectedFodLocation, validateCollectorLocation } from "@/utils/MapUtils";
+
+import {
+  Fod_FodId,
+  Fod_Riskfactor,
+  Fod_ClearenceTime,
+  Fod_Confidence,
+} from "@/utils/FodParser";
+
 import Slider, { LazyLoadTypes } from "react-slick";
-import * as turf from '@turf/turf';
-import type { Units } from '@turf/helpers';
+import * as turf from "@turf/turf";
+import type { Units } from "@turf/helpers";
+
 import { removeClearedDetailedViewFod } from "@/store/actions/ClearedFodDetailView";
 import Image from "next/image";
-import { RootState } from "@/store";
-import axiosClient from "@/utils/axios";
-import { url } from "inspector";
-import { AppDispatch } from "@/store";
-const OperationSideBarStyle = {
-    width: 6,
-    background: '#FCFCFC',
-    borderColor: '#DDDDE7'
-}
-const FodPanelStyle = {
-    width: 100 - (OperationSideBarStyle.width || 0),
-    background: "#F8F8F8",
-}
+
+import { RootState, AppDispatch } from "@/store";
+import {
+  validateSelectedFodLocation,
+  validateCollectorLocation,
+} from "@/utils/MapUtils";
+
+import { RxCross1 } from "react-icons/rx";
+
+/* ======================================================
+   MAIN CLEARED FOD DETAIL VIEW
+====================================================== */
+
 const ClearedFodDetailView = () => {
-    const dispatch = useDispatch<AppDispatch>();
-    const { width } = FodPanelStyle;
-    const detailedViewRef = useRef(null);
-    const { isOpen } = useSelector((state: RootState) => state.ClearedFodDetailView);
-    const { fod } = useSelector((state: RootState) => state.ClearedFodDetailView);
-    const [clearedResponse,setClearedResponse]=useState(null);
-    function handleButtonClick(event) {
-        event.stopPropagation();
-    }
+  const dispatch = useDispatch<AppDispatch>();
+  const detailedViewRef = useRef<HTMLDivElement>(null);
 
-    //add  event for closing detail view
-    useEffect(() => {
-        function handleClickOutside(event) {
-            if (detailedViewRef.current && !detailedViewRef.current.contains(event.target)) {
-                dispatch(removeClearedDetailedViewFod());
-            }
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        document.addEventListener("touchstart", handleClickOutside);
+  const { isOpen, fod } = useSelector(
+    (state: RootState) => state.ClearedFodDetailView
+  );
 
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-            document.removeEventListener("touchstart", handleClickOutside);
-        };
-    }, [dispatch, detailedViewRef]);
+  useEffect(() => {
+    if (!isOpen) return;
 
-    return (
-        <>
-            {isOpen && (
-                <div className="fixed top-0 right-0 h-full w-full z-50 bg-gray-700 bg-opacity-40 flex justify-center items-center text-gray-600">
-                    <div className={`detailedView_container`} style={{ width: `${width}%` }}>
-                        <div className="clearedDetailedView_body" ref={detailedViewRef} onClick={handleButtonClick}>
-                            <div className="clear-header flex justify-between">
-                                <FodGrid />
-                                <ClearedFodData />
-                            </div>
-                            <div className="clear-bottom flex justify-between">
-                                <div className="clearedReportMap w-2/5">
-                                    {/* <ClearedReportMap /> */}
-                                </div>
-                                <div className="collectorImg-container flex w-3/5">
-                                    <div className="collectorImg">
-                                        <ImgSlider clearedResponse={fod.collectorResponse} beforeImg={true} />
-                                        <div className="text-center">Before Clearing</div>
-                                    </div>
-                                    <div className="collectorImg">
-                                        <ImgSlider clearedResponse={fod.collectorResponse} beforeImg={false} />
-                                        <div className="text-center">After Clearing</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </>
-    );
-}
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (
+        detailedViewRef.current &&
+        !detailedViewRef.current.contains(event.target as Node)
+      ) {
+        dispatch(removeClearedDetailedViewFod());
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [dispatch, isOpen]);
+
+  if (!isOpen || !fod) return null;
+
+  return (
+    <div
+       className="
+    fixed inset-x-0 bottom-0 top-[48px] z-[9999]
+    flex items-center justify-center
+    overflow-y-auto
+    bg-slate-900/40
+    backdrop-blur-[5px]
+    p-2
+    sm:p-4
+    lg:p-5
+  "
+    >
+      <div
+        ref={detailedViewRef}
+        className="
+          relative
+          w-full max-w-[1400px]
+          max-h-[90dvh]
+          max-[900px]:max-h-[calc(100dvh-4rem)]
+          overflow-y-auto
+          rounded-xl
+          bg-white dark:bg-[#181C23]
+          border border-slate-200 dark:border-[#2B3542]
+          shadow-2xl
+          text-slate-700 dark:text-[#D9DDE2]
+          flex flex-col
+        "
+      >
+        {/* Modal Header */}
+        <div
+          className="
+            sticky top-0 z-20
+            h-11 sm:h-12
+            px-3 sm:px-5
+            flex items-center justify-between
+            bg-white dark:bg-[#181C23]
+            border-b border-slate-200 dark:border-[#2B3542]
+            shrink-0
+          "
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm sm:text-base font-bold text-slate-900 dark:text-[#D9DDE2]">
+              {Fod_FodId(fod)}
+            </span>
+
+            <span
+              className="
+                px-2 py-1 rounded
+                text-[9px] sm:text-[10px]
+                font-bold tracking-wide
+                bg-emerald-100 dark:bg-emerald-500/15
+                text-emerald-700 dark:text-[#00B957]
+              "
+            >
+              CLEARED
+            </span>
+          </div>
+
+          <button
+            type="button"
+            title="Close detail view"
+            onClick={() => dispatch(removeClearedDetailedViewFod())}
+            className="
+              w-7 h-7 rounded-md
+              flex items-center justify-center
+              text-slate-500 dark:text-[#A8B0BA]
+              hover:bg-slate-100 dark:hover:bg-[#353A42]
+              hover:text-slate-900 dark:hover:text-white
+              transition-colors
+            "
+          >
+            <RxCross1 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Main Content */}
+        <div className="p-3 sm:p-4 lg:p-5 flex flex-col gap-3 sm:gap-4">
+          {/* Top Section: Frames + FOD Details */}
+          <div
+            className="
+              grid grid-cols-1
+              lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,1fr)]
+              gap-3 sm:gap-4
+            "
+          >
+            {/* FOD Frame Gallery */}
+            <div
+              className="
+                min-w-0
+                h-[220px] sm:h-[260px] lg:h-[300px]
+                rounded-lg overflow-hidden
+                bg-slate-100 dark:bg-[#22262B]
+                border border-slate-200 dark:border-[#454B53]
+              "
+            >
+              <FodGrid />
+            </div>
+
+            {/* FOD Information */}
+            <div
+              className="
+                min-w-0
+                rounded-lg
+                bg-slate-50 dark:bg-[#22262B]
+                border border-slate-200 dark:border-[#454B53]
+                p-3 sm:p-4
+              "
+            >
+              <ClearedFodData />
+            </div>
+          </div>
+
+          {/* Before / After Images */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            {/* Before Clearing */}
+            <div
+              className="
+                min-w-0
+                rounded-lg
+                bg-slate-50 dark:bg-[#22262B]
+                border border-slate-200 dark:border-[#454B53]
+                p-2.5 sm:p-3
+              "
+            >
+              <h3
+                className="
+                  text-xs sm:text-sm
+                  font-semibold
+                  text-slate-700 dark:text-[#D9DDE2]
+                  mb-2
+                "
+              >
+                Before Clearing
+              </h3>
+
+              <ImgSlider
+                clearedResponse={fod.collectorResponse}
+                beforeImg={true}
+              />
+            </div>
+
+            {/* After Clearing */}
+            <div
+              className="
+                min-w-0
+                rounded-lg
+                bg-slate-50 dark:bg-[#22262B]
+                border border-slate-200 dark:border-[#454B53]
+                p-2.5 sm:p-3
+              "
+            >
+              <h3
+                className="
+                  text-xs sm:text-sm
+                  font-semibold
+                  text-slate-700 dark:text-[#D9DDE2]
+                  mb-2
+                "
+              >
+                After Clearing
+              </h3>
+
+              <ImgSlider
+                clearedResponse={fod.collectorResponse}
+                beforeImg={false}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default ClearedFodDetailView;
 
-const FodGrid = () => {
-    const getFrames = (fod) => {
-        const { FodPoints } = fod;
-        let frames = [];
-        frames = FodPoints.map(FodPoint => FodPoint.frame);
-        return frames.filter(frame => typeof (frame) === 'string');
-    }
-    const { fod } = useSelector((state: RootState) => state.ClearedFodDetailView);
-    const frames = getFrames(fod);
-console.log({fod})
+/* ======================================================
+   FOD FRAME GALLERY
+====================================================== */
 
-    return (
-        <div className="w-full h-full grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4 bg-[#EBEBEB] overflow-y-auto">
-            {frames.map((frame, index) => (
-                <div
-                    key={index}
-                    className={`relative w-full aspect-[4/3] bg-white ${index === 0 ? "border-2 border-black" : ""
-                        }`}
-                >
-                    <Image
-                        src={`${frame}`}
-                        layout="fill"
-                        objectFit="cover"
-                        alt="FOD frame"
-                        className="rounded-md"
-                    />
-                </div>
-            ))}
+const FodGrid = () => {
+  const { fod } = useSelector(
+    (state: RootState) => state.ClearedFodDetailView
+  );
+
+  const getFrames = (fodData: any) => {
+    const { FodPoints } = fodData || {};
+
+    if (!Array.isArray(FodPoints)) return [];
+
+    return FodPoints
+      .map((point: any) => point?.frame)
+      .filter(
+        (frame: any) =>
+          typeof frame === "string" && frame.length > 0
+      );
+  };
+
+  const frames = getFrames(fod);
+
+  return (
+    <div
+      className="
+        w-full h-full
+        grid grid-cols-1
+        min-[480px]:grid-cols-2
+        xl:grid-cols-3
+        gap-2 p-2
+        overflow-y-auto
+        content-start
+      "
+    >
+      {frames.length > 0 ? (
+        frames.map((frame: string, index: number) => (
+          <div
+            key={index}
+            className={`
+              relative
+              w-full aspect-[4/3]
+              min-h-[100px]
+              rounded-md overflow-hidden
+              bg-slate-200 dark:bg-[#292D33]
+              border
+              ${
+                index === 0
+                  ? "border-2 border-[#4C9FE8]"
+                  : "border-slate-200 dark:border-[#454B53]"
+              }
+            `}
+          >
+            <Image
+              src={frame}
+              fill
+              sizes="(max-width: 480px) 90vw, (max-width: 1024px) 45vw, 30vw"
+              alt={`FOD frame ${index + 1}`}
+              className="rounded-md object-contain"
+            />
+          </div>
+        ))
+      ) : (
+        <div
+          className="
+            col-span-full
+            w-full h-full min-h-[180px]
+            flex items-center justify-center
+            text-xs sm:text-sm
+            text-slate-500 dark:text-[#A8B0BA]
+          "
+        >
+          No FOD frames available
         </div>
-    );
+      )}
+    </div>
+  );
 };
 
-const ImgSlider = ({ clearedResponse,beforeImg }) => {
-    const settings = {
-        infinite: false,
-        speed: 1000,
-        slidesToShow: 1,
-        slidesToScroll: 1,
-        lazyLoad: 'ondemand' as LazyLoadTypes,
-        arrows: false,
-        dots: false,
-    };
+/* ======================================================
+   BEFORE / AFTER IMAGE SLIDER
+====================================================== */
 
-    const ImgList = () => {
-        if (!clearedResponse) return [];
-        if (beforeImg) {
-            return clearedResponse.beforeClearImg;
-        } else {
-            return clearedResponse.afterClearImg;
-        }
-    }
+const ImgSlider = ({
+  clearedResponse,
+  beforeImg,
+}: {
+  clearedResponse: any;
+  beforeImg: boolean;
+}) => {
+  const settings = {
+    infinite: false,
+    speed: 500,
+    slidesToShow: 1,
+    slidesToScroll: 1,
+    lazyLoad: "ondemand" as LazyLoadTypes,
+    arrows: false,
+    dots: true,
+    adaptiveHeight: true,
+  };
 
-    return (
-        <Slider {...settings} className={` cleared-slider-container `}>
-            {ImgList().map((item, index) => (
-                <div key={index} className={`cleared-slider-image-container`}>
-                    <Image src={`${item}`} height={100} width={100} alt="image" key={index} draggable="false" />
-                </div>
-            ))}
+  const imageList = beforeImg
+    ? clearedResponse?.beforeClearImg || []
+    : clearedResponse?.afterClearImg || [];
+
+  return (
+    <div className="w-full min-w-0">
+      {imageList.length > 0 ? (
+        <Slider
+          {...settings}
+          className="cleared-slider-container"
+        >
+          {imageList.map((item: string, index: number) => (
+            <div key={index} className="px-1">
+              <div
+                className="
+                  relative w-full
+                  h-[120px] sm:h-[145px] lg:h-[165px]
+                  rounded-md overflow-hidden
+                  bg-slate-200 dark:bg-[#292D33]
+                "
+              >
+                <Image
+                  src={item}
+                  fill
+                  sizes="(max-width: 640px) 90vw, 45vw"
+                  alt={`${beforeImg ? "Before" : "After"} clearing image ${index + 1}`}
+                  draggable={false}
+                  className="object-contain"
+                />
+              </div>
+            </div>
+          ))}
         </Slider>
-    )
-}
+      ) : (
+        <div
+          className="
+            w-full
+            h-[120px] sm:h-[145px] lg:h-[165px]
+            flex items-center justify-center
+            rounded-md
+            bg-slate-100 dark:bg-[#292D33]
+            border border-slate-200 dark:border-[#454B53]
+            text-xs text-slate-500 dark:text-[#A8B0BA]
+          "
+        >
+          No images available
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ======================================================
+   CLEARED FOD INFORMATION
+====================================================== */
 
 const ClearedFodData = () => {
-    const { fod } = useSelector((state: RootState) => state.ClearedFodDetailView);
+  const { fod } = useSelector(
+    (state: RootState) => state.ClearedFodDetailView
+  );
 
-    const distanceBwCollectorAndFOd = (clearedFod) => {
-        const selectedFodLocation = validateSelectedFodLocation(clearedFod);
-        const validatedCollectorLocation = validateCollectorLocation(clearedFod);
+  const distanceBwCollectorAndFod = (clearedFod: any) => {
+    const selectedFodLocation =
+      validateSelectedFodLocation(clearedFod);
 
-        if (!selectedFodLocation || !validatedCollectorLocation) {
-            return "";
-        }
+    const validatedCollectorLocation =
+      validateCollectorLocation(clearedFod);
 
-        const point1 = turf.point(validatedCollectorLocation.coord);
-        const point2 = turf.point(selectedFodLocation);
-
-        const options = { units: 'meters' as Units };
-        const distance = turf.distance(point1, point2, options);
-
-        if (distance < 0) {
-            const distInCm = distance * 100;
-            return distInCm.toFixed(2) + ' cm';
-        }
-
-        if (distance > 999) {
-            const distanceInKm = distance / 1000;
-            return distanceInKm.toFixed(2) + " Km";
-        }
-
-        return distance.toFixed(2) + " m";
+    if (
+      !selectedFodLocation ||
+      !validatedCollectorLocation
+    ) {
+      return "—";
     }
 
-    return (
-        <div className="clearedfod-data-container">
-            <div className="cleardfod-id text-2xl font-bold mb-4">{Fod_FodId(fod)}</div>
-            <div className="clearedfod-data flex justify-between">
-                <div className="clearedfod-data-left w-1/2">
-                    <div><span>CAM ID</span><span>{(fod as any).sysid ?? ''}</span></div>
-                    <div><span>Class</span><span>{(fod as any).class ?? ''}</span></div>
-                    <div><span>Size</span><span>{(fod as any).size ?? ''}</span></div>
-                    <div><span>Velocity</span><span>{(fod as any).velocity ?? ''}</span></div>
-                    <div><span>Risk Factor</span><span>{Fod_Riskfactor(fod)}</span></div>
-                </div>
-                <div className="clearedfod-data-left w-1/2 ">
-                    <div><span>Fod Status</span><span>{(fod as any).groupStatus ?? ''}</span></div>
-                    <div><span>Detection Time</span><span>{(fod as any).timestamp ? new Date((fod as any).timestamp).toLocaleTimeString() + ' ' + new Date((fod as any).timestamp).toLocaleDateString() : ''}</span></div>
-                    <div><span>Clearence Time</span><span>{Fod_ClearenceTime(fod)}</span></div>
-                    <div><span>Distance</span><span>{distanceBwCollectorAndFOd(fod)}</span></div>
-                    <div><span>Confidence</span><span>{Fod_Confidence(fod)}</span></div>
-                </div>
-            </div>
-        </div>
-    )
-}
+    try {
+      const point1 = turf.point(
+        validatedCollectorLocation.coord
+      );
+
+      const point2 = turf.point(selectedFodLocation);
+
+      const options = { units: "meters" as Units };
+
+      const distance = turf.distance(
+        point1,
+        point2,
+        options
+      );
+
+      if (distance > 999) {
+        return `${(distance / 1000).toFixed(2)} Km`;
+      }
+
+      return `${distance.toFixed(2)} m`;
+    } catch {
+      return "—";
+    }
+  };
+
+  const dataItems = [
+    {
+      label: "CAM ID",
+      value: (fod as any)?.sysid ?? "—",
+    },
+    {
+      label: "FOD Status",
+      value: (fod as any)?.groupStatus ?? "—",
+    },
+    {
+      label: "Class",
+      value: (fod as any)?.class ?? "—",
+    },
+    {
+      label: "Detection Time",
+      value: (fod as any)?.timestamp
+        ? new Date(
+            (fod as any).timestamp
+          ).toLocaleString()
+        : "—",
+    },
+    {
+      label: "Size",
+      value: (fod as any)?.size ?? "—",
+    },
+    {
+      label: "Clearance Time",
+      value: Fod_ClearenceTime(fod),
+    },
+    {
+      label: "Velocity",
+      value: (fod as any)?.velocity ?? "—",
+    },
+    {
+      label: "Distance",
+      value: distanceBwCollectorAndFod(fod),
+    },
+    {
+      label: "Risk Factor",
+      value: Fod_Riskfactor(fod),
+    },
+    {
+      label: "Confidence",
+      value: Fod_Confidence(fod),
+    },
+  ];
+
+  return (
+    <div className="w-full flex flex-col">
+      <div
+        className="
+          text-base sm:text-lg
+          font-bold
+          text-slate-900 dark:text-[#D9DDE2]
+          mb-3
+        "
+      >
+        FOD Information
+      </div>
+
+      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 gap-2">
+        {dataItems.map((item) => (
+          <div
+            key={item.label}
+            className="
+              min-w-0
+              min-h-[42px] sm:min-h-[46px]
+              flex items-center justify-between
+              gap-2
+              rounded-md
+              px-2.5 sm:px-3
+              py-2
+              bg-white dark:bg-[#292D33]
+              border border-slate-200 dark:border-[#454B53]
+            "
+          >
+            <span
+              className="
+                shrink-0
+                text-[10px] sm:text-[11px]
+                font-medium
+                text-slate-500 dark:text-[#A8B0BA]
+              "
+            >
+              {item.label}
+            </span>
+
+            <span
+              className="
+                min-w-0
+                text-right
+                text-[10px] sm:text-[11px]
+                font-semibold
+                text-slate-800 dark:text-[#D9DDE2]
+                break-words
+              "
+            >
+              {item.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};

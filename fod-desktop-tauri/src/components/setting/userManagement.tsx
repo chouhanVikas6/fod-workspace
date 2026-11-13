@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '@/store';
@@ -113,6 +114,7 @@ export default function UserManagement() {
 
   const [users, setUsers] = useState<UserRecord[]>(INITIAL_USERS);
   const [selectedUserId, setSelectedUserId] = useState<string>('u-2');
+  const [mobileTab, setMobileTab] = useState<'users' | 'profile'>('users');
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<'ALL' | 'ADMIN' | 'COLLECTOR'>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -156,11 +158,13 @@ export default function UserManagement() {
   // Fetch real users from backend if available
   useEffect(() => {
     let cancelled = false;
+
     axiosClient({ method: 'GET', url: '/api/auth/users' })
       .then((res) => {
         if (!cancelled && res.data?.users && Array.isArray(res.data.users) && res.data.users.length > 0) {
           const mapped: UserRecord[] = res.data.users.map((u: any, idx: number) => {
             const roleStr = String(u.role || 'COLLECTOR').toUpperCase() as any;
+
             return {
               id: u.id || `real-${idx}`,
               username: u.username || u.userName || `user_${idx}`,
@@ -175,6 +179,7 @@ export default function UserManagement() {
               accessSystemSettings: roleStr === 'ADMIN',
             };
           });
+
           setUsers(mapped);
           if (mapped[0]) setSelectedUserId(mapped[0].id);
         }
@@ -194,16 +199,19 @@ export default function UserManagement() {
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
       const name = `${u.firstName || ''} ${u.lastName || ''} ${u.username}`.toLowerCase();
+
       if (searchQuery && !name.includes(searchQuery.toLowerCase())) return false;
       if (roleFilter === 'ADMIN' && u.role !== 'ADMIN' && u.role !== 'ATC') return false;
       if (roleFilter === 'COLLECTOR' && u.role !== 'COLLECTOR') return false;
       if (statusFilter !== 'ALL' && u.status !== statusFilter) return false;
+
       return true;
     });
   }, [users, searchQuery, roleFilter, statusFilter]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!newUsername.trim() || !newPassword.trim()) {
       toast.error('Username and password are required');
       return;
@@ -243,6 +251,7 @@ export default function UserManagement() {
 
     setUsers((prev) => [newUser, ...prev]);
     setSelectedUserId(newUser.id);
+    setMobileTab('profile');
     setShowAddModal(false);
     setNewUsername('');
     setNewFirstName('');
@@ -288,6 +297,7 @@ export default function UserManagement() {
           : u
       )
     );
+
     setEditNewPassword('');
     setEditConfirmPassword('');
     toast.success('User profile updated');
@@ -338,15 +348,46 @@ export default function UserManagement() {
         </button>
       </div>
 
-      {/* Main 2-Column Grid: Users Table Card (Left) + Profile Drawer Card (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
-        {/* Left Column: Unified Filter + Users Table Card (8 cols) */}
-        <div
-          className={`lg:col-span-8 rounded-xl border p-4 overflow-hidden flex flex-col transition-all ${
-            isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+      {/* Responsive tabs — shown only below the desktop breakpoint */}
+      <div className="lg:hidden grid grid-cols-2 gap-1 p-1 mb-3 rounded-lg bg-slate-100 dark:bg-[#292D33] border border-slate-200 dark:border-[#383D44]">
+        <button
+          type="button"
+          onClick={() => setMobileTab('users')}
+          className={`py-2 rounded-md text-xs font-semibold transition ${
+            mobileTab === 'users'
+              ? 'bg-white dark:bg-[#353A42] text-[#4C9FE8] shadow-sm'
+              : 'text-slate-500 dark:text-[#9EA4B0]'
           }`}
         >
-          {/* Search & Filter Bar Inside Card */}
+          Users ({users.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobileTab('profile')}
+          className={`py-2 rounded-md text-xs font-semibold transition ${
+            mobileTab === 'profile'
+              ? 'bg-white dark:bg-[#353A42] text-[#4C9FE8] shadow-sm'
+              : 'text-slate-500 dark:text-[#9EA4B0]'
+          }`}
+        >
+          User Profile
+        </button>
+      </div>
+
+      {/* Main 2-Column Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
+        {/* Left Column: Users */}
+        <div
+          className={`lg:col-span-8 rounded-xl border p-4 overflow-hidden flex-col transition-all ${
+            mobileTab === 'users' ? 'flex' : 'hidden'
+          } lg:flex ${
+            isDark
+              ? 'bg-[#292D33] border-[#383D44]'
+              : 'bg-white border-slate-200 shadow-xs'
+          }`}
+        >
+          {/* Search & Filter Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3.5">
             <div className="flex flex-wrap items-center gap-2 flex-1">
               {/* Search */}
@@ -386,6 +427,7 @@ export default function UserManagement() {
                 >
                   All ({users.length.toString().padStart(2, '0')})
                 </button>
+
                 <button
                   type="button"
                   onClick={() => setRoleFilter('ADMIN')}
@@ -401,6 +443,7 @@ export default function UserManagement() {
                 >
                   Admins ({adminCount})
                 </button>
+
                 <button
                   type="button"
                   onClick={() => setRoleFilter('COLLECTOR')}
@@ -452,14 +495,19 @@ export default function UserManagement() {
                   <th className="py-2.5 px-3 text-right rounded-r-md">Actions</th>
                 </tr>
               </thead>
+
               <tbody className={`divide-y ${isDark ? 'divide-[#383D44]' : 'divide-slate-200'}`}>
                 {filteredUsers.map((u) => {
                   const isSelected = u.id === selectedUserId;
                   const fullNameStr = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username;
+
                   return (
                     <tr
                       key={u.id}
-                      onClick={() => setSelectedUserId(u.id)}
+                      onClick={() => {
+                        setSelectedUserId(u.id);
+                        setMobileTab('profile');
+                      }}
                       className={`cursor-pointer transition-colors ${
                         isSelected
                           ? isDark
@@ -481,11 +529,13 @@ export default function UserManagement() {
                           >
                             {getInitials(u)}
                           </div>
+
                           <span className={`font-medium ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
                             {fullNameStr}
                           </span>
                         </div>
                       </td>
+
                       <td className="py-3 px-3">
                         <span
                           className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold border ${
@@ -499,15 +549,18 @@ export default function UserManagement() {
                           {u.role === 'ATC' ? 'ATC' : u.role === 'ADMIN' ? 'Admin' : 'Collector'}
                         </span>
                       </td>
+
                       <td className={`py-3 px-3 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                         {u.assignedVehicle}
                       </td>
+
                       <td className="py-3 px-3">
                         {u.status === 'Active' && (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold text-[#00B957] bg-[#00B957]/15 border border-[#00B957]/40">
                             Active
                           </span>
                         )}
+
                         {u.status === 'Offline' && (
                           <span
                             className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold border ${
@@ -519,12 +572,14 @@ export default function UserManagement() {
                             Offline
                           </span>
                         )}
+
                         {u.status === 'Suspended' && (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold text-rose-400 bg-rose-500/15 border border-rose-500/40">
                             Suspended
                           </span>
                         )}
                       </td>
+
                       <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-2">
                           <button
@@ -532,6 +587,7 @@ export default function UserManagement() {
                             title="Reset password"
                             onClick={() => {
                               setSelectedUserId(u.id);
+                              setMobileTab('profile');
                               toast.info(`Enter new password in profile editor for ${u.firstName || u.username}`);
                             }}
                             className={`p-1 rounded hover:bg-slate-500/20 transition cursor-pointer ${
@@ -540,16 +596,21 @@ export default function UserManagement() {
                           >
                             <HiKey className="w-3.5 h-3.5" />
                           </button>
+
                           <button
                             type="button"
                             title="Edit"
-                            onClick={() => setSelectedUserId(u.id)}
+                            onClick={() => {
+                              setSelectedUserId(u.id);
+                              setMobileTab('profile');
+                            }}
                             className={`p-1 rounded hover:bg-slate-500/20 transition cursor-pointer ${
                               isDark ? 'text-[#9EA4B0]' : 'text-slate-600'
                             }`}
                           >
                             <HiPencilSquare className="w-3.5 h-3.5" />
                           </button>
+
                           <button
                             type="button"
                             title="Delete"
@@ -568,11 +629,15 @@ export default function UserManagement() {
           </div>
         </div>
 
-        {/* Right Column: User Profile Editor Drawer (4 cols) */}
+        {/* Right Column: User Profile Editor */}
         {selectedUser && (
           <div
-            className={`lg:col-span-4 rounded-xl p-4 border flex flex-col justify-between transition-all ${
-              isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+            className={`lg:col-span-4 rounded-xl p-4 border flex-col justify-between transition-all ${
+              mobileTab === 'profile' ? 'flex' : 'hidden'
+            } lg:flex ${
+              isDark
+                ? 'bg-[#292D33] border-[#383D44]'
+                : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
             <div>
@@ -595,11 +660,12 @@ export default function UserManagement() {
                 >
                   {getInitials(selectedUser)}
                 </div>
-                <div>
+
+                <div className="min-w-0">
                   <div className={`text-sm font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
                     {[selectedUser.firstName, selectedUser.lastName].filter(Boolean).join(' ') || selectedUser.username}
                   </div>
-                  <div className={`text-xs ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+                  <div className={`text-xs truncate ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
                     {selectedUser.email}
                   </div>
                 </div>
@@ -711,6 +777,7 @@ export default function UserManagement() {
                 <span className={`block text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
                   Change Password
                 </span>
+
                 <input
                   type="password"
                   placeholder="New password"
@@ -722,6 +789,7 @@ export default function UserManagement() {
                       : 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400 focus:border-blue-500'
                   }`}
                 />
+
                 <input
                   type="password"
                   placeholder="Confirm password"
@@ -745,6 +813,7 @@ export default function UserManagement() {
               >
                 Delete User
               </button>
+
               <button
                 type="button"
                 onClick={handleSaveDrawer}
@@ -804,6 +873,7 @@ export default function UserManagement() {
                     }`}
                   />
                 </div>
+
                 <div>
                   <label className="block font-medium mb-1">Last Name</label>
                   <input
@@ -847,6 +917,7 @@ export default function UserManagement() {
                     <option value="ADMIN">Admin</option>
                   </select>
                 </div>
+
                 <div>
                   <label className="block font-medium mb-1">Assigned Vehicle</label>
                   <select
@@ -873,6 +944,7 @@ export default function UserManagement() {
                 >
                   Cancel
                 </button>
+
                 <button
                   type="submit"
                   className="px-4 py-2 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white font-semibold shadow-xs cursor-pointer"
