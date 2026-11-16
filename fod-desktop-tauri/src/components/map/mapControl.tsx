@@ -36,7 +36,7 @@ const MapControls = ({ map }: { map: any }) => {
   const [zoom, setZoom] = useState(19);
   const [showPath, setShowPath] = useState(true);
 
-  const minZoom = 15;
+  const minZoom = 1;
   const maxZoom = 22;
   const zoomStep = 0.5;
 

@@ -42,15 +42,15 @@ export const config ={
 
      map:{
         mapboxToken: ((import.meta as any).env?.VITE_MAPBOX_TOKEN || (import.meta as any).env?.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '') as string,
-        initialCenter:[76.27231992733236,9.946394872156189],
-        initialZoom:14,
+        initialCenter:[77.373276, 28.510936],
+        initialZoom:18,
         pathThreshold:100,
         pathGap:1,
         boundaryPoints: [
-            { lat: 9.9447681, lon: 76.2721646 },
-            { lat: 9.9457570, lon: 76.2719205 },
-            { lat: 9.9460083, lon: 76.27212 },
-            { lat: 9.9449009, lon: 76.2725 },
+            { lat: 28.5104, lon: 77.3726 },
+            { lat: 28.5115, lon: 77.3726 },
+            { lat: 28.5115, lon: 77.3739 },
+            { lat: 28.5104, lon: 77.3739 },
             ],
             lateraldistance: 10 ,//in meters
     lateralShiftThreshold: 5 ,
@@ -104,8 +104,8 @@ export const config ={
     missedFod:[
         {
             name:"mark",
-            lat:9.958347194282139,
-            lon:76.27248292647627,
+            lat:28.510936,
+            lon:77.373276,
             sd:9,
             groupId:772
         }
