@@ -14,7 +14,7 @@ export interface MissionControlStateType {
 const initialState: MissionControlStateType = {
   isMapOpen: false,
   selectedQueue: ["ACCEPTED"],
-  collector_location: { coord: [9.9482644, 76.270702], heading: 0 },
+  collector_location: { coord: [28.510936, 77.373276], heading: 0 },
 };
 
 const Mission_Control_Reducer = createSlice({

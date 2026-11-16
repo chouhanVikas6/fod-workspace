@@ -65,10 +65,10 @@ const DEFAULT_TEMPLATES: MissionTemplateItem[] = [
     direction: "LENGTHWISE",
     reverse: false,
     boundaryPoints: [
-      { lat: 9.9447681, lon: 76.2721646 },
-      { lat: 9.945757, lon: 76.2719205 },
-      { lat: 9.9460083, lon: 76.27212 },
-      { lat: 9.9449009, lon: 76.2725 },
+      { lat: 28.5104, lon: 77.3726 },
+      { lat: 28.5115, lon: 77.3726 },
+      { lat: 28.5115, lon: 77.3739 },
+      { lat: 28.5104, lon: 77.3739 },
     ],
   },
   {
@@ -82,10 +82,10 @@ const DEFAULT_TEMPLATES: MissionTemplateItem[] = [
     direction: "LENGTHWISE",
     reverse: false,
     boundaryPoints: [
-      { lat: 9.9443, lon: 76.2714 },
-      { lat: 9.9451, lon: 76.27125 },
-      { lat: 9.94525, lon: 76.2715 },
-      { lat: 9.94445, lon: 76.27165 },
+      { lat: 28.5096, lon: 77.3718 },
+      { lat: 28.5104, lon: 77.3718 },
+      { lat: 28.5104, lon: 77.3726 },
+      { lat: 28.5096, lon: 77.3726 },
     ],
   },
   {
@@ -99,10 +99,10 @@ const DEFAULT_TEMPLATES: MissionTemplateItem[] = [
     direction: "LENGTHWISE",
     reverse: false,
     boundaryPoints: [
-      { lat: 9.9453, lon: 76.2724 },
-      { lat: 9.9461, lon: 76.2721 },
-      { lat: 9.94635, lon: 76.2728 },
-      { lat: 9.94555, lon: 76.2731 },
+      { lat: 28.5108, lon: 77.3739 },
+      { lat: 28.5118, lon: 77.3739 },
+      { lat: 28.5118, lon: 77.3749 },
+      { lat: 28.5108, lon: 77.3749 },
     ],
   },
 ];
@@ -258,16 +258,29 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
     const initialCenter =
       activeBoundaryPoints.length > 0
         ? [activeBoundaryPoints[0].lon, activeBoundaryPoints[0].lat]
-        : [76.2723, 9.9463];
+        : [77.373276, 28.510936];
 
     const m = new mapboxgl.Map({
       container: mapContainer.current,
+      minZoom: 1,
+      maxZoom: 22,
       style: {
         version: 8,
         sources: {
           satellite: {
             type: "raster",
             tiles: ["/satellite/{z}/{x}/{y}.jpg"],
+            tileSize: 256,
+            minzoom: 0,
+            maxzoom: 20,
+          },
+          "satellite-kochi-hi": {
+            type: "raster",
+            tiles: ["/satellite/{z}/{x}/{y}.jpg"],
+            tileSize: 256,
+            minzoom: 21,
+            maxzoom: 22,
+            bounds: [76.265, 9.935, 76.285, 9.955],
           },
         },
         layers: [
@@ -280,6 +293,11 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
             id: "satellite",
             type: "raster",
             source: "satellite",
+          },
+          {
+            id: "satellite-kochi-hi",
+            type: "raster",
+            source: "satellite-kochi-hi",
           },
         ],
         center: initialCenter as [number, number],

@@ -5,6 +5,7 @@ import { validateFodLocation } from "../../utils/MapUtils";
 import { isValidLatitude, isValidLongitude } from "../../utils/FodParser";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { RootState } from "@/store";
+import { config } from "@/config/clientConfig";
 
 const ClearedReportMap = () => {
   const mapContainer = useRef(null);
@@ -30,12 +31,25 @@ const ClearedReportMap = () => {
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
+      minZoom: 1,
+      maxZoom: 22,
       style: {
         version: 8,
         sources: {
           satellite: {
             type: "raster",
             tiles: ["/satellite/{z}/{x}/{y}.jpg"],
+            tileSize: 256,
+            minzoom: 0,
+            maxzoom: 20,
+          },
+          "satellite-kochi-hi": {
+            type: "raster",
+            tiles: ["/satellite/{z}/{x}/{y}.jpg"],
+            tileSize: 256,
+            minzoom: 21,
+            maxzoom: 22,
+            bounds: [76.265, 9.935, 76.285, 9.955],
           },
         },
         layers: [
@@ -44,10 +58,15 @@ const ClearedReportMap = () => {
             type: "raster",
             source: "satellite",
           },
+          {
+            id: "satellite-kochi-hi",
+            type: "raster",
+            source: "satellite-kochi-hi",
+          },
         ],
       },
       zoom: 18,
-      center: [76.27231992733236, 9.946394872156189],
+      center: config.map.initialCenter as [number, number],
       pitch: 0,
       dragPan: true,
     });
