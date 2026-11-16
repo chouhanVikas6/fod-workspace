@@ -53,5 +53,6 @@ panic = "abort"
 codegen-units = 256
 lto = false
 opt-level = 1
+debug = false
 incremental = true
 strip = true

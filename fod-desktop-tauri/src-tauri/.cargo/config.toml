@@ -1,3 +1,1 @@
-[build]
-jobs = 16
-
+# Cargo automatically uses all logical CPUs of the host machine when `build.jobs` is unset.
