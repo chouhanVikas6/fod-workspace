@@ -392,6 +392,20 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
         Err(_) => return internal_error(),
     };
 
+    let user_name = body
+        .get("userName")
+        .or_else(|| body.get("username"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&user.username);
+    if user_name.chars().any(char::is_whitespace) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Username cannot contain spaces" })),
+        )
+            .into_response();
+    }
     let first_name = body
         .get("firstName")
         .and_then(Value::as_str)
@@ -438,10 +452,11 @@ async fn update_user_body(State(state): State<AppState>, body: Bytes) -> Respons
     let now = crate::services::now_naive();
     let updated = sqlx::query_as::<_, User>(
         r#"UPDATE "User"
-           SET "firstName" = $1, "lastName" = $2, "isActive" = $3, "role" = $4, "password" = $5, "dirty" = true, "updatedAt" = $7
-           WHERE "id" = $6
+           SET "userName" = $1, "firstName" = $2, "lastName" = $3, "isActive" = $4, "role" = $5, "password" = $6, "dirty" = true, "updatedAt" = $8
+           WHERE "id" = $7
            RETURNING *"#,
     )
+    .bind(user_name)
     .bind(first_name)
     .bind(last_name)
     .bind(is_active)

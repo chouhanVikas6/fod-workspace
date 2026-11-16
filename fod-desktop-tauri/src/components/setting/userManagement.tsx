@@ -129,6 +129,9 @@ export default function UserManagement() {
   const [newVehicle, setNewVehicle] = useState('CAR1');
 
   // Edit Drawer Form States
+  const [editUsername, setEditUsername] = useState('');
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
   const [editRole, setEditRole] = useState<'ADMIN' | 'COLLECTOR' | 'ATC'>('COLLECTOR');
   const [editVehicle, setEditVehicle] = useState('CAR1');
   const [editLiveCams, setEditLiveCams] = useState(true);
@@ -145,6 +148,9 @@ export default function UserManagement() {
   // Sync drawer fields when selectedUser changes
   useEffect(() => {
     if (selectedUser) {
+      setEditUsername(selectedUser.username || '');
+      setEditFirstName(selectedUser.firstName || '');
+      setEditLastName(selectedUser.lastName || '');
       setEditRole(selectedUser.role);
       setEditVehicle(selectedUser.assignedVehicle);
       setEditLiveCams(selectedUser.accessLiveCameras);
@@ -212,17 +218,22 @@ export default function UserManagement() {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!newUsername.trim() || !newPassword.trim()) {
+    const cleanUsername = newUsername.replace(/\s+/g, '');
+    if (!cleanUsername || !newPassword.trim()) {
       toast.error('Username and password are required');
+      return;
+    }
+    if (/\s/.test(newUsername)) {
+      toast.error('Username cannot contain spaces');
       return;
     }
 
     const newUser: UserRecord = {
       id: `u-${Date.now()}`,
-      username: newUsername.trim(),
-      firstName: newFirstName.trim() || newUsername.trim(),
+      username: cleanUsername,
+      firstName: newFirstName.trim() || cleanUsername,
       lastName: newLastName.trim(),
-      email: `${newUsername.trim()}@zoidtech.co.in`,
+      email: `${cleanUsername}@zoidtech.co.in`,
       role: newRole,
       assignedVehicle: newVehicle,
       status: 'Active',
@@ -263,6 +274,16 @@ export default function UserManagement() {
   const handleSaveDrawer = async () => {
     if (!selectedUser) return;
 
+    const cleanUsername = editUsername.replace(/\s+/g, '');
+    if (!cleanUsername) {
+      toast.error('Username is required');
+      return;
+    }
+    if (/\s/.test(editUsername)) {
+      toast.error('Username cannot contain spaces');
+      return;
+    }
+
     if (editNewPassword) {
       if (editNewPassword !== editConfirmPassword) {
         toast.error('Passwords do not match');
@@ -270,11 +291,18 @@ export default function UserManagement() {
       }
     }
 
+    const cleanFirstName = editFirstName.trim();
+    const cleanLastName = editLastName.trim();
+
     try {
       await axiosClient({
         method: 'PUT',
         url: `/api/auth/users/${selectedUser.id}`,
         data: {
+          userName: cleanUsername,
+          username: cleanUsername,
+          firstName: cleanFirstName,
+          lastName: cleanLastName,
           role: editRole,
           ...(editNewPassword ? { password: editNewPassword } : {}),
         },
@@ -288,6 +316,10 @@ export default function UserManagement() {
         u.id === selectedUser.id
           ? {
               ...u,
+              username: cleanUsername,
+              firstName: cleanFirstName || cleanUsername,
+              lastName: cleanLastName,
+              email: `${cleanUsername}@zoidtech.co.in`,
               role: editRole,
               assignedVehicle: editVehicle,
               accessLiveCameras: editLiveCams,
@@ -671,8 +703,61 @@ export default function UserManagement() {
                 </div>
               </div>
 
-              {/* Role & Assigned Vehicle Inputs */}
+              {/* Name, Username, Role & Assigned Vehicle Inputs */}
               <div className="flex flex-col gap-2.5 mb-3.5">
+                <div>
+                  <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-[#9EA4B0]' : 'text-slate-600'}`}>
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    value={editUsername}
+                    onChange={(e) => setEditUsername(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="username"
+                    className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium border outline-none transition ${
+                      isDark
+                        ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                        : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-500'
+                    }`}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-[#9EA4B0]' : 'text-slate-600'}`}>
+                      First Name
+                    </label>
+                    <input
+                      type="text"
+                      value={editFirstName}
+                      onChange={(e) => setEditFirstName(e.target.value)}
+                      placeholder="First name"
+                      className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium border outline-none transition ${
+                        isDark
+                          ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                          : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-500'
+                      }`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-[#9EA4B0]' : 'text-slate-600'}`}>
+                      Last Name
+                    </label>
+                    <input
+                      type="text"
+                      value={editLastName}
+                      onChange={(e) => setEditLastName(e.target.value)}
+                      placeholder="Last name"
+                      className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium border outline-none transition ${
+                        isDark
+                          ? 'bg-[#353A42] border-[#454B53] text-slate-100 focus:border-[#5AA7EA]'
+                          : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-500'
+                      }`}
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-[#9EA4B0]' : 'text-slate-600'}`}>
                     Role
@@ -853,7 +938,7 @@ export default function UserManagement() {
                   required
                   placeholder="e.g. jcarter"
                   value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
+                  onChange={(e) => setNewUsername(e.target.value.replace(/\s+/g, ''))}
                   className={`w-full px-3 py-2 rounded-lg border outline-none ${
                     isDark ? 'bg-[#353A42] border-[#454B53] text-white' : 'bg-slate-50 border-slate-300'
                   }`}

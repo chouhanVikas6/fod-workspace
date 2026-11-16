@@ -1,9 +1,7 @@
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { SlidersHorizontal } from "lucide-react";
-import InputRange from "react-input-slider";
-import { config } from "@/config/clientConfig";
 
 import {
   set_Class_Size,
@@ -128,7 +126,29 @@ const FodStatusTabs = () => {
 
 // FILTERS
 const Filters = () => {
-  const { size } = config.filters;
+  const dispatch = useDispatch();
+  const fods = useSelector((state: RootState) => state.FodReducer.fods) as any[];
+
+  const fodSizeBounds = useMemo(() => {
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+    for (let i = 0; i < fods.length; i++) {
+      const sz = Number(fods[i]?.size);
+      if (Number.isFinite(sz) && sz >= 0) {
+        if (sz < minVal) minVal = sz;
+        if (sz > maxVal) maxVal = sz;
+      }
+    }
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) {
+      return { minSize: 0, maxSize: 100 };
+    }
+    const flooredMin = Math.floor(minVal);
+    const ceiledMax = Math.ceil(maxVal);
+    return {
+      minSize: flooredMin,
+      maxSize: ceiledMax > flooredMin ? ceiledMax : flooredMin + 1,
+    };
+  }, [fods]);
 
   const [formData, setFormData] = useState({
     Metallic: true,
@@ -138,7 +158,18 @@ const Filters = () => {
   });
 
   const [isToolTipOpen, setToolTipVisibility] = useState(false);
-  const [rangeValue, setRangeValue] = useState(size.min);
+  const [rangeValue, setRangeValue] = useState<number>(fodSizeBounds.minSize);
+  const [hasCustomSize, setHasCustomSize] = useState(false);
+
+  useEffect(() => {
+    if (!hasCustomSize) {
+      setRangeValue(fodSizeBounds.minSize);
+    } else {
+      setRangeValue((prev) =>
+        Math.min(fodSizeBounds.maxSize, Math.max(fodSizeBounds.minSize, prev))
+      );
+    }
+  }, [fodSizeBounds.minSize, fodSizeBounds.maxSize, hasCustomSize]);
 
   const classes = [
     { name: "Metallic Objects", value: "Metallic" },
@@ -147,8 +178,10 @@ const Filters = () => {
     { name: "Non-metallic objects", value: "Non-Metallic" },
   ];
 
-  const handleRangeChange = (newValue: any) => {
-    setRangeValue(newValue.x);
+  const handleRangeChange = (nextVal: number) => {
+    if (!Number.isFinite(nextVal)) return;
+    setHasCustomSize(true);
+    setRangeValue(nextVal);
   };
 
   const handleChange = (e: any) => {
@@ -159,25 +192,6 @@ const Filters = () => {
       [value]: checked,
     }));
   };
-
-  const handleApply = (e: any) => {
-    e.preventDefault();
-
-    const selectedClasses = Object.entries(formData)
-      .filter(([_, value]) => value)
-      .map(([key]) => key);
-
-    const filter = {
-      classes: selectedClasses,
-      minSize: rangeValue,
-    };
-
-    const dispatch = useDispatch;
-    // Dispatch is handled by the Filters component hook below.
-    setToolTipVisibility(false);
-  };
-
-  const dispatch = useDispatch();
 
   const applyFilters = (e: any) => {
     e.preventDefault();
@@ -231,17 +245,20 @@ const Filters = () => {
               };
 
               setFormData(defaultClasses);
+              setHasCustomSize(false);
+              setRangeValue(fodSizeBounds.minSize);
 
               dispatch(
                 set_Class_Size({
                   classes: Object.keys(defaultClasses),
-                  minSize: rangeValue,
+                  minSize: fodSizeBounds.minSize,
                 }),
               );
 
               setToolTipVisibility(false);
             }}
             rangeValue={rangeValue}
+            sizeBounds={fodSizeBounds}
             handleRangeChange={handleRangeChange}
           />
         </div>
@@ -253,6 +270,7 @@ const Filters = () => {
 // FILTER FORM
 const ClassForm = ({
   rangeValue,
+  sizeBounds,
   handleRangeChange,
   classes,
   formData,
@@ -260,7 +278,9 @@ const ClassForm = ({
   handleApply,
   handleReset,
 }: any) => {
-  const { size } = config.filters;
+  const minBound = sizeBounds?.minSize ?? 0;
+  const maxBound = sizeBounds?.maxSize ?? 100;
+  const clampedValue = Math.min(maxBound, Math.max(minBound, Number(rangeValue) || minBound));
 
   return (
     <form onSubmit={handleApply} className="w-full space-y-3">
@@ -270,35 +290,24 @@ const ClassForm = ({
         </h3>
 
         <span className="text-xs font-mono font-semibold text-[#287FC5] dark:text-[#4CA5FF]">
-          Min: {rangeValue} mm
+          Min: {clampedValue} mm
         </span>
       </div>
 
-      <div className="py-1">
-        <InputRange
-          axis="x"
-          xmin={size.min}
-          xmax={size.max}
-          x={rangeValue}
-          onChange={handleRangeChange}
-          styles={{
-            track: {
-              background: "#4C9FE8",
-              height: "5px",
-            },
-            active: {
-              background: "#CBD5E1",
-            },
-            thumb: {
-              width: "16px",
-              height: "16px",
-              borderRadius: "50%",
-              backgroundColor: "#FFFFFF",
-              border: "2px solid #4C9FE8",
-              boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
-            },
-          }}
+      <div className="py-1 space-y-1">
+        <input
+          type="range"
+          min={minBound}
+          max={maxBound}
+          step={1}
+          value={clampedValue}
+          onChange={(e) => handleRangeChange(Number(e.target.value))}
+          className="w-full accent-[#4C9FE8] cursor-pointer"
         />
+        <div className="flex justify-between text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          <span>{minBound} mm</span>
+          <span>{maxBound} mm</span>
+        </div>
       </div>
 
       <ul className="list-none m-0 p-0 space-y-1.5">
