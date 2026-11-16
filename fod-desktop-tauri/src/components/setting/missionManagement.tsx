@@ -5,7 +5,6 @@ import {
   HiArrowPath,
   HiTrash,
   HiMagnifyingGlass,
-  HiCheck,
 } from 'react-icons/hi2';
 import axiosClient from '@/utils/axios';
 import { toast } from 'react-toastify';
@@ -48,15 +47,28 @@ export default function MissionManagement() {
         if (!cancelled && Array.isArray(res.data) && res.data.length > 0) {
           const mapped: MissionRowItem[] = res.data.map((m: any, idx: number) => {
             const rawDate = m.createdAt || m.created_at;
-            const dateStr = rawDate ? new Date(rawDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '16 Oct 2026';
-            const statusStr = m.status === 'TERMINATED' ? 'Synced' : m.status === 'ACTIVE' ? 'Syncing' : idx % 3 === 0 ? 'Not synced' : 'Synced';
+            const dateStr = rawDate
+              ? new Date(rawDate).toLocaleDateString('en-GB', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              : '16 Oct 2026';
+            const statusStr =
+              m.status === 'TERMINATED'
+                ? 'Synced'
+                : m.status === 'ACTIVE'
+                ? 'Syncing'
+                : idx % 3 === 0
+                ? 'Not synced'
+                : 'Synced';
             return {
               id: m.id || m.mission_id || idx + 1,
               name: m.name || `Mission #${m.id || idx + 1}`,
               date: dateStr,
               vehicle: m.car_id || 'CAR1',
               operator: m.operator || 'Admin',
-              fods: m.fod_count || m.fods || (idx * 17 + 8),
+              fods: m.fod_count || m.fods || idx * 17 + 8,
               syncStatus: statusStr,
               syncProgress: statusStr === 'Syncing' ? 64 : undefined,
             };
@@ -81,7 +93,8 @@ export default function MissionManagement() {
 
   const filteredMissions = useMemo(() => {
     return missions.filter((m) => {
-      const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      const matchesSearch =
+        m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         m.operator.toLowerCase().includes(searchQuery.toLowerCase()) ||
         m.vehicle.toLowerCase().includes(searchQuery.toLowerCase());
       if (!matchesSearch) return false;
@@ -112,7 +125,11 @@ export default function MissionManagement() {
     setIsSyncingAll(true);
     setTimeout(() => {
       setMissions((prev) =>
-        prev.map((m) => (m.syncStatus !== 'Synced' ? { ...m, syncStatus: 'Synced', syncProgress: undefined } : m))
+        prev.map((m) =>
+          m.syncStatus !== 'Synced'
+            ? { ...m, syncStatus: 'Synced', syncProgress: undefined }
+            : m
+        )
       );
       setIsSyncingAll(false);
       toast.success('All missions synchronized with Car and ATC');
@@ -132,11 +149,15 @@ export default function MissionManagement() {
 
   const handleSyncSingle = (id: string | number) => {
     setMissions((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, syncStatus: 'Syncing', syncProgress: 64 } : m))
+      prev.map((m) =>
+        m.id === id ? { ...m, syncStatus: 'Syncing', syncProgress: 64 } : m
+      )
     );
     setTimeout(() => {
       setMissions((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, syncStatus: 'Synced', syncProgress: undefined } : m))
+        prev.map((m) =>
+          m.id === id ? { ...m, syncStatus: 'Synced', syncProgress: undefined } : m
+        )
       );
       toast.success(`Mission #${id} synced`);
     }, 1000);
@@ -149,22 +170,30 @@ export default function MissionManagement() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col justify-start overflow-y-auto">
+    <div className="w-full h-full flex flex-col justify-start overflow-hidden">
       {/* Top Header */}
-      <div className="mb-3">
-        <h1 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+      <div className="mb-2.5 xl:mb-3 shrink-0">
+        <h1
+          className={`text-lg xl:text-xl font-bold tracking-tight ${
+            isDark ? 'text-white' : 'text-slate-900'
+          }`}
+        >
           Mission Management
         </h1>
-        <p className={`text-xs mt-0.5 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+        <p
+          className={`text-xs mt-0.5 ${
+            isDark ? 'text-[#8E95A2]' : 'text-slate-500'
+          }`}
+        >
           Mission list and sync status
         </p>
       </div>
 
       {/* Status Badges (Left) & Action Buttons (Right) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 xl:gap-3 mb-3 xl:mb-3.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5 xl:gap-2">
           <span
-            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border ${
+            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border whitespace-nowrap ${
               isDark
                 ? 'bg-[#353A42] border-[#454B53] text-slate-200'
                 : 'bg-slate-100 border-slate-300 text-slate-700'
@@ -172,32 +201,34 @@ export default function MissionManagement() {
           >
             Total {totalCount}
           </span>
-          <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957] border border-[#00B957]/40">
+          <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957] border border-[#00B957]/40 whitespace-nowrap">
             Synced {syncedCount}
           </span>
-          <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/40">
+          <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/40 whitespace-nowrap">
             Not synced {notSyncedCount}
           </span>
-          <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40">
+          <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40 whitespace-nowrap">
             Failed {failedCount}
           </span>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleSyncAll}
             disabled={isSyncingAll}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 xl:px-3.5 py-1.5 xl:py-2 rounded-lg bg-[#5AA7EA] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-50 whitespace-nowrap"
           >
-            <HiArrowPath className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
+            <HiArrowPath
+              className={`w-3.5 h-3.5 shrink-0 ${isSyncingAll ? 'animate-spin' : ''}`}
+            />
             <span>Sync all</span>
           </button>
 
           <button
             type="button"
             onClick={handleRemoveSelected}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-rose-500/60 text-rose-400 hover:bg-rose-500/10 text-xs font-semibold transition active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 xl:px-3.5 py-1.5 xl:py-2 rounded-lg border border-rose-500/60 text-rose-400 hover:bg-rose-500/10 text-xs font-semibold transition active:scale-95 cursor-pointer whitespace-nowrap"
           >
             <span>Remove selected</span>
           </button>
@@ -206,12 +237,14 @@ export default function MissionManagement() {
 
       {/* Unified Card: Filter Tabs + Search + Table */}
       <div
-        className={`flex-1 rounded-xl border p-4 flex flex-col min-h-0 transition-all ${
-          isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+        className={`flex-1 rounded-xl border p-3 xl:p-4 flex flex-col min-h-0 transition-all ${
+          isDark
+            ? 'bg-[#292D33] border-[#383D44]'
+            : 'bg-white border-slate-200 shadow-xs'
         }`}
       >
         {/* Filter Tabs & Search Bar */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-3.5">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 xl:gap-3 mb-3 xl:mb-3.5 shrink-0">
           {/* Filter Buttons */}
           <div className="flex items-center gap-1.5">
             {(['All', 'Synced', 'Not synced'] as const).map((tab) => (
@@ -219,7 +252,7 @@ export default function MissionManagement() {
                 key={tab}
                 type="button"
                 onClick={() => setFilterTab(tab)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer whitespace-nowrap ${
                   filterTab === tab
                     ? isDark
                       ? 'bg-[#31475D] border-[#5AA7EA] text-[#5AA7EA]'
@@ -236,54 +269,69 @@ export default function MissionManagement() {
 
           {/* Search Input */}
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border w-full sm:w-64 transition ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border w-full sm:w-56 xl:w-64 transition ${
               isDark
                 ? 'bg-[#353A42] border-[#454B53] focus-within:border-[#5AA7EA]'
                 : 'bg-slate-50 border-slate-300 focus-within:border-blue-500'
             }`}
           >
-            <HiMagnifyingGlass className={`w-3.5 h-3.5 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`} />
+            <HiMagnifyingGlass
+              className={`w-3.5 h-3.5 shrink-0 ${
+                isDark ? 'text-[#8E95A2]' : 'text-slate-500'
+              }`}
+            />
             <input
               type="text"
               placeholder="Search missions..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={`w-full bg-transparent text-xs outline-none ${
-                isDark ? 'text-white placeholder-[#8E95A2]' : 'text-slate-900 placeholder-slate-400'
+                isDark
+                  ? 'text-white placeholder-[#8E95A2]'
+                  : 'text-slate-900 placeholder-slate-400'
               }`}
             />
           </div>
         </div>
 
         {/* Missions Table */}
-        <div className="overflow-x-auto flex-1">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
+        <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+          <table className="w-full text-left border-collapse text-[11px] xl:text-xs">
+            <thead className="sticky top-0 z-10">
               <tr
-                className={`font-semibold ${
+                className={`font-semibold whitespace-nowrap ${
                   isDark
                     ? 'text-[#9EA4B0] bg-[#353A42]'
                     : 'text-slate-500 bg-slate-100'
                 }`}
               >
-                <th className="p-3 w-10 rounded-l-md">
+                <th className="py-2.5 px-2.5 xl:p-3 w-9 rounded-l-md">
                   <input
                     type="checkbox"
-                    checked={selectedIds.size > 0 && selectedIds.size === filteredMissions.length}
+                    checked={
+                      selectedIds.size > 0 &&
+                      selectedIds.size === filteredMissions.length
+                    }
                     onChange={toggleSelectAll}
                     className="accent-[#5AA7EA] rounded cursor-pointer"
                   />
                 </th>
-                <th className="py-2.5 px-3">Mission</th>
-                <th className="py-2.5 px-3">Date</th>
-                <th className="py-2.5 px-3">Vehicle</th>
-                <th className="py-2.5 px-3">Operator</th>
-                <th className="py-2.5 px-3">FODs</th>
-                <th className="py-2.5 px-3">Sync Status</th>
-                <th className="py-2.5 px-3 text-right rounded-r-md">Actions</th>
+                <th className="py-2.5 px-2 xl:px-3">Mission</th>
+                <th className="py-2.5 px-2 xl:px-3">Date</th>
+                <th className="py-2.5 px-2 xl:px-3">Vehicle</th>
+                <th className="py-2.5 px-2 xl:px-3">Operator</th>
+                <th className="py-2.5 px-2 xl:px-3">FODs</th>
+                <th className="py-2.5 px-2 xl:px-3">Sync Status</th>
+                <th className="py-2.5 px-2 xl:px-3 text-right rounded-r-md">
+                  Actions
+                </th>
               </tr>
             </thead>
-            <tbody className={`divide-y ${isDark ? 'divide-[#383D44]' : 'divide-slate-200'}`}>
+            <tbody
+              className={`divide-y ${
+                isDark ? 'divide-[#383D44]' : 'divide-slate-200'
+              }`}
+            >
               {filteredMissions.map((m) => {
                 const isSelected = selectedIds.has(m.id);
                 return (
@@ -299,7 +347,7 @@ export default function MissionManagement() {
                         : 'hover:bg-slate-50'
                     }`}
                   >
-                    <td className="p-3">
+                    <td className="py-2.5 px-2.5 xl:p-3 whitespace-nowrap">
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -307,33 +355,55 @@ export default function MissionManagement() {
                         className="accent-[#5AA7EA] rounded cursor-pointer"
                       />
                     </td>
-                    <td className={`py-3 px-3 font-medium ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+                    <td
+                      className={`py-2.5 xl:py-3 px-2 xl:px-3 font-medium whitespace-nowrap ${
+                        isDark ? 'text-slate-100' : 'text-slate-900'
+                      }`}
+                    >
                       {m.name}
                     </td>
-                    <td className={`py-3 px-3 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{m.date}</td>
-                    <td className={`py-3 px-3 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                    <td
+                      className={`py-2.5 xl:py-3 px-2 xl:px-3 whitespace-nowrap ${
+                        isDark ? 'text-slate-300' : 'text-slate-600'
+                      }`}
+                    >
+                      {m.date}
+                    </td>
+                    <td
+                      className={`py-2.5 xl:py-3 px-2 xl:px-3 whitespace-nowrap ${
+                        isDark ? 'text-slate-300' : 'text-slate-600'
+                      }`}
+                    >
                       {m.vehicle}
                     </td>
-                    <td className={`py-3 px-3 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                    <td
+                      className={`py-2.5 xl:py-3 px-2 xl:px-3 whitespace-nowrap ${
+                        isDark ? 'text-slate-300' : 'text-slate-600'
+                      }`}
+                    >
                       {m.operator}
                     </td>
-                    <td className={`py-3 px-3 font-medium ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                    <td
+                      className={`py-2.5 xl:py-3 px-2 xl:px-3 font-medium whitespace-nowrap ${
+                        isDark ? 'text-slate-200' : 'text-slate-700'
+                      }`}
+                    >
                       {m.fods}
                     </td>
-                    <td className="py-3 px-3">
+                    <td className="py-2.5 xl:py-3 px-2 xl:px-3 whitespace-nowrap">
                       {m.syncStatus === 'Synced' && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957] border border-[#00B957]/40">
+                        <span className="inline-flex items-center px-2 xl:px-2.5 py-0.5 rounded-md text-[10px] xl:text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957] border border-[#00B957]/40 whitespace-nowrap">
                           Synced
                         </span>
                       )}
                       {m.syncStatus === 'Not synced' && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/40">
+                        <span className="inline-flex items-center px-2 xl:px-2.5 py-0.5 rounded-md text-[10px] xl:text-[11px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/40 whitespace-nowrap">
                           Not synced
                         </span>
                       )}
                       {m.syncStatus === 'Syncing' && (
-                        <div className="flex flex-col gap-1 w-24">
-                          <span className="text-[11px] font-semibold text-[#5AA7EA]">
+                        <div className="flex flex-col gap-1 w-20 xl:w-24">
+                          <span className="text-[10px] xl:text-[11px] font-semibold text-[#5AA7EA] whitespace-nowrap">
                             Syncing {m.syncProgress || 64}%
                           </span>
                           <div className="w-full bg-[#454B53] h-1.5 rounded-full overflow-hidden">
@@ -345,13 +415,13 @@ export default function MissionManagement() {
                         </div>
                       )}
                       {m.syncStatus === 'Failed' && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40">
+                        <span className="inline-flex items-center px-2 xl:px-2.5 py-0.5 rounded-md text-[10px] xl:text-[11px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40 whitespace-nowrap">
                           Failed
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-right">
-                      <div className="inline-flex items-center gap-2">
+                    <td className="py-2.5 xl:py-3 px-2 xl:px-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5 xl:gap-2">
                         <button
                           type="button"
                           title="Sync Mission"

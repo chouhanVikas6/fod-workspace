@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { RootState, AppDispatch } from "@/store";
-import { config } from "@/config/clientConfig";
-import { updateDetailViewFod } from "@/store/actions/FodDetailedView";
 import { jsPDF } from "jspdf";
-import { RxDownload, RxFileText } from "react-icons/rx";
+import { RxDownload } from "react-icons/rx";
+import { toast } from "react-toastify";
 
 function formatDuration(ms: number | null | undefined): string {
   if (typeof ms !== "number" || !isFinite(ms) || ms <= 0) return "—";
@@ -32,19 +31,12 @@ function extractLatLon(fod: any): { lat: number; lon: number } | null {
   return null;
 }
 
-const STATUS_BADGE: Record<string, string> = {
-  NEW: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  ACCEPTED: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  CLEARED: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  REJECTED: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-};
-
 const CLASS_COLORS: Record<string, string> = {
-  Metallic: "bg-rose-500",
-  "Non-Metallic": "bg-blue-500",
-  Organic: "bg-emerald-500",
-  "Rocks/Asphalt": "bg-amber-500",
-  "Rocks/Ashpalt": "bg-amber-500",
+  Metallic: "bg-[#D51F32]",
+  "Non-Metallic": "bg-[#4C9FE8]",
+  Organic: "bg-[#00B957]",
+  "Rocks/Asphalt": "bg-[#E5A12B]",
+  "Rocks/Ashpalt": "bg-[#E5A12B]",
 };
 
 const PAGE_SIZE = 60;
@@ -165,12 +157,12 @@ const MissionReport: React.FC = () => {
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Background
-    ctx.fillStyle = isDark ? "#11161d" : "#f8fafc";
+    // Background matching other screens' inner surface (#22262B dark / #F8FAFC light)
+    ctx.fillStyle = isDark ? "#22262B" : "#F8FAFC";
     ctx.fillRect(0, 0, w, h);
 
-    // Subtle grid lines
-    ctx.strokeStyle = isDark ? "rgba(148, 163, 184, 0.08)" : "rgba(100, 116, 139, 0.12)";
+    // Subtle grid lines matching systemStats (#383D44 dark / #E2E8F0 light)
+    ctx.strokeStyle = isDark ? "#383D44" : "#E2E8F0";
     ctx.lineWidth = 1;
     const stepX = w / 8;
     const stepY = h / 4;
@@ -198,12 +190,11 @@ const MissionReport: React.FC = () => {
         const val = grid[r * cols + c];
         if (val === 0) continue;
         const t = Math.min(1, Math.sqrt(val / peakCount));
-        // Color ramp: blue -> cyan -> emerald -> amber -> red
-        let color = "rgba(59, 130, 246, 0.45)";
-        if (t > 0.8) color = "rgba(239, 68, 68, 0.85)";
-        else if (t > 0.6) color = "rgba(245, 158, 11, 0.78)";
-        else if (t > 0.4) color = "rgba(16, 185, 129, 0.68)";
-        else if (t > 0.2) color = "rgba(6, 182, 212, 0.58)";
+        // Color ramp matching app theme palette: #4C9FE8 -> #00B957 -> #E5A12B -> #D51F32
+        let color = "rgba(76, 159, 232, 0.55)";
+        if (t > 0.8) color = "rgba(213, 31, 50, 0.88)";
+        else if (t > 0.6) color = "rgba(229, 161, 43, 0.82)";
+        else if (t > 0.35) color = "rgba(0, 185, 87, 0.72)";
 
         ctx.fillStyle = color;
         ctx.fillRect(c * cellW, r * cellH, Math.ceil(cellW), Math.ceil(cellH));
@@ -222,220 +213,6 @@ const MissionReport: React.FC = () => {
     [filteredFods, visibleCount]
   );
 
-  const handleDownloadPdf = () => {
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const margin = 14;
-    const contentW = pageW - margin * 2;
-    let y = 14;
-
-    const ensureSpace = (needed: number) => {
-      if (y + needed > pageH - 14) {
-        doc.addPage();
-        y = 14;
-      }
-    };
-
-    // Header
-    doc.setFillColor(30, 58, 138);
-    doc.roundedRect(margin, y, contentW, 22, 3, 3, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(15);
-    doc.text(`${missionTitle} Report`, margin + 5, y + 9);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(
-      `Mission ID: ${missionNumber ?? "—"}   |   Status: ${statusText}   |   Generated: ${new Date().toLocaleString()}`,
-      margin + 5,
-      y + 16
-    );
-    y += 28;
-
-    // 1. Mission Summary
-    doc.setTextColor(71, 85, 105);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("1. MISSION SUMMARY", margin, y);
-    y += 4;
-
-    const missionCols = [
-      { label: "Mission", value: missionTitle },
-      { label: "Duration", value: formatDuration(missionState?.duration) },
-      { label: "Total FODs", value: summary.total.toLocaleString() },
-      { label: "Active Cameras", value: String(summary.cameraCount || "—") },
-    ];
-    const colW = (contentW - 9) / 4;
-    missionCols.forEach((col, i) => {
-      const x = margin + i * (colW + 3);
-      doc.setFillColor(248, 250, 252);
-      doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(x, y, colW, 16, 2, 2, "FD");
-      doc.setTextColor(100, 116, 139);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.text(col.label, x + 3, y + 5.5);
-      doc.setTextColor(15, 23, 42);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.text(col.value, x + 3, y + 12.5);
-    });
-    y += 22;
-
-    // 2. FOD Summary
-    doc.setTextColor(71, 85, 105);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("2. FOD SUMMARY", margin, y);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.text(
-      `Avg Size: ${summary.avgSize > 0 ? `${summary.avgSize.toFixed(1)} mm` : "—"} (${
-        summary.minSize > 0 ? `${summary.minSize.toFixed(0)}–${summary.maxSize.toFixed(0)} mm` : "—"
-      })`,
-      pageW - margin,
-      y,
-      { align: "right" }
-    );
-    y += 4;
-
-    const statusBoxes = [
-      { label: "Pending", value: summary.pending, rgb: [217, 119, 6] as const },
-      { label: "Confirmed", value: summary.accepted, rgb: [5, 150, 105] as const },
-      { label: "Cleared", value: summary.cleared, rgb: [37, 99, 235] as const },
-      { label: "False", value: summary.rejected, rgb: [225, 29, 72] as const },
-    ];
-    statusBoxes.forEach((box, i) => {
-      const x = margin + i * (colW + 3);
-      doc.setFillColor(248, 250, 252);
-      doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(x, y, colW, 16, 2, 2, "FD");
-      doc.setTextColor(box.rgb[0], box.rgb[1], box.rgb[2]);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.text(box.label, x + 3, y + 5.5);
-      doc.setTextColor(15, 23, 42);
-      doc.setFontSize(11);
-      doc.text(box.value.toLocaleString(), x + 3, y + 12.5);
-    });
-    y += 21;
-
-    // Classification breakdown
-    if (summary.classEntries.length > 0) {
-      doc.setTextColor(51, 65, 85);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.text("Classification Breakdown", margin, y);
-      y += 4;
-
-      for (const [cls, cnt] of summary.classEntries) {
-        ensureSpace(9);
-        const pct = summary.total > 0 ? Math.round((cnt / summary.total) * 100) : 0;
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8.5);
-        doc.setTextColor(15, 23, 42);
-        doc.text(cls, margin, y + 3);
-        doc.setTextColor(100, 116, 139);
-        doc.text(`${cnt.toLocaleString()} (${pct}%)`, pageW - margin, y + 3, { align: "right" });
-        doc.setFillColor(226, 232, 240);
-        doc.rect(margin, y + 4.5, contentW, 2, "F");
-        doc.setFillColor(59, 130, 246);
-        doc.rect(margin, y + 4.5, (contentW * pct) / 100, 2, "F");
-        y += 8.5;
-      }
-      y += 3;
-    }
-
-    // 3. Spatial Heatmap
-    ensureSpace(64);
-    doc.setTextColor(71, 85, 105);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("3. SPATIAL FOD DENSITY HEATMAP", margin, y);
-    y += 3.5;
-
-    const canvas = heatmapCanvasRef.current;
-    if (canvas && summary.points.length > 0) {
-      const imgData = canvas.toDataURL("image/png");
-      const imgH = 48;
-      doc.setDrawColor(203, 213, 225);
-      doc.rect(margin, y, contentW, imgH);
-      doc.addImage(imgData, "PNG", margin, y, contentW, imgH);
-      y += imgH + 4;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text(
-        `SW: ${heatmapMeta.minLat.toFixed(5)}, ${heatmapMeta.minLon.toFixed(5)}   |   Peak cell: ${heatmapMeta.peakCount} FODs`,
-        margin,
-        y
-      );
-      doc.text(
-        `NE: ${heatmapMeta.maxLat.toFixed(5)}, ${heatmapMeta.maxLon.toFixed(5)}`,
-        pageW - margin,
-        y,
-        { align: "right" }
-      );
-      y += 7;
-    } else {
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(8.5);
-      doc.setTextColor(148, 163, 184);
-      doc.text("No geo-located FOD coordinates available for heatmap.", margin, y + 6);
-      y += 12;
-    }
-
-    // 4. Detections Table (top 30)
-    if (fods.length > 0) {
-      ensureSpace(22);
-      doc.setTextColor(71, 85, 105);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text(`4. FOD DETECTIONS (Showing ${Math.min(30, fods.length)} of ${fods.length})`, margin, y);
-      y += 4;
-
-      doc.setFillColor(241, 245, 249);
-      doc.rect(margin, y, contentW, 6.5, "F");
-      doc.setTextColor(51, 65, 85);
-      doc.setFontSize(8);
-      doc.text("Group", margin + 2, y + 4.5);
-      doc.text("Class", margin + 26, y + 4.5);
-      doc.text("Size", margin + 68, y + 4.5);
-      doc.text("Status", margin + 92, y + 4.5);
-      doc.text("Coordinates", margin + 124, y + 4.5);
-      y += 7;
-
-      const sample = fods.slice(0, 30);
-      doc.setFont("helvetica", "normal");
-      for (const f of sample) {
-        ensureSpace(6);
-        const pt = extractLatLon(f);
-        const coords = pt ? `${pt.lat.toFixed(5)}, ${pt.lon.toFixed(5)}` : "—";
-        const st = f?.groupStatus || f?.status || "NEW";
-        const cls = f?.class || f?.className || f?.class_name || "Unknown";
-        const sz = f?.size ? `${Number(f.size).toFixed(1)} mm` : "—";
-
-        doc.setTextColor(15, 23, 42);
-        doc.text(`#${f.groupId}`, margin + 2, y + 4);
-        doc.text(String(cls).slice(0, 20), margin + 26, y + 4);
-        doc.text(sz, margin + 68, y + 4);
-        doc.text(String(st), margin + 92, y + 4);
-        doc.text(coords, margin + 124, y + 4);
-        doc.setDrawColor(241, 245, 249);
-        doc.line(margin, y + 5.5, pageW - margin, y + 5.5);
-        y += 5.5;
-      }
-    }
-
-    doc.save(`mission-${displayId ?? missionNumber ?? "report"}-report.pdf`);
-  };
-
-  const cardBg = isDark
-    ? "bg-[#22262B] border-[#353A42]"
-    : "bg-white border-slate-200 shadow-xs";
-  const mutedText = isDark ? "text-slate-400" : "text-slate-500";
-
   const statusText = missionState?.isActive
     ? missionState?.isPause
       ? "PAUSED"
@@ -444,111 +221,404 @@ const MissionReport: React.FC = () => {
     ? "EXPLORE"
     : "COMPLETED";
 
+  const handleDownloadPdf = () => {
+    try {
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const margin = 14;
+      const contentW = pageW - margin * 2;
+      let y = 14;
+
+      const ensureSpace = (needed: number) => {
+        if (y + needed > pageH - 14) {
+          doc.addPage();
+          y = 14;
+        }
+      };
+
+      // Header
+      doc.setFillColor(30, 58, 138);
+      doc.roundedRect(margin, y, contentW, 22, 3, 3, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.text(`${missionTitle} Report`, margin + 5, y + 9);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(
+        `Mission ID: ${missionNumber ?? "—"}   |   Status: ${statusText}   |   Generated: ${new Date().toLocaleString()}`,
+        margin + 5,
+        y + 16
+      );
+      y += 28;
+
+      // 1. Mission Summary
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("1. MISSION SUMMARY", margin, y);
+      y += 4;
+
+      const missionCols = [
+        { label: "Mission", value: missionTitle },
+        { label: "Duration", value: formatDuration(missionState?.duration) },
+        { label: "Total FODs", value: summary.total.toLocaleString() },
+        { label: "Active Cameras", value: String(summary.cameraCount || "—") },
+      ];
+      const colW = (contentW - 9) / 4;
+      missionCols.forEach((col, i) => {
+        const x = margin + i * (colW + 3);
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(x, y, colW, 16, 2, 2, "FD");
+        doc.setTextColor(100, 116, 139);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text(col.label, x + 3, y + 5.5);
+        doc.setTextColor(15, 23, 42);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text(col.value, x + 3, y + 12.5);
+      });
+      y += 22;
+
+      // 2. FOD Summary
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("2. FOD SUMMARY", margin, y);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.text(
+        `Avg Size: ${summary.avgSize > 0 ? `${summary.avgSize.toFixed(1)} mm` : "—"} (${
+          summary.minSize > 0 ? `${summary.minSize.toFixed(0)}–${summary.maxSize.toFixed(0)} mm` : "—"
+        })`,
+        pageW - margin,
+        y,
+        { align: "right" }
+      );
+      y += 4;
+
+      const statusBoxes = [
+        { label: "Pending", value: summary.pending, rgb: [229, 161, 43] as const },
+        { label: "Confirmed", value: summary.accepted, rgb: [0, 185, 87] as const },
+        { label: "Cleared", value: summary.cleared, rgb: [76, 159, 232] as const },
+        { label: "False", value: summary.rejected, rgb: [213, 31, 50] as const },
+      ];
+      statusBoxes.forEach((box, i) => {
+        const x = margin + i * (colW + 3);
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(x, y, colW, 16, 2, 2, "FD");
+        doc.setTextColor(box.rgb[0], box.rgb[1], box.rgb[2]);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text(box.label, x + 3, y + 5.5);
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(11);
+        doc.text(box.value.toLocaleString(), x + 3, y + 12.5);
+      });
+      y += 21;
+
+      // Classification breakdown
+      if (summary.classEntries.length > 0) {
+        doc.setTextColor(51, 65, 85);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.text("Classification Breakdown", margin, y);
+        y += 4;
+
+        for (const [cls, cnt] of summary.classEntries) {
+          ensureSpace(9);
+          const pct = summary.total > 0 ? Math.round((cnt / summary.total) * 100) : 0;
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8.5);
+          doc.setTextColor(15, 23, 42);
+          doc.text(cls, margin, y + 3);
+          doc.setTextColor(100, 116, 139);
+          doc.text(`${cnt.toLocaleString()} (${pct}%)`, pageW - margin, y + 3, { align: "right" });
+          doc.setFillColor(226, 232, 240);
+          doc.rect(margin, y + 4.5, contentW, 2, "F");
+          doc.setFillColor(76, 159, 232);
+          doc.rect(margin, y + 4.5, (contentW * pct) / 100, 2, "F");
+          y += 8.5;
+        }
+        y += 3;
+      }
+
+      // 3. Spatial Heatmap
+      ensureSpace(64);
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("3. SPATIAL FOD DENSITY HEATMAP", margin, y);
+      y += 3.5;
+
+      const canvas = heatmapCanvasRef.current;
+      if (canvas && summary.points.length > 0) {
+        const imgData = canvas.toDataURL("image/png");
+        const imgH = 48;
+        doc.setDrawColor(203, 213, 225);
+        doc.rect(margin, y, contentW, imgH);
+        doc.addImage(imgData, "PNG", margin, y, contentW, imgH);
+        y += imgH + 4;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          `SW: ${heatmapMeta.minLat.toFixed(5)}, ${heatmapMeta.minLon.toFixed(5)}   |   Peak cell: ${heatmapMeta.peakCount} FODs`,
+          margin,
+          y
+        );
+        doc.text(
+          `NE: ${heatmapMeta.maxLat.toFixed(5)}, ${heatmapMeta.maxLon.toFixed(5)}`,
+          pageW - margin,
+          y,
+          { align: "right" }
+        );
+        y += 7;
+      } else {
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(8.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text("No geo-located FOD coordinates available for heatmap.", margin, y + 6);
+        y += 12;
+      }
+
+      // 4. Detections Table (top 30)
+      if (fods.length > 0) {
+        ensureSpace(22);
+        doc.setTextColor(71, 85, 105);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text(`4. FOD DETECTIONS (Showing ${Math.min(30, fods.length)} of ${fods.length})`, margin, y);
+        y += 4;
+
+        doc.setFillColor(241, 245, 249);
+        doc.rect(margin, y, contentW, 6.5, "F");
+        doc.setTextColor(51, 65, 85);
+        doc.setFontSize(8);
+        doc.text("Group", margin + 2, y + 4.5);
+        doc.text("Class", margin + 26, y + 4.5);
+        doc.text("Size", margin + 68, y + 4.5);
+        doc.text("Status", margin + 92, y + 4.5);
+        doc.text("Coordinates", margin + 124, y + 4.5);
+        y += 7;
+
+        const sample = fods.slice(0, 30);
+        doc.setFont("helvetica", "normal");
+        for (const f of sample) {
+          ensureSpace(6);
+          const pt = extractLatLon(f);
+          const coords = pt ? `${pt.lat.toFixed(5)}, ${pt.lon.toFixed(5)}` : "—";
+          const st = f?.groupStatus || f?.status || "NEW";
+          const cls = f?.class || f?.className || f?.class_name || "Unknown";
+          const sz = f?.size ? `${Number(f.size).toFixed(1)} mm` : "—";
+
+          doc.setTextColor(15, 23, 42);
+          doc.text(`#${f.groupId}`, margin + 2, y + 4);
+          doc.text(String(cls).slice(0, 20), margin + 26, y + 4);
+          doc.text(sz, margin + 68, y + 4);
+          doc.text(String(st), margin + 92, y + 4);
+          doc.text(coords, margin + 124, y + 4);
+          doc.setDrawColor(241, 245, 249);
+          doc.line(margin, y + 5.5, pageW - margin, y + 5.5);
+          y += 5.5;
+        }
+      }
+
+      const fileName = `mission-${displayId ?? missionNumber ?? "report"}-report.pdf`;
+      doc.save(fileName);
+      toast.success(`Report downloaded (${fileName})`);
+    } catch (error) {
+      console.error("Failed to generate PDF report:", error);
+      toast.error("Failed to download report");
+    }
+  };
+
+  const cardClass = `rounded-xl border overflow-hidden transition-all ${
+    isDark
+      ? "bg-[#292D33] border-[#383D44]"
+      : "bg-white border-slate-200 shadow-xs"
+  }`;
+
+  const cardHeaderClass = `px-4 py-2.5 border-b flex items-center justify-between gap-2 ${
+    isDark
+      ? "bg-[#353A42] border-[#3E434C]"
+      : "bg-slate-50 border-slate-200"
+  }`;
+
+  const headingClass = `text-xs font-semibold ${
+    isDark ? "text-slate-100" : "text-slate-800"
+  }`;
+
+  const mutedText = isDark ? "text-[#8E95A2]" : "text-slate-500";
+
+  const statusBadgeClass =
+    statusText === "ACTIVE"
+      ? "bg-[#00B957]/15 text-[#00B957] border border-[#00B957]/40"
+      : statusText === "PAUSED"
+      ? "bg-[#E5A12B]/15 text-[#E5A12B] border border-[#E5A12B]/40"
+      : "bg-[#31475D] text-[#5AA7EA] border border-[#5AA7EA]/40";
+
   return (
     <div
-      className={`h-full w-full overflow-y-auto p-5 space-y-5 select-none ${
-        isDark ? "bg-[#1A1D22] text-slate-100" : "bg-[#F4F6F9] text-slate-900"
+      className={`h-full w-full flex flex-col justify-start overflow-y-auto p-3 xl:p-4 gap-3 select-none transition-colors duration-200 ${
+        isDark ? "bg-[#22262B] text-slate-100" : "bg-[#F8FAFC] text-slate-900"
       }`}
     >
-      {/* Top Header */}
-      <div className={`rounded-2xl border p-5 flex flex-wrap items-center justify-between gap-4 ${cardBg}`}>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-500 flex items-center justify-center">
-            <RxFileText className="w-5 h-5" />
+      {/* Top Page Header Row (consistent with SystemStats, MissionExplore, Settings) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1
+              className={`text-xl font-bold tracking-tight ${
+                isDark ? "text-white" : "text-slate-900"
+              }`}
+            >
+              {missionTitle} Report
+            </h1>
+            <span
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide ${statusBadgeClass}`}
+            >
+              {statusText}
+            </span>
           </div>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-xl font-bold tracking-tight">{missionTitle} Report</h1>
-              <span className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500">
-                {statusText}
-              </span>
-            </div>
-            <p className={`text-xs mt-0.5 font-mono ${mutedText}`}>
-              Mission ID: {missionNumber ?? "—"} · Generated {new Date().toLocaleString()}
-            </p>
-          </div>
+          <p className={`text-xs mt-0.5 ${mutedText}`}>
+            Mission ID: {missionNumber ?? "—"} · Generated {new Date().toLocaleString()}
+          </p>
         </div>
 
         <button
           type="button"
           onClick={handleDownloadPdf}
-          className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#4C9FE8] hover:bg-[#3B91DC] text-white text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-95"
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer"
         >
           <RxDownload className="w-4 h-4" />
           <span>Download PDF</span>
         </button>
       </div>
 
-      {/* 1. Mission Summary */}
-      <section className="space-y-2.5">
-        <h2 className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
-          1. Mission Summary
-        </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className={`rounded-xl border p-4 ${cardBg}`}>
-            <div className={`text-xs font-medium ${mutedText}`}>Mission</div>
-            <div className="text-lg font-bold mt-1 font-mono">{missionTitle}</div>
+      {/* Mission Summary Stat Strip (4 cards, consistent with MissionExplore & SystemStats) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 xl:gap-3 shrink-0">
+        <div className={`${cardClass} px-3.5 py-2.5 xl:px-4 xl:py-3`}>
+          <div className={`text-xs font-medium truncate ${mutedText}`}>Mission</div>
+          <div
+            className={`text-base xl:text-lg font-bold font-mono mt-0.5 truncate ${
+              isDark ? "text-white" : "text-slate-900"
+            }`}
+          >
+            {missionTitle}
           </div>
-          <div className={`rounded-xl border p-4 ${cardBg}`}>
-            <div className={`text-xs font-medium ${mutedText}`}>Duration</div>
-            <div className="text-lg font-bold mt-1 font-mono">
-              {formatDuration(missionState?.duration)}
-            </div>
+        </div>
+
+        <div className={`${cardClass} px-3.5 py-2.5 xl:px-4 xl:py-3`}>
+          <div className={`text-xs font-medium truncate ${mutedText}`}>Duration</div>
+          <div
+            className={`text-base xl:text-lg font-bold font-mono mt-0.5 truncate ${
+              isDark ? "text-white" : "text-slate-900"
+            }`}
+          >
+            {formatDuration(missionState?.duration)}
           </div>
-          <div className={`rounded-xl border p-4 ${cardBg}`}>
-            <div className={`text-xs font-medium ${mutedText}`}>Total FODs</div>
-            <div className="text-lg font-bold mt-1 font-mono text-amber-500">
-              {summary.total.toLocaleString()}
-            </div>
+        </div>
+
+        <div className={`${cardClass} px-3.5 py-2.5 xl:px-4 xl:py-3`}>
+          <div className={`text-xs font-medium truncate ${mutedText}`}>Total FODs</div>
+          <div className="text-base xl:text-lg font-bold font-mono mt-0.5 text-[#E5A12B] truncate">
+            {summary.total.toLocaleString()}
           </div>
-          <div className={`rounded-xl border p-4 ${cardBg}`}>
-            <div className={`text-xs font-medium ${mutedText}`}>Active Cameras</div>
-            <div className="text-lg font-bold mt-1 font-mono">
-              {summary.cameraCount || "—"}
+        </div>
+
+        <div className={`${cardClass} px-3.5 py-2.5 xl:px-4 xl:py-3`}>
+          <div className={`text-xs font-medium truncate ${mutedText}`}>Active Cameras</div>
+          <div
+            className={`text-base xl:text-lg font-bold font-mono mt-0.5 truncate ${
+              isDark ? "text-white" : "text-slate-900"
+            }`}
+          >
+            {summary.cameraCount || "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Middle 2-Column Grid: Status Breakdown & Classification Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 shrink-0">
+        {/* Status Breakdown Card */}
+        <div className={`${cardClass} flex flex-col`}>
+          <div className={cardHeaderClass}>
+            <h2 className={headingClass}>Status Breakdown</h2>
+            <span className={`text-xs font-mono ${mutedText}`}>
+              Avg Size: {summary.avgSize > 0 ? `${summary.avgSize.toFixed(1)} mm` : "—"} (
+              {summary.minSize > 0
+                ? `${summary.minSize.toFixed(0)}–${summary.maxSize.toFixed(0)} mm`
+                : "—"}
+              )
+            </span>
+          </div>
+
+          <div className="p-3.5 xl:p-4 flex-1 flex items-center">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 w-full">
+              <div className="rounded-lg p-3 bg-[#E5A12B]/10 border border-[#E5A12B]/30">
+                <div className="text-[11px] font-semibold text-[#E5A12B]">Pending</div>
+                <div
+                  className={`text-xl font-bold font-mono mt-0.5 ${
+                    isDark ? "text-white" : "text-slate-900"
+                  }`}
+                >
+                  {summary.pending}
+                </div>
+              </div>
+
+              <div className="rounded-lg p-3 bg-[#00B957]/10 border border-[#00B957]/30">
+                <div className="text-[11px] font-semibold text-[#00B957]">Confirmed</div>
+                <div
+                  className={`text-xl font-bold font-mono mt-0.5 ${
+                    isDark ? "text-white" : "text-slate-900"
+                  }`}
+                >
+                  {summary.accepted}
+                </div>
+              </div>
+
+              <div className="rounded-lg p-3 bg-[#4C9FE8]/10 border border-[#4C9FE8]/30">
+                <div className="text-[11px] font-semibold text-[#4C9FE8]">Cleared</div>
+                <div
+                  className={`text-xl font-bold font-mono mt-0.5 ${
+                    isDark ? "text-white" : "text-slate-900"
+                  }`}
+                >
+                  {summary.cleared}
+                </div>
+              </div>
+
+              <div className="rounded-lg p-3 bg-[#D51F32]/10 border border-[#D51F32]/30">
+                <div className="text-[11px] font-semibold text-[#D51F32] dark:text-rose-400">
+                  False
+                </div>
+                <div
+                  className={`text-xl font-bold font-mono mt-0.5 ${
+                    isDark ? "text-white" : "text-slate-900"
+                  }`}
+                >
+                  {summary.rejected}
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </section>
 
-      {/* 2. FOD Summary */}
-      <section className="space-y-2.5">
-        <h2 className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
-          2. FOD Summary
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Status Breakdown */}
-          <div className={`rounded-2xl border p-5 space-y-4 ${cardBg}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold">Status Breakdown</span>
-              <span className={`text-xs font-mono ${mutedText}`}>
-                Avg Size: {summary.avgSize > 0 ? `${summary.avgSize.toFixed(1)} mm` : "—"} (
-                {summary.minSize > 0 ? `${summary.minSize.toFixed(0)}–${summary.maxSize.toFixed(0)} mm` : "—"})
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="rounded-xl p-3 bg-amber-500/10 border border-amber-500/20">
-                <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">Pending</div>
-                <div className="text-xl font-bold font-mono mt-0.5">{summary.pending}</div>
-              </div>
-              <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20">
-                <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Confirmed</div>
-                <div className="text-xl font-bold font-mono mt-0.5">{summary.accepted}</div>
-              </div>
-              <div className="rounded-xl p-3 bg-blue-500/10 border border-blue-500/20">
-                <div className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">Cleared</div>
-                <div className="text-xl font-bold font-mono mt-0.5">{summary.cleared}</div>
-              </div>
-              <div className="rounded-xl p-3 bg-rose-500/10 border border-rose-500/20">
-                <div className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">False</div>
-                <div className="text-xl font-bold font-mono mt-0.5">{summary.rejected}</div>
-              </div>
-            </div>
+        {/* Classification Breakdown Card */}
+        <div className={`${cardClass} flex flex-col`}>
+          <div className={cardHeaderClass}>
+            <h2 className={headingClass}>Classification Breakdown</h2>
+            <span className={`text-xs font-mono ${mutedText}`}>
+              {summary.classEntries.length} classes
+            </span>
           </div>
 
-          {/* Classification Breakdown */}
-          <div className={`rounded-2xl border p-5 space-y-3 ${cardBg}`}>
-            <span className="text-sm font-bold block">Classification Breakdown</span>
+          <div className="p-3.5 xl:p-4 flex-1 flex flex-col justify-center">
             {summary.classEntries.length === 0 ? (
               <p className={`text-xs italic py-4 text-center ${mutedText}`}>
                 No FOD detections recorded yet.
@@ -557,17 +627,30 @@ const MissionReport: React.FC = () => {
               <div className="space-y-2.5">
                 {summary.classEntries.map(([cls, cnt]) => {
                   const pct = summary.total > 0 ? Math.round((cnt / summary.total) * 100) : 0;
-                  const barColor = CLASS_COLORS[cls] || "bg-indigo-500";
+                  const barColor = CLASS_COLORS[cls] || "bg-[#4C9FE8]";
                   return (
                     <div key={cls} className="space-y-1">
                       <div className="flex justify-between text-xs">
-                        <span className="font-semibold">{cls}</span>
+                        <span
+                          className={`font-semibold ${
+                            isDark ? "text-slate-200" : "text-slate-700"
+                          }`}
+                        >
+                          {cls}
+                        </span>
                         <span className={`font-mono ${mutedText}`}>
                           {cnt.toLocaleString()} ({pct}%)
                         </span>
                       </div>
-                      <div className={`h-2 w-full rounded-full overflow-hidden ${isDark ? "bg-[#15181C]" : "bg-slate-100"}`}>
-                        <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
+                      <div
+                        className={`h-2 w-full rounded-full overflow-hidden ${
+                          isDark ? "bg-[#22262B]" : "bg-slate-100"
+                        }`}
+                      >
+                        <div
+                          className={`h-full rounded-full ${barColor}`}
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                     </div>
                   );
@@ -576,53 +659,61 @@ const MissionReport: React.FC = () => {
             )}
           </div>
         </div>
-      </section>
+      </div>
 
-      {/* 3. Spatial FOD Density Heatmap & Thumbnails */}
-      <section className="space-y-4">
-        <h2 className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
-          3. Spatial FOD Heatmap &amp; Thumbnails
-        </h2>
-
-        {/* Heatmap */}
-        <div className={`rounded-2xl border p-5 space-y-3 ${cardBg}`}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-bold">Spatial Density Heatmap</h3>
-              <p className={`text-xs ${mutedText}`}>
-                {summary.points.length.toLocaleString()} geo-located detections · Peak cell:{" "}
-                <span className="font-mono font-semibold">{heatmapMeta.peakCount}</span> FODs
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className={mutedText}>Low</span>
-              <div className="flex h-2.5 w-24 rounded-full overflow-hidden">
-                <div className="flex-1 bg-blue-500/60" />
-                <div className="flex-1 bg-cyan-500/70" />
-                <div className="flex-1 bg-emerald-500/80" />
-                <div className="flex-1 bg-amber-500/90" />
-                <div className="flex-1 bg-rose-500" />
-              </div>
-              <span className={mutedText}>High</span>
-            </div>
+      {/* Bottom Card: Spatial Density Heatmap */}
+      <div className={`${cardClass} flex-1 min-h-[240px] flex flex-col`}>
+        <div className={cardHeaderClass}>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className={headingClass}>Spatial Density Heatmap</h2>
+            <span className={`text-xs ${mutedText}`}>
+              {summary.points.length.toLocaleString()} geo-located detections · Peak cell:{" "}
+              <span
+                className={`font-mono font-semibold ${
+                  isDark ? "text-slate-200" : "text-slate-700"
+                }`}
+              >
+                {heatmapMeta.peakCount}
+              </span>{" "}
+              FODs
+            </span>
           </div>
 
-          <div className="relative w-full overflow-hidden rounded-xl border border-slate-200 dark:border-[#353A42]">
+          <div className="flex items-center gap-2 text-[11px]">
+            <span className={mutedText}>Low</span>
+            <div className="flex h-2 w-24 rounded-full overflow-hidden">
+              <div className="flex-1 bg-[#4C9FE8]/65" />
+              <div className="flex-1 bg-[#00B957]/75" />
+              <div className="flex-1 bg-[#E5A12B]/85" />
+              <div className="flex-1 bg-[#D51F32]" />
+            </div>
+            <span className={mutedText}>High</span>
+          </div>
+        </div>
+
+        <div className="p-3.5 xl:p-4 flex-1 flex flex-col justify-between gap-2 min-h-0">
+          <div
+            className={`relative flex-1 min-h-[160px] w-full overflow-hidden rounded-lg border ${
+              isDark ? "border-[#383D44]" : "border-slate-200"
+            }`}
+          >
             <canvas
               ref={heatmapCanvasRef}
               width={960}
               height={260}
-              className="w-full h-52 block"
+              className="w-full h-full block"
             />
             {summary.points.length === 0 && (
-              <div className={`absolute inset-0 flex items-center justify-center text-xs ${mutedText}`}>
+              <div
+                className={`absolute inset-0 flex items-center justify-center text-xs ${mutedText}`}
+              >
                 No geo-located FOD coordinates available for heatmap.
               </div>
             )}
           </div>
 
           {summary.points.length > 0 && (
-            <div className={`flex justify-between text-[11px] font-mono ${mutedText}`}>
+            <div className={`flex justify-between text-[11px] font-mono shrink-0 ${mutedText}`}>
               <span>
                 SW: {heatmapMeta.minLat.toFixed(5)}, {heatmapMeta.minLon.toFixed(5)}
               </span>
@@ -632,9 +723,7 @@ const MissionReport: React.FC = () => {
             </div>
           )}
         </div>
-
-    
-      </section>
+      </div>
     </div>
   );
 };

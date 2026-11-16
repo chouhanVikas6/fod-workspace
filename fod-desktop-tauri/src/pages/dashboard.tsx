@@ -43,6 +43,10 @@ const MissionControl = () => {
   };
   const { isWebCamOpen, isFodFinalReviewOpen } = webCamState;
   const handleTab = (name: string) => {
+    if (isMapOpen) {
+      setTab(name);
+      return;
+    }
     if (tab == name) {
       setTab("dashboard");
     } else {
@@ -70,7 +74,7 @@ const MissionControl = () => {
             <OperationSideBar tab={tab} setTab={handleTab} />
 
             <div className="h-full flex-1 min-w-0 relative overflow-hidden">
-              {tab === "home" && (
+              {tab === "home" && !isMapOpen && (
                 <ErrorBoundary name="Home Dashboard">
                   <HomeDashboard />
                 </ErrorBoundary>
@@ -82,7 +86,7 @@ const MissionControl = () => {
                 </ErrorBoundary>
               )}
 
-              {tab === "reports" && (
+              {tab === "reports" && !isMapOpen && (
                 <ErrorBoundary name="Mission Reports">
                   <MissionReport />
                 </ErrorBoundary>
@@ -101,8 +105,8 @@ const MissionControl = () => {
             <ClearedFodDetailView />
             {isOpen ? <DetailedView /> : <></>}
             {(tab === "dashboard" || isMapOpen) && (
-  <FodCategoryAndDetail />
-)}
+              <FodCategoryAndDetail />
+            )}
           </div>
         </>
       ) : (

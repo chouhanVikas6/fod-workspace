@@ -1,4 +1,3 @@
-
 import React, { useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
@@ -166,11 +165,10 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         <button
           type="button"
           onClick={() => {
-            setTab("home");
-
             if (isMapOpen) {
               dispatch(toggle_Mapview());
             }
+            setTab("home");
           }}
           title="Home"
           aria-label="Home"
@@ -187,13 +185,16 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         {/* 2. SETUP */}
         <button
           type="button"
-          onClick={() =>
-            setTab(tab === "setting" ? "dashboard" : "setting")
-          }
+          onClick={() => {
+            if (isMapOpen) {
+              dispatch(toggle_Mapview());
+            }
+            setTab("setting");
+          }}
           title="Settings"
           aria-label="Settings"
           className={`${navButtonBase} ${
-            tab === "setting"
+            tab === "setting" && !isMapOpen
               ? navButtonActive
               : navButtonInactive
           }`}
@@ -208,7 +209,9 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         <button
           type="button"
           onClick={() => {
-            if (isMapOpen) dispatch(toggle_Mapview());
+            if (isMapOpen) {
+              dispatch(toggle_Mapview());
+            }
             setTab("dashboard");
           }}
           title="Live Alerts Dashboard"
@@ -241,7 +244,9 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         <button
           type="button"
           onClick={() => {
-            if (isMapOpen) dispatch(toggle_Mapview());
+            if (isMapOpen) {
+              dispatch(toggle_Mapview());
+            }
             setTab("reports");
           }}
           title="Mission Reports"
