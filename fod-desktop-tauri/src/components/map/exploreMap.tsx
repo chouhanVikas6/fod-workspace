@@ -201,6 +201,7 @@ const ExploreMap = ({
             selectedGroupId={selectedGroupId}
             onSelectFod={onSelectFod}
           />
+          <SelfLocation map={map} />
         </>
       )}
     </div>

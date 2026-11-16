@@ -43,6 +43,11 @@ pub fn spawn_health_broadcaster(state: AppState) {
             poll.tick().await;
             if let Some(bite_state) = fetch_bite_state(&state, &url).await {
                 state.emit_event("sse:health-data", &bite_state);
+            } else {
+                let rtk = state.health.read().await.rtk_data.clone();
+                if rtk.event_status {
+                    state.emit_event("sse:health-data", &json!({ "RtkData": rtk }));
+                }
             }
         }
     });
@@ -171,6 +176,7 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
                 },
                 "updatedAt": chrono::Utc::now().to_rfc3339(),
             });
+            let rtk = state.health.read().await.rtk_data.clone();
             return Some(json!({
                 "timestamp": b.timestamp,
                 "primaryGps": b.primary_gps.map(|g| json!({
@@ -192,6 +198,7 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
                 "cameras": Value::Object(cameras_obj),
                 "pcNodes": Value::Object(pc_nodes_obj),
                 "car_health": car_health,
+                "RtkData": rtk,
             }));
         }
     }

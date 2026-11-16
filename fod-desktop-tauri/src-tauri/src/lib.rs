@@ -11,6 +11,7 @@ pub mod imagewriter;
 pub mod models;
 pub mod realtime;
 pub mod routes;
+pub mod rtk_reader;
 pub mod scheduler;
 pub mod services;
 pub mod state;
@@ -303,6 +304,7 @@ pub fn run() {
                 realtime::car_telemetry::spawn(st.clone());
                 realtime::group_stream::spawn(st.clone());
                 realtime::mission_stream::spawn(st.clone());
+                rtk_reader::spawn(st.clone());
                 scheduler::spawn_primary_schedular(st.clone());
                 scheduler::spawn_sync_service(st.clone());
                 scheduler::spawn_user_sync_service(st);

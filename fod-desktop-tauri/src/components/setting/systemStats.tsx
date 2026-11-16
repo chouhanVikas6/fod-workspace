@@ -10,10 +10,25 @@ export default function SystemStats() {
 
   const bite = useSelector((state: RootState) => state.BiteState.carData);
   const latency = useSelector((state: RootState) => state.SystemHealth.latency);
+  const availableCommunication = useSelector(
+    (state: RootState) => state.SystemHealth.availableCommunication
+  );
   const carData = useSelector((state: RootState) => state.SystemHealth.carData.data);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [secondsAgo, setSecondsAgo] = useState(2);
+  const [atcConnected, setAtcConnected] = useState(false);
+
+  const isCarAvailable = Boolean(
+    latency?.connected ||
+      (availableCommunication as any[])?.some(
+        (c: any) => c?.type === 'car' || c?.type?.startsWith('car')
+      )
+  );
+  const isAtcAvailable = Boolean(
+    atcConnected ||
+      (availableCommunication as any[])?.some((c: any) => c?.type === 'atc')
+  );
 
   // Live health metrics with fallback defaults
   const temp = bite?.temp ?? 54;
@@ -36,6 +51,42 @@ export default function SystemStats() {
 
   const peakTemp = Math.max(...tempHistory);
 
+  const temperatureNodes = useMemo(
+    () => [
+      {
+        id: 'car-server',
+        name: 'Car Server',
+        role: 'Vehicle Compute Node',
+        tempC: isCarAvailable ? temp : null,
+        online: isCarAvailable,
+      },
+      {
+        id: 'atc-server',
+        name: 'ATC Server',
+        role: 'Tower / Ground Control',
+        tempC: null as number | null, // Expandable when ATC temperature telemetry is added
+        online: isAtcAvailable,
+      },
+    ],
+    [temp, isCarAvailable, isAtcAvailable]
+  );
+
+  const getTempBadge = (tempC: number | null, online: boolean) => {
+    if (!online) {
+      return { label: 'Offline', cls: 'bg-rose-500/15 text-rose-500', dot: 'bg-rose-500', ring: '#64748b' };
+    }
+    if (tempC === null) {
+      return { label: 'No telemetry', cls: 'bg-slate-500/15 text-slate-400', dot: 'bg-slate-400', ring: '#4C9FE8' };
+    }
+    if (tempC >= 80) {
+      return { label: 'High', cls: 'bg-rose-500/15 text-rose-500', dot: 'bg-rose-500', ring: '#ef4444' };
+    }
+    if (tempC >= 65) {
+      return { label: 'Warm', cls: 'bg-amber-500/15 text-amber-500', dot: 'bg-amber-500', ring: '#f59e0b' };
+    }
+    return { label: 'Normal', cls: 'bg-[#00B957]/15 text-[#00B957]', dot: 'bg-[#00B957]', ring: '#00B957' };
+  };
+
   useEffect(() => {
     const timer = setInterval(() => {
       setSecondsAgo((prev) => (prev >= 60 ? 1 : prev + 1));
@@ -43,10 +94,26 @@ export default function SystemStats() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const checkAtc = () => {
+      axiosClient({ method: 'GET', url: '/api/health/atc-status' })
+        .then((res) => setAtcConnected(Boolean(res?.data?.connected)))
+        .catch(() => setAtcConnected(false));
+    };
+    checkAtc();
+    const interval = setInterval(checkAtc, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await axiosClient({ method: 'GET', url: '/api/health/health-data' });
+      await Promise.allSettled([
+        axiosClient({ method: 'GET', url: '/api/health/health-data' }),
+        axiosClient({ method: 'GET', url: '/api/health/atc-status' }).then((res) =>
+          setAtcConnected(Boolean(res?.data?.connected))
+        ),
+      ]);
     } catch {
       // Ignore background refresh errors
     } finally {
@@ -227,25 +294,142 @@ const renderGaugeRing = (
           </div>
         </div>
 
-        {/* Lower Row: Graph + Connections */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3.5">
-          {/* Left: Temperature – last 60 min */}
+        {/* Connections */}
+        <div
+          className={`rounded-xl p-4 border flex flex-col justify-between transition-all ${
+            isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+          }`}
+        >
+          <h2 className={`text-xs font-semibold mb-2 ${isDark ? 'text-slate-100' : 'text-slate-700'}`}>
+            Connections
+          </h2>
+
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 divide-y md:divide-y-0 ${isDark ? 'divide-[#383D44]' : 'divide-slate-200'}`}>
+            {/* Car */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <div className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>Car</div>
+                <div className={`text-[11px] ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+                  {isCarAvailable
+                    ? latency?.ping
+                      ? `Connected • ${latency.ping} ms`
+                      : 'Vehicle link active'
+                    : 'Vehicle not in communication'}
+                </div>
+              </div>
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                  isCarAvailable
+                    ? 'bg-[#00B957]/15 text-[#00B957]'
+                    : 'bg-rose-500/15 text-rose-500'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isCarAvailable ? 'bg-[#00B957]' : 'bg-rose-500'
+                  }`}
+                />
+                <span>{isCarAvailable ? 'Available' : 'Unavailable'}</span>
+              </div>
+            </div>
+
+            {/* ATC */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <div className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>ATC</div>
+                <div className={`text-[11px] ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+                  {isAtcAvailable ? 'ATC server reachable' : 'ATC server unreachable'}
+                </div>
+              </div>
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                  isAtcAvailable
+                    ? 'bg-[#00B957]/15 text-[#00B957]'
+                    : 'bg-rose-500/15 text-rose-500'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isAtcAvailable ? 'bg-[#00B957]' : 'bg-rose-500'
+                  }`}
+                />
+                <span>{isAtcAvailable ? 'Available' : 'Unavailable'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Dedicated Temperatures Section (extensible for Car servers & ATC temps) */}
+      <div className="mt-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className={`text-base font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+              Temperatures
+            </h2>
+            <p className={`text-xs mt-0.5 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+              Thermal telemetry across Car servers and ATC nodes
+            </p>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-xl border p-4 space-y-4 ${
+            isDark ? 'bg-[#262A30]/60 border-[#333840]' : 'bg-white/60 border-slate-200'
+          }`}
+        >
+          {/* Per-Server Temperature Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {temperatureNodes.map((node) => {
+              const badge = getTempBadge(node.tempC, node.online);
+              const pct = node.tempC !== null ? (node.tempC / 100) * 100 : 0;
+              const ringLabel = node.tempC !== null ? `${Math.round(node.tempC)}°` : '—';
+              return (
+                <div
+                  key={node.id}
+                  className={`rounded-xl p-4 border flex items-center gap-3.5 transition-all ${
+                    isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+                  }`}
+                >
+                  {renderGaugeRing(pct, badge.ring, ringLabel)}
+                  <div className="min-w-0">
+                    <div className={`text-xs font-semibold truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                      {node.name}
+                    </div>
+                    <div className={`text-[11px] truncate ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
+                      {node.role}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className={`text-base font-bold font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                        {node.tempC !== null ? `${node.tempC}°C` : '—'}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${badge.cls}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
+                        <span>{badge.label}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Temperature – last 60 min */}
           <div
-            className={`lg:col-span-2 rounded-xl p-4 border flex flex-col justify-between transition-all ${
+            className={`rounded-xl p-4 border flex flex-col justify-between transition-all ${
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-700'}`}>
-                Temperature – last 60 min
-              </h2>
+              <h3 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-700'}`}>
+                Car Server Temperature – last 60 min
+              </h3>
               <span className={`text-xs font-medium ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
                 Peak {peakTemp}°C
               </span>
             </div>
 
-            {/* SVG Wave Chart */}
-            <div className="w-full h-44 relative">
+            <div className="w-full h-40 relative">
               <svg className="w-full h-full overflow-visible" viewBox="0 0 500 160" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="tempAreaGradient" x1="0" y1="0" x2="0" y2="1">
@@ -254,18 +438,15 @@ const renderGaugeRing = (
                   </linearGradient>
                 </defs>
 
-                {/* Subtle reference grid lines */}
                 <line x1="0" y1="40" x2="500" y2="40" stroke={isDark ? '#383D44' : '#E2E8F0'} strokeDasharray="3 3" />
                 <line x1="0" y1="80" x2="500" y2="80" stroke={isDark ? '#383D44' : '#E2E8F0'} strokeDasharray="3 3" />
                 <line x1="0" y1="120" x2="500" y2="120" stroke={isDark ? '#383D44' : '#E2E8F0'} strokeDasharray="3 3" />
 
-                {/* Area fill */}
                 <path
                   d="M 0,140 L 0,110 L 45,98 L 90,104 L 135,82 L 180,90 L 225,72 L 270,82 L 315,62 L 360,74 L 405,56 L 450,68 L 480,61 L 500,64 L 500,150 L 0,150 Z"
                   fill="url(#tempAreaGradient)"
                 />
 
-                {/* Foreground stroke */}
                 <path
                   d="M 0,110 L 45,98 L 90,104 L 135,82 L 180,90 L 225,72 L 270,82 L 315,62 L 360,74 L 405,56 L 450,68 L 480,61 L 500,64"
                   fill="none"
@@ -275,69 +456,6 @@ const renderGaugeRing = (
                   strokeLinejoin="round"
                 />
               </svg>
-            </div>
-          </div>
-
-          {/* Right: Connections */}
-          <div
-            className={`rounded-xl p-4 border flex flex-col justify-between transition-all ${
-              isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
-            }`}
-          >
-            <h2 className={`text-xs font-semibold mb-2 ${isDark ? 'text-slate-100' : 'text-slate-700'}`}>
-              Connections
-            </h2>
-
-            <div className={`flex flex-col divide-y ${isDark ? 'divide-[#383D44]' : 'divide-slate-200'}`}>
-              {/* LTE */}
-              <div className="flex items-center justify-between py-2.5">
-                <div>
-                  <div className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>LTE</div>
-                  <div className={`text-[11px] ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>Signal strong</div>
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00B957]" />
-                  <span>Connected</span>
-                </div>
-              </div>
-
-              {/* Wi-Fi */}
-              <div className="flex items-center justify-between py-2.5">
-                <div>
-                  <div className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>Wi-Fi</div>
-                  <div className={`text-[11px] ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>ZOID-OPS</div>
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00B957]" />
-                  <span>Connected</span>
-                </div>
-              </div>
-
-              {/* GNSS */}
-              <div className="flex items-center justify-between py-2.5">
-                <div>
-                  <div className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>GNSS</div>
-                  <div className={`text-[11px] ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
-                    {bite?.rtk?.primary?.satellite || 14} satellites
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#00B957]/15 text-[#00B957]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00B957]" />
-                  <span>Locked</span>
-                </div>
-              </div>
-
-              {/* Tablet Link */}
-              <div className="flex items-center justify-between pt-2.5">
-                <div>
-                  <div className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>Tablet link</div>
-                  <div className={`text-[11px] ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>Last ping 4s ago</div>
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                  <span>Weak</span>
-                </div>
-              </div>
             </div>
           </div>
         </div>

@@ -220,6 +220,12 @@ const HealthBar = () => {
         <span className="text-[10px] lg:text-[11px] font-bold tracking-wide lg:tracking-wider uppercase">
           TABLET
         </span>
+        {typeof (RtkData?.data as any)?.lat === "number" &&
+          typeof (RtkData?.data as any)?.lon === "number" && (
+            <span className="hidden xl:inline font-mono text-[10px] text-slate-600 dark:text-slate-300">
+              {(RtkData.data as any).lat.toFixed(5)}, {(RtkData.data as any).lon.toFixed(5)}
+            </span>
+          )}
       </button>
 
       <div className={dividerClass} />
@@ -366,11 +372,33 @@ const HealthBar = () => {
           <div className="space-y-2">
             <div className="flex justify-between gap-3">
               <span className="text-slate-500 dark:text-[#8C939C]">
+                Self GPS:
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                {typeof (RtkData?.data as any)?.lat === "number" &&
+                typeof (RtkData?.data as any)?.lon === "number"
+                  ? `${(RtkData.data as any).lat.toFixed(6)}, ${(RtkData.data as any).lon.toFixed(6)}`
+                  : "—"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-500 dark:text-[#8C939C]">
+                Satellites / Heading:
+              </span>
+              <span className="font-mono text-slate-700 dark:text-slate-300">
+                {(RtkData?.data as any)?.satellites ?? "—"} ·{" "}
+                {typeof (RtkData?.data as any)?.heading === "number"
+                  ? `${(RtkData.data as any).heading.toFixed(0)}°`
+                  : "—"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-500 dark:text-[#8C939C]">
                 Position Accuracy:
               </span>
               <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
-                {(RtkData?.data as any)?.accuracy
-                  ? `${(RtkData?.data as any)?.accuracy} m`
+                {(RtkData?.data as any)?.accuracy ?? (RtkData?.data as any)?.sd
+                  ? `${(RtkData?.data as any)?.accuracy ?? (RtkData?.data as any)?.sd} m`
                   : "—"}
               </span>
             </div>
@@ -380,6 +408,19 @@ const HealthBar = () => {
                 {(RtkData?.data as any)?.hdop ?? "—"}
               </span>
             </div>
+            {(RtkData?.data as any)?.source && (
+              <div className="flex justify-between gap-3">
+                <span className="text-slate-500 dark:text-[#8C939C]">Source:</span>
+                <span className="font-mono text-slate-700 dark:text-slate-300 truncate max-w-[160px]">
+                  {(RtkData.data as any).source}
+                </span>
+              </div>
+            )}
+            {(RtkData?.data as any)?.error && (
+              <div className="pt-1 text-[11px] text-rose-500 dark:text-rose-400 break-words">
+                {(RtkData.data as any).error}
+              </div>
+            )}
           </div>
         </div>
       )}

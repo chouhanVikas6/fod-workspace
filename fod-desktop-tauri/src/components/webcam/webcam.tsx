@@ -3,31 +3,35 @@ import SideBarImgs from "./sidebarImgs";
 import { useSelector, useDispatch } from "react-redux";
 import { addImageToSideBarImgs } from "@/store/actions/WebCam";
 import { RootState } from "@/store";
-import { MdRefresh, MdFileUpload, MdVideocamOff } from "react-icons/md";
-import { HiOutlinePhotograph } from "react-icons/hi";
+import { MdRefresh, MdVideocamOff, MdFlipCameraAndroid } from "react-icons/md";
 
 const WebCam = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [captureButtonActive, setCaptureButtonActive] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [flashEffect, setFlashEffect] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [activeDeviceIdx, setActiveDeviceIdx] = useState<number>(0);
 
   const { isWebCamStart, WebCamStream, selectedList } = useSelector(
     (state: RootState) => state.WebCam
   );
   const dispatch = useDispatch();
 
-  const startCamera = async () => {
+  const startCamera = async (
+    targetFacing: "environment" | "user" = facingMode,
+    targetDeviceId?: string
+  ) => {
     setIsLoading(true);
     setCameraError(null);
 
     try {
-      if (WebCamStream) {
+      if (WebCamStream && !targetDeviceId) {
         if (videoRef.current) {
           videoRef.current.srcObject = WebCamStream;
         }
@@ -41,6 +45,7 @@ const WebCam = () => {
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
           const videoInputs = devices.filter((d) => d.kind === "videoinput");
+          setVideoDevices(videoInputs);
           if (devices.length > 0 && videoInputs.length === 0) {
             setCameraError("No camera device detected on this system.");
             setIsLoading(false);
@@ -52,14 +57,17 @@ const WebCam = () => {
       }
 
       let stream: MediaStream | null = null;
+      const videoConstraint: MediaTrackConstraints = targetDeviceId
+        ? { deviceId: { exact: targetDeviceId } }
+        : { facingMode: { ideal: targetFacing } };
 
-      // 1. Try ideal environment facingMode (tablets/back camera)
+      // 1. Try requested deviceId or facingMode
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+          video: videoConstraint,
         });
       } catch (e1) {
-        console.warn("Environment camera constraint failed, attempting generic video:", e1);
+        console.warn("Requested camera constraint failed, attempting generic video:", e1);
         // 2. Fallback to generic video device (front/USB webcam)
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -203,6 +211,22 @@ const WebCam = () => {
     dispatch(addImageToSideBarImgs(imageSrc) as any);
   };
 
+  const handleFlipCamera = async () => {
+    const nextFacing: "environment" | "user" =
+      facingMode === "environment" ? "user" : "environment";
+    setFacingMode(nextFacing);
+
+    let nextDeviceId: string | undefined;
+    if (videoDevices.length > 1) {
+      const nextIdx = (activeDeviceIdx + 1) % videoDevices.length;
+      setActiveDeviceIdx(nextIdx);
+      nextDeviceId = videoDevices[nextIdx]?.deviceId;
+    }
+
+    closeCamera();
+    await startCamera(nextFacing, nextDeviceId);
+  };
+
   const capture = () => {
     // If live camera is active, grab frame from video element
     if (cameraStream && videoRef.current && videoRef.current.videoWidth > 0) {
@@ -216,25 +240,7 @@ const WebCam = () => {
         const imageSrc = canvas.toDataURL("image/jpeg", 0.92);
         dispatch(addImageToSideBarImgs(imageSrc) as any);
       }
-    } else {
-      // Fallback when no physical camera is connected
-      generateMockPhoto();
     }
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        triggerFlash();
-        dispatch(addImageToSideBarImgs(reader.result) as any);
-      }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = ""; // Reset for re-selection
   };
 
   // Trigger on webCamState change
@@ -255,15 +261,6 @@ const WebCam = () => {
 
   return (
     <div className="relative h-full w-full flex justify-start items-center z-[1000] bg-[#1a1a1f]">
-      {/* Hidden file input for uploading images directly */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        accept="image/*"
-        onChange={handleFileUpload}
-        className="hidden"
-      />
-
       {/* Main viewport (3/4 width) */}
       <div className="relative h-full w-3/4 flex items-center justify-center bg-[#18181b] overflow-hidden">
         {/* Live video feed */}
@@ -276,24 +273,19 @@ const WebCam = () => {
         />
 
         {/* Top-right quick actions bar */}
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-medium rounded-md border border-white/20 transition-all cursor-pointer shadow-md"
-            title="Upload an image from disk"
-          >
-            <MdFileUpload className="text-sm" />
-            <span>Upload Image</span>
-          </button>
-          <button
-            onClick={generateMockPhoto}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-medium rounded-md border border-white/20 transition-all cursor-pointer shadow-md"
-            title="Generate a test capture photo"
-          >
-            <HiOutlinePhotograph className="text-sm" />
-            <span>Test Photo</span>
-          </button>
-        </div>
+        {cameraStream && (
+          <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleFlipCamera}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-medium rounded-md border border-white/20 transition-all cursor-pointer shadow-md"
+              title="Switch between front and rear camera"
+            >
+              <MdFlipCameraAndroid className="text-sm" />
+              <span>Flip Camera</span>
+            </button>
+          </div>
+        )}
 
         {/* State when no live camera is active */}
         {!cameraStream && (
@@ -313,30 +305,17 @@ const WebCam = () => {
                 </h3>
                 <p className="text-xs text-gray-400 mb-5 leading-relaxed">
                   {cameraError ||
-                    "No video capture device (/dev/video*) is currently connected. You can plug in a USB camera, upload a photo, or generate a test photo."}
+                    "No video capture device (/dev/video*) is currently connected. Please connect a camera and retry."}
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-2 w-full">
                   <button
-                    onClick={startCamera}
+                    type="button"
+                    onClick={() => startCamera()}
                     className="flex items-center gap-1.5 px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-medium rounded-lg border border-white/15 transition-all cursor-pointer"
                   >
                     <MdRefresh className="text-base" />
                     <span>Retry Camera</span>
-                  </button>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1.5 px-3.5 py-2 bg-[#017ED7] hover:bg-[#016ec0] text-white text-xs font-medium rounded-lg transition-all cursor-pointer shadow-md"
-                  >
-                    <MdFileUpload className="text-base" />
-                    <span>Upload Photo</span>
-                  </button>
-                  <button
-                    onClick={generateMockPhoto}
-                    className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-all cursor-pointer shadow-md"
-                  >
-                    <HiOutlinePhotograph className="text-base" />
-                    <span>Take Test Photo</span>
                   </button>
                 </div>
               </div>
@@ -345,22 +324,25 @@ const WebCam = () => {
         )}
 
         {/* Shutter capture button at the bottom */}
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 flex flex-col items-center gap-1">
-          <div className="w-[65px] h-[65px] flex items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border-2 border-white/80 shadow-xl">
-            <button
-              onClick={capture}
-              className={`w-[50px] h-[50px] rounded-full bg-white flex items-center justify-center transition-all cursor-pointer shadow-md ${
-                captureButtonActive
-                  ? "scale-90 bg-gray-300"
-                  : "hover:scale-105 active:scale-95"
-              }`}
-              title={cameraStream ? "Take Live Photo" : "Capture Test Photo"}
-            ></button>
+        {cameraStream && (
+          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 flex flex-col items-center gap-1">
+            <div className="w-[65px] h-[65px] flex items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border-2 border-white/80 shadow-xl">
+              <button
+                type="button"
+                onClick={capture}
+                className={`w-[50px] h-[50px] rounded-full bg-white flex items-center justify-center transition-all cursor-pointer shadow-md ${
+                  captureButtonActive
+                    ? "scale-90 bg-gray-300"
+                    : "hover:scale-105 active:scale-95"
+                }`}
+                title="Take Live Photo"
+              ></button>
+            </div>
+            <span className="text-[11px] text-white/70 font-medium tracking-wide">
+              Capture
+            </span>
           </div>
-          <span className="text-[11px] text-white/70 font-medium tracking-wide">
-            {cameraStream ? "Capture" : "Capture Test Photo"}
-          </span>
-        </div>
+        )}
       </div>
 
       {/* Camera shutter flash effect */}
