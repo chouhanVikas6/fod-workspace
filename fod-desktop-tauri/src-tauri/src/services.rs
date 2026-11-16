@@ -638,6 +638,13 @@ pub async fn call_car_grpc(
         let group_id = gid_str.parse::<i64>().ok()?;
         let mission_id = data.as_ref().and_then(|d| d.get("missionId").and_then(Value::as_i64)).unwrap_or(1);
         let status = data.as_ref().and_then(|d| d.get("status").and_then(Value::as_str)).unwrap_or("NEW");
+        let actor = data
+            .as_ref()
+            .and_then(|d| d.get("updatedBy").or_else(|| d.get("actor")).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("desktop")
+            .to_string();
         let mut client = connect_fod_group_client(state).await?;
         let resolutions = vec![proto_defination::fod_group::GroupResolution {
             command_id: uuid::Uuid::new_v4().to_string(),
@@ -647,7 +654,7 @@ pub async fn call_car_grpc(
             base_version: 0,
             base_version_vector: Default::default(),
             decided_at_ms: chrono::Utc::now().timestamp_millis(),
-            origin_node: "desktop".to_string(),
+            origin_node: actor,
         }];
         let res = client.resolve_groups(tonic::Request::new(
             proto_defination::fod_group::ResolveGroupsRequest { resolutions },
@@ -674,6 +681,14 @@ pub async fn call_car_grpc(
                 let mid = item.get("missionId").and_then(Value::as_i64).unwrap_or(0);
                 let st = item.get("status").and_then(Value::as_str).unwrap_or("NEW");
                 let base_version = item.get("version").and_then(Value::as_i64).unwrap_or(0);
+                let actor = item
+                    .get("updatedBy")
+                    .or_else(|| item.get("actor"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("desktop")
+                    .to_string();
                 resolutions.push(proto_defination::fod_group::GroupResolution {
                     command_id: uuid::Uuid::new_v4().to_string(),
                     mission_id: mid,
@@ -682,7 +697,7 @@ pub async fn call_car_grpc(
                     base_version,
                     base_version_vector: Default::default(),
                     decided_at_ms: chrono::Utc::now().timestamp_millis(),
-                    origin_node: "desktop".to_string(),
+                    origin_node: actor,
                 });
             }
         }

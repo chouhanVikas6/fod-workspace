@@ -1,6 +1,15 @@
 import { Mission } from "@prisma/client";
 import { createSlice } from "@reduxjs/toolkit";
 
+export interface OperationalAlertItem {
+  id: string;
+  groupId: number;
+  missionId?: number | string;
+  status: string;
+  updatedBy?: string;
+  timestampMs: number;
+}
+
 export interface MissionStateType {
   missionNumber: number | null;
   displayId?: number | null;
@@ -14,6 +23,7 @@ export interface MissionStateType {
   isActive:boolean;
   isExplore?: boolean;
   status?: string;
+  operationalAlerts?: OperationalAlertItem[];
 }
 
 const initialState: MissionStateType = {
@@ -29,6 +39,7 @@ const initialState: MissionStateType = {
   isActive:false,
   isExplore: false,
   status: undefined,
+  operationalAlerts: [],
 };
 
 const MissionStateReducer = createSlice({
@@ -66,6 +77,12 @@ const MissionStateReducer = createSlice({
         state.isPauseLoading = loading;
       }
     },
+    pushOperationalAlert: (state, action) => {
+      const item = action.payload as OperationalAlertItem;
+      if (!item || !item.groupId) return;
+      const list = state.operationalAlerts || [];
+      state.operationalAlerts = [item, ...list].slice(0, 30);
+    },
     set_Terminate: (state) => {
       state.isTerminate = true;
       state.duration=null;
@@ -79,6 +96,7 @@ const MissionStateReducer = createSlice({
       state.isActive = false;
       state.isExplore = false;
       state.status = undefined;
+      state.operationalAlerts = [];
     },
   },
 });
@@ -89,6 +107,7 @@ export const {
   setIsLoading,
   toggleNotification,
   set_PauseLoader,
+  pushOperationalAlert,
   set_Terminate,
 } = MissionStateReducer.actions;
 export default MissionStateReducer.reducer;

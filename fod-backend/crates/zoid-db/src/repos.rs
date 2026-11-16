@@ -299,6 +299,37 @@ impl Db {
         Ok(Some((current, after, extra)))
     }
 
+    /// Record a user/operator action that changed a FOD group's status (Car & ATC audit trail).
+    pub async fn record_group_action(
+        &self,
+        mission_id: i64,
+        group_id: i64,
+        from_status: &str,
+        to_status: &str,
+        actor: &str,
+        decided_at_ms: i64,
+        command_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO fod_group_actions
+                (mission_id, group_id, from_status, to_status, actor, decided_at_ms, command_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(mission_id)
+        .bind(group_id)
+        .bind(from_status)
+        .bind(to_status)
+        .bind(actor)
+        .bind(decided_at_ms)
+        .bind(command_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     /// Replica-side groups whose local decision has not yet been acknowledged
     /// by the primary.
     pub async fn list_dirty_fod_groups(&self, limit: i64) -> Result<Vec<FodGroupRow>> {
