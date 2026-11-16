@@ -243,7 +243,7 @@ const FodReducer = createSlice({
     set_Class_Size: (state, action) => {
       const { classes, minSize } = action.payload;
       state.filters.classes = classes;
-      state.filters.size.min = minSize;
+      state.filters.size.min = Number.isFinite(Number(minSize)) ? Number(minSize) : 0;
     },
     remove_Class: (state, action) => {
       const { payload: classToRemove } = action;

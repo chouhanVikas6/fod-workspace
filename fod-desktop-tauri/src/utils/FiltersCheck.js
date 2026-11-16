@@ -7,9 +7,10 @@ const KNOWN_CLASSES = ['Metallic', 'Rocks/Ashpalt', 'Organic', 'Non-Metallic'];
 // class (or an unrecognised one) are never hidden by the class filter.
 export const FiltersCheck = (fod, filters) => {
     const { classes = KNOWN_CLASSES, size } = filters;
-    const minSize = size?.min || 0;
+    const minSize = Number.isFinite(Number(size?.min)) ? Number(size.min) : 0;
 
-    const sizeInRange = (fod.size ?? 0) >= minSize;
+    const fodSize = Number(fod.size ?? 0);
+    const sizeInRange = Number.isFinite(fodSize) ? fodSize >= minSize : true;
 
     const fodClass = fod.class;
     const classExists =
