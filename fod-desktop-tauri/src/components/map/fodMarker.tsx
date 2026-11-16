@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
-import { RootState } from "@/store";
+import mapboxgl from "mapbox-gl";
+import { RootState, AppDispatch } from "@/store";
 import { updateSelectedFod } from "@/store/actions/SelectedFod";
 import { setSideBarVisibility } from "@/store/slices/selectedFod-slice";
-import { AppDispatch } from "@/store";
+import { config } from "@/config/clientConfig";
+
+const THUMBNAIL_MIN_ZOOM = 20;
+const MAX_THUMBNAIL_MARKERS = 60;
+
+const STATUS_BORDER_COLOR: Record<string, string> = {
+  CLEARED: "#22c55e",
+  ACCEPTED: "#ef4444",
+  REJECTED: "#64748b",
+  NEW: "#eab308",
+};
 
 function getFodLocation(fod: any): { lat: number; lon: number } | null {
   if (!fod) return null;
@@ -45,9 +56,20 @@ function getFodLocation(fod: any): { lat: number; lon: number } | null {
   return null;
 }
 
-const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: any; fods?: any[] | null; onSelectFod?: ((fod: any) => void) | null }) => {
+const FodMarkers = ({
+  map,
+  fods: propFods = null,
+  onSelectFod = null,
+}: {
+  map: any;
+  fods?: any[] | null;
+  onSelectFod?: ((fod: any) => void) | null;
+  selectedFod?: any;
+  selectedGroupId?: any;
+}) => {
   const dispatch = useDispatch<AppDispatch>();
   const reduxFods = useSelector((state: RootState) => state.FodReducer.fods);
+  const storeMissionNumber = useSelector((state: RootState) => state.MissionState?.missionNumber);
   const selectedQueue = useSelector((state: RootState) => state.MapReducer.selectedQueue);
   // When an explicit fods list is passed (mission explore), plot all of them;
   // otherwise plot the live queue filtered by the map's selected status set.
@@ -61,28 +83,43 @@ const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: a
       return selectedQueue.includes(fod.groupStatus)
     });
   }, [propFods, reduxFods, selectedQueue]);
+
+  // Pick the biggest FOD in each group as the group representative & thumbnail source
+  const groupRepresentatives = useMemo(() => {
+    const byGroup = new Map<string | number, { fod: any; loc: { lat: number; lon: number } }>();
+    for (let i = 0; i < fodsToRender.length; i++) {
+      const fod = fodsToRender[i];
+      const loc = getFodLocation(fod);
+      if (!loc) continue;
+      const key = fod.groupId ?? fod.id;
+      if (key === undefined || key === null) continue;
+
+      const existing = byGroup.get(key);
+      const fodSize = Number(fod.size) || 0;
+      const existingSize = existing ? Number(existing.fod.size) || 0 : -1;
+      if (!existing || fodSize > existingSize) {
+        byGroup.set(key, { fod, loc });
+      }
+    }
+    return Array.from(byGroup.values());
+  }, [fodsToRender]);
+
   const fodGeoJson = useMemo(() => ({
     type: "FeatureCollection",
-    features: fodsToRender
-      .map(fod => {
-        const loc = getFodLocation(fod);
-        if (!loc) return null;
-        return {
-          type: "Feature",
-          properties: {
-            groupId: fod.groupId,
-            FodId: fod.id,
-            FodPoint: fod.FodPoint,
-            status: fod.groupStatus,
-          },
-          geometry: {
-            type: "Point",
-            coordinates: [loc.lon, loc.lat]
-          }
-        };
-      })
-      .filter(Boolean)
-  }), [fodsToRender]);
+    features: groupRepresentatives.map(({ fod, loc }) => ({
+      type: "Feature",
+      properties: {
+        groupId: fod.groupId,
+        FodId: fod.id,
+        FodPoint: fod.FodPoint,
+        status: fod.groupStatus,
+      },
+      geometry: {
+        type: "Point",
+        coordinates: [loc.lon, loc.lat],
+      },
+    })),
+  }), [groupRepresentatives]);
   // Keep the click handler (registered once on style load) pointed at the
   // current fod list without re-registering.
   const fodsRef = useRef(fods);
@@ -96,6 +133,115 @@ const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: a
   const clusterCountLayerId = "cluster-count";
   const unclusteredLayerId = "unclustered-point";
   const initialized = useRef(false);
+  const thumbnailMarkersRef = useRef<Map<string | number, mapboxgl.Marker>>(new Map());
+
+  const clearThumbnailMarkers = useCallback(() => {
+    thumbnailMarkersRef.current.forEach((marker) => marker.remove());
+    thumbnailMarkersRef.current.clear();
+  }, []);
+
+  const syncThumbnailMarkers = useCallback(() => {
+    const m = map.current;
+    if (!m) return;
+
+    const currentZoom = m.getZoom();
+    if (currentZoom < THUMBNAIL_MIN_ZOOM) {
+      clearThumbnailMarkers();
+      return;
+    }
+
+    const bounds = m.getBounds();
+    const visibleGroups: Array<{ key: string | number; fod: any; loc: { lat: number; lon: number } }> = [];
+
+    for (let i = 0; i < groupRepresentatives.length; i++) {
+      const { fod, loc } = groupRepresentatives[i];
+      if (!bounds || bounds.contains([loc.lon, loc.lat])) {
+        const key = fod.groupId ?? fod.id;
+        visibleGroups.push({ key, fod, loc });
+        if (visibleGroups.length >= MAX_THUMBNAIL_MARKERS) break;
+      }
+    }
+
+    const nextKeys = new Set(visibleGroups.map((g) => g.key));
+    // Remove markers no longer in viewport
+    thumbnailMarkersRef.current.forEach((marker, key) => {
+      if (!nextKeys.has(key)) {
+        marker.remove();
+        thumbnailMarkersRef.current.delete(key);
+      }
+    });
+
+    for (const { key, fod, loc } of visibleGroups) {
+      if (thumbnailMarkersRef.current.has(key)) continue;
+
+      const resolvedMissionId = fod.missionId ?? fod.mission_id ?? storeMissionNumber;
+      const imgSrc =
+        fod.frame && String(fod.frame).startsWith("data:")
+          ? fod.frame
+          : resolvedMissionId && fod.groupId !== undefined && fod.id !== undefined
+          ? `${config.ImagesBase}/${resolvedMissionId}/${fod.groupId}/${fod.id}.jpg`
+          : null;
+
+      if (!imgSrc) continue;
+
+      const borderColor = STATUS_BORDER_COLOR[fod.groupStatus] || STATUS_BORDER_COLOR.NEW;
+      const el = document.createElement("div");
+      el.className = "fod-group-thumb-marker";
+      el.style.cssText = `
+        width: 46px;
+        height: 46px;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 2px solid ${borderColor};
+        background: #0f172a;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+        cursor: pointer;
+        position: relative;
+      `;
+
+      const img = document.createElement("img");
+      img.src = imgSrc;
+      img.alt = `FOD #${fod.groupId}`;
+      img.loading = "lazy";
+      img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+      img.onerror = () => {
+        el.style.display = "none";
+      };
+
+      const badge = document.createElement("span");
+      badge.textContent = `#${fod.groupId}`;
+      badge.style.cssText = `
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(15, 23, 42, 0.8);
+        color: #f8fafc;
+        font-size: 9px;
+        font-family: monospace;
+        font-weight: 700;
+        text-align: center;
+        line-height: 13px;
+      `;
+
+      el.appendChild(img);
+      el.appendChild(badge);
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (onSelectFodRef.current) {
+          onSelectFodRef.current(fod);
+          return;
+        }
+        dispatch(setSideBarVisibility(true));
+        dispatch(updateSelectedFod(fod) as any);
+      });
+
+      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat([loc.lon, loc.lat])
+        .addTo(m);
+      thumbnailMarkersRef.current.set(key, marker);
+    }
+  }, [map, groupRepresentatives, storeMissionNumber, dispatch, clearThumbnailMarkers]);
 
   useEffect(() => {
     if (!map.current) return;
@@ -246,6 +392,22 @@ const FodMarkers = ({ map, fods: propFods = null, onSelectFod = null }: { map: a
 
     return () => clearTimeout(timer);
   }, [fodGeoJson]);
+
+  // Show biggest-FOD group thumbnails when zoomed in very close (zoom >= THUMBNAIL_MIN_ZOOM)
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+
+    syncThumbnailMarkers();
+    m.on("zoomend", syncThumbnailMarkers);
+    m.on("moveend", syncThumbnailMarkers);
+
+    return () => {
+      m.off("zoomend", syncThumbnailMarkers);
+      m.off("moveend", syncThumbnailMarkers);
+      clearThumbnailMarkers();
+    };
+  }, [map, syncThumbnailMarkers, clearThumbnailMarkers]);
 
   return null;
 };
