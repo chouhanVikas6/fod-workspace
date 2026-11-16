@@ -252,6 +252,13 @@ async fn stop_retrive_stream(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     dotenvy::dotenv().ok();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let _ = dotenvy::from_path(dir.join(".env"))
+                .or_else(|_| dotenvy::from_path(dir.join("resources").join(".env")))
+                .or_else(|_| dotenvy::from_path(dir.join("_up_").join(".env")));
+        }
+    }
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

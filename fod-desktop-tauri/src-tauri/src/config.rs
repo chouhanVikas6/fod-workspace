@@ -33,13 +33,13 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Self {
-        let car = env_or("NEXT_PUBLIC_SERVER_URL", "http://127.0.0.1:50051");
+        let car = env_or("NEXT_PUBLIC_SERVER_URL", "http://192.168.0.176:50051");
         Self {
             database_url: env_or(
                 "DATABASE_URL",
                 "sqlite://zoid_client.db?mode=rwc",
             ),
-            atc_backend_url: env_or("NEXT_PUBLIC_SECONDARY_SERVER_URL", "http://127.0.0.1:50052"),
+            atc_backend_url: env_or("NEXT_PUBLIC_SECONDARY_SERVER_URL", "http://192.168.0.176:50052"),
             socketserver: std::env::var("SOCKETSERVER").unwrap_or_else(|_| car.clone()),
             car_backend_url: car,
             gui_server_port: std::env::var("GUI_SERVER_PORT")
@@ -51,7 +51,7 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
             sys_id: env_or("SYS_ID", ""),
-            atc_ip: std::env::var("ATC_IP").ok(),
+            atc_ip: std::env::var("ATC_IP").ok().or_else(|| Some("192.168.0.176".to_string())),
             jwt_secret: std::env::var("JWT_SECRET")
                 .or_else(|_| std::env::var("AUTH_SECRET_KEY"))
                 .unwrap_or_else(|_| "your-secret-key".to_string()),

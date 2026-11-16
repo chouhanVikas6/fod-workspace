@@ -2,19 +2,23 @@
 //!
 //! Reads NMEA sentences (`GGA`, `RMC`, `VTG`, `HDT`) from either:
 //! - A TCP stream if `RTK_TCP_ADDR` is set (e.g. `127.0.0.1:5000`), or
-//! - A serial port configured via `RTK_SERIAL_PORT` (default auto-scan of
-//!   `/dev/ttyACM0..3` and `/dev/ttyUSB0..3` at `RTK_BAUD` or `115200` baud).
+//! - A serial port configured via `RTK_SERIAL_PORT` (e.g. `COM3` on Windows or
+//!   `/dev/ttyACM0` on Linux), or auto-detected via `serialport::available_ports()`
+//!   at `RTK_BAUD` or `115200` baud.
 //!
 //! Parsed coordinates are written into `AppState.health.rtk_data`, which is
 //! automatically streamed to the frontend via `/api/sse/health-data` and `/gui`.
 
 use crate::state::AppState;
 use serde_json::json;
-use std::io::{BufRead, BufReader as StdBufReader};
-use std::path::Path;
+use serialport::{SerialPortInfo, SerialPortType};
+use std::io::Read;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
+use ublox::{
+    nav_pvt::common::NavPvtFlags, proto23::PacketRef, GnssFixType, Parser as UbxParser, UbxPacket,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct RtkFixState {
@@ -95,7 +99,7 @@ pub fn parse_nmea_sentence(line: &str, state: &mut RtkFixState) -> bool {
     }
     let body = trimmed.split('*').next().unwrap_or(trimmed);
     let fields: Vec<&str> = body.split(',').collect();
-    if fields.is_empty() || fields[0].len() < 6 {
+    if fields.is_empty() || !fields[0].is_ascii() || fields[0].len() < 6 {
         return false;
     }
 
@@ -194,105 +198,227 @@ async fn mark_rtk_error(state: &AppState, source: &str, err_msg: &str) {
     h.rtk_data.data_status = false;
 }
 
+fn select_preferred_serial_port(ports: &[SerialPortInfo]) -> Option<String> {
+    let mut usb_ports: Vec<&str> = ports
+        .iter()
+        .filter(|p| matches!(p.port_type, SerialPortType::UsbPort(_)))
+        .map(|p| p.port_name.as_str())
+        .collect();
+    usb_ports.sort_unstable();
+    if let Some(first) = usb_ports.first() {
+        return Some((*first).to_string());
+    }
+
+    let mut fallback_ports: Vec<&str> = ports
+        .iter()
+        .filter(|p| {
+            let name = p.port_name.as_str();
+            name.starts_with("/dev/ttyACM")
+                || name.starts_with("/dev/ttyUSB")
+                || (cfg!(target_os = "windows")
+                    && !matches!(p.port_type, SerialPortType::BluetoothPort))
+        })
+        .map(|p| p.port_name.as_str())
+        .collect();
+    fallback_ports.sort_unstable();
+    fallback_ports.first().map(|p| (*p).to_string())
+}
+
 fn find_serial_port() -> Option<String> {
     if let Ok(port) = std::env::var("RTK_SERIAL_PORT") {
         let trimmed = port.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).exists() {
+        if !trimmed.is_empty() {
             return Some(trimmed.to_string());
         }
     }
-    for prefix in ["/dev/ttyACM", "/dev/ttyUSB"] {
-        for idx in 0..4 {
-            let candidate = format!("{prefix}{idx}");
-            if Path::new(&candidate).exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
+    let ports = serialport::available_ports().ok()?;
+    select_preferred_serial_port(&ports)
 }
 
-async fn configure_serial_port(port: &str, baud: u32) {
-    #[cfg(target_os = "linux")]
-    {
-        let _ = tokio::process::Command::new("stty")
-            .args([
-                "-F",
-                port,
-                &baud.to_string(),
-                "raw",
-                "-echo",
-                "-hupcl",
-                "clocal",
-                "cread",
-                "min",
-                "1",
-                "time",
-                "5",
-            ])
-            .output()
-            .await;
+fn apply_ubx_packet(pkt: UbxPacket<'_>, state: &mut RtkFixState) -> bool {
+    let UbxPacket::Proto23(packet_ref) = pkt;
+    match packet_ref {
+        PacketRef::NavPvt(pvt) => {
+            let flags = pvt.flags();
+            let fix_ok = flags.contains(NavPvtFlags::GPS_FIX_OK)
+                && matches!(
+                    pvt.fix_type(),
+                    GnssFixType::Fix2D | GnssFixType::Fix3D | GnssFixType::GPSPlusDeadReckoning
+                );
+
+            state.fix = if !fix_ok {
+                "NO_GPS".to_string()
+            } else if flags.contains(NavPvtFlags::CARR_SOLN_FIXED)
+                || flags.contains(NavPvtFlags::CARR_SOLN_FLOAT)
+            {
+                "RTK".to_string()
+            } else {
+                "GPS".to_string()
+            };
+
+            state.satellites = pvt.num_satellites() as u32;
+            state.sd = (pvt.horizontal_accuracy() * 1000.0).round() / 1000.0;
+            if state.hdop == 0.0 {
+                state.hdop = pvt.pdop();
+            }
+
+            if fix_ok {
+                let lat = pvt.latitude();
+                let lon = pvt.longitude();
+                if lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0 {
+                    state.lat = Some((lat * 1e7).round() / 1e7);
+                    state.lon = Some((lon * 1e7).round() / 1e7);
+                }
+
+                let raw_hdg = if flags.contains(NavPvtFlags::HEAD_VEH_VALID) {
+                    pvt.heading_vehicle()
+                } else {
+                    pvt.heading_motion()
+                };
+                if raw_hdg.is_finite() {
+                    state.heading = ((raw_hdg % 360.0) + 360.0) % 360.0;
+                }
+            }
+            true
+        }
+        PacketRef::NavDop(dop) => {
+            let hdop = f64::from(dop.horizontal_dop());
+            if hdop.is_finite() && hdop > 0.0 {
+                state.hdop = hdop;
+                return true;
+            }
+            false
+        }
+        _ => false,
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (port, baud);
+}
+
+/// Streaming GNSS decoder supporting both binary UBX frames and ASCII NMEA-0183 lines.
+struct GnssStreamDecoder {
+    ubx_parser: UbxParser<ublox::FixedBuffer<4096>>,
+    nmea_buf: Vec<u8>,
+    nmea_active: bool,
+    fix_state: RtkFixState,
+}
+
+impl GnssStreamDecoder {
+    fn new() -> Self {
+        Self {
+            ubx_parser: ublox::ParserBuilder::new().with_fixed_buffer::<4096>(),
+            nmea_buf: Vec::with_capacity(256),
+            nmea_active: false,
+            fix_state: RtkFixState::default(),
+        }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) -> bool {
+        let mut changed = false;
+
+        let mut it = self.ubx_parser.consume_ubx(bytes);
+        while let Some(res) = it.next() {
+            if let Ok(pkt) = res {
+                if apply_ubx_packet(pkt, &mut self.fix_state) {
+                    changed = true;
+                }
+            }
+        }
+
+        for &b in bytes {
+            if b == b'$' {
+                self.nmea_buf.clear();
+                self.nmea_buf.push(b);
+                self.nmea_active = true;
+            } else if self.nmea_active {
+                if b == b'\n' {
+                    let line = String::from_utf8_lossy(&self.nmea_buf);
+                    if parse_nmea_sentence(&line, &mut self.fix_state) {
+                        changed = true;
+                    }
+                    self.nmea_buf.clear();
+                    self.nmea_active = false;
+                } else if (b.is_ascii_graphic() || b == b' ' || b == b'\r') && self.nmea_buf.len() < 512 {
+                    self.nmea_buf.push(b);
+                } else {
+                    self.nmea_buf.clear();
+                    self.nmea_active = false;
+                }
+            }
+        }
+
+        changed
     }
 }
 
 async fn read_nmea_stream<R: tokio::io::AsyncRead + Unpin>(
-    reader: R,
+    mut reader: R,
     app_state: &AppState,
     source_label: &str,
 ) {
-    let mut buf_reader = BufReader::new(reader);
-    let mut buf = Vec::with_capacity(512);
-    let mut fix_state = RtkFixState::default();
+    let mut decoder = GnssStreamDecoder::new();
+    let mut buf = [0u8; 1024];
     let mut last_emit = Instant::now() - Duration::from_secs(1);
 
     loop {
-        buf.clear();
-        match buf_reader.read_until(b'\n', &mut buf).await {
+        match reader.read(&mut buf).await {
             Ok(0) => break,
-            Ok(_) => {
-                let line = String::from_utf8_lossy(&buf);
-                if parse_nmea_sentence(&line, &mut fix_state)
-                    && last_emit.elapsed() >= Duration::from_millis(100)
-                {
+            Ok(n) => {
+                if decoder.feed(&buf[..n]) && last_emit.elapsed() >= Duration::from_millis(100) {
                     last_emit = Instant::now();
-                    publish_rtk_state(app_state, &fix_state, source_label).await;
+                    publish_rtk_state(app_state, &decoder.fix_state, source_label).await;
                 }
             }
             Err(e) => {
-                tracing::debug!(source = %source_label, error = %e, "NMEA stream read error");
+                tracing::debug!(source = %source_label, error = %e, "GNSS stream read error");
                 break;
             }
         }
     }
 }
 
-async fn read_serial_blocking(port: String, app_state: AppState) -> Result<(), String> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+async fn read_serial_blocking(
+    port: String,
+    baud: u32,
+    app_state: AppState,
+) -> Result<(), String> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<RtkFixState>(64);
     let port_for_thread = port.clone();
 
     let reader_handle = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let file = std::fs::File::open(&port_for_thread).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                format!("Permission denied on {port_for_thread} (add user to dialout group)")
-            } else {
-                format!("Failed to open {port_for_thread}: {e}")
-            }
-        })?;
+        let mut serial = serialport::new(&port_for_thread, baud)
+            .timeout(Duration::from_millis(200))
+            .open()
+            .map_err(|e| {
+                if e.kind() == serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied) {
+                    #[cfg(target_os = "linux")]
+                    {
+                        format!("Permission denied on {port_for_thread} (add user to dialout group)")
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        format!(
+                            "Permission denied on {port_for_thread} (port may be in use by another app)"
+                        )
+                    }
+                } else {
+                    format!("Failed to open {port_for_thread}: {e}")
+                }
+            })?;
 
-        let mut reader = StdBufReader::new(file);
-        let mut buf = Vec::with_capacity(512);
+        let mut decoder = GnssStreamDecoder::new();
+        let mut buf = [0u8; 1024];
+        let mut last_emit = Instant::now() - Duration::from_secs(1);
+
         loop {
-            buf.clear();
-            match reader.read_until(b'\n', &mut buf) {
-                Ok(0) => break,
-                Ok(_) => {
-                    let line = String::from_utf8_lossy(&buf).into_owned();
-                    if tx.blocking_send(line).is_err() {
-                        break;
+            match serial.read(&mut buf) {
+                Ok(0) => continue,
+                Ok(n) => {
+                    if decoder.feed(&buf[..n])
+                        && last_emit.elapsed() >= Duration::from_millis(100)
+                    {
+                        last_emit = Instant::now();
+                        if tx.blocking_send(decoder.fix_state.clone()).is_err() {
+                            break;
+                        }
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
@@ -302,15 +428,8 @@ async fn read_serial_blocking(port: String, app_state: AppState) -> Result<(), S
         Ok(())
     });
 
-    let mut fix_state = RtkFixState::default();
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
-    while let Some(line) = rx.recv().await {
-        if parse_nmea_sentence(&line, &mut fix_state)
-            && last_emit.elapsed() >= Duration::from_millis(100)
-        {
-            last_emit = Instant::now();
-            publish_rtk_state(&app_state, &fix_state, &port).await;
-        }
+    while let Some(fix_state) = rx.recv().await {
+        publish_rtk_state(&app_state, &fix_state, &port).await;
     }
 
     match reader_handle.await {
@@ -350,9 +469,8 @@ pub fn spawn(app_state: AppState) {
             }
 
             if let Some(port) = find_serial_port() {
-                configure_serial_port(&port, baud).await;
                 tracing::info!(port = %port, baud, "Connected to RTK serial receiver");
-                match read_serial_blocking(port.clone(), app_state.clone()).await {
+                match read_serial_blocking(port.clone(), baud, app_state.clone()).await {
                     Ok(()) => {
                         tracing::warn!(port = %port, "RTK serial receiver disconnected");
                         mark_rtk_error(&app_state, &port, "Serial receiver disconnected").await;
@@ -407,5 +525,29 @@ mod tests {
     fn test_checksum_verification() {
         assert!(verify_nmea_checksum("$GPHDT,123.4,T*31"));
         assert!(!verify_nmea_checksum("$GPHDT,123.4,T*FF"));
+    }
+
+    #[test]
+    fn test_select_preferred_serial_port_prefers_usb() {
+        let ports = vec![
+            SerialPortInfo {
+                port_name: "COM1".to_string(),
+                port_type: SerialPortType::Unknown,
+            },
+            SerialPortInfo {
+                port_name: "COM5".to_string(),
+                port_type: SerialPortType::UsbPort(serialport::UsbPortInfo {
+                    vid: 0x1546,
+                    pid: 0x01a8,
+                    serial_number: None,
+                    manufacturer: None,
+                    product: None,
+                }),
+            },
+        ];
+        assert_eq!(
+            select_preferred_serial_port(&ports).as_deref(),
+            Some("COM5")
+        );
     }
 }
