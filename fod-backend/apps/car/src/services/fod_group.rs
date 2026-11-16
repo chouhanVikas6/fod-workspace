@@ -152,6 +152,20 @@ impl FodGroupService for FodGroupServiceImpl {
                     let final_proto = match after {
                         Some(ug) => {
                             let proto_ug = ug.to_proto();
+                            let from_st = format!("{:?}", before.status).to_uppercase();
+                            let to_st = format!("{:?}", ug.status).to_uppercase();
+                            let _ = self
+                                .db
+                                .record_group_action(
+                                    res.mission_id,
+                                    res.group_id,
+                                    &from_st,
+                                    &to_st,
+                                    &actor,
+                                    decided_at,
+                                    &res.command_id,
+                                )
+                                .await;
                             let _ = self
                                 .db
                                 .append_change(2, &format!("{}:{}", res.mission_id, res.group_id))

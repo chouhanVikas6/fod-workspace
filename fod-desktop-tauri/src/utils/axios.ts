@@ -68,6 +68,29 @@ export default function axiosClient(config: any): Promise<any> {
       } else {
         bodyPayload = config.data;
       }
+
+      if (url.startsWith('/api/fod-group/') && typeof window !== 'undefined') {
+        try {
+          const rawUser = localStorage.getItem('USER_KEY');
+          const parsedUser = rawUser ? JSON.parse(rawUser) : null;
+          const actor =
+            parsedUser?.userName ||
+            parsedUser?.username ||
+            parsedUser?.firstName ||
+            null;
+          if (actor) {
+            if (Array.isArray(bodyPayload)) {
+              bodyPayload = bodyPayload.map((item) =>
+                item && typeof item === 'object' && !item.updatedBy
+                  ? { ...item, updatedBy: actor }
+                  : item
+              );
+            } else if (bodyPayload && typeof bodyPayload === 'object' && !bodyPayload.updatedBy) {
+              bodyPayload = { ...bodyPayload, updatedBy: actor };
+            }
+          }
+        } catch {}
+      }
     }
 
     return invoke<IpcResponse>('api_request', {

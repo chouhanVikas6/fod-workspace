@@ -82,6 +82,8 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
     let gid = g.group_id as i32;
     let mission_id = g.mission_id;
     let st = crate::services::proto_group_status_str(g.status);
+    let updated_by = g.updated_by.clone();
+    let decided_at_ms = g.decided_at_ms;
     let biggest_fod = g.biggest_fod;
     let biggest_fod_size = g.biggest_fod_size.map(|s| s as i32);
     let now = crate::services::now_naive();
@@ -203,7 +205,9 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
                 "message": {
                     "groupId": gid,
                     "missionId": mission_id,
-                    "status": st
+                    "status": st,
+                    "updatedBy": updated_by,
+                    "decidedAtMs": decided_at_ms
                 }
             }),
         );

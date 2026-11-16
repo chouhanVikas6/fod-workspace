@@ -9,7 +9,7 @@ import { handleServerError } from '@/utils/alerts';
 import { RootState } from '@/store';
 //@ts-ignore
 import notificationSound from '../assets/audio/notification.mp3';
-import { set_Terminate } from '@/store/slices/missionState-slice';
+import { pushOperationalAlert, set_Terminate } from '@/store/slices/missionState-slice';
 import { toast } from 'react-toastify';
 
 // Configuration
@@ -111,6 +111,18 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = EMPTY_
           return;
         }
         const gid = Number(groupId);
+        const actor = data.message?.updatedBy || 'Operator';
+        const decidedAtMs = Number(data.message?.decidedAtMs) || Date.now();
+        dispatch(
+          pushOperationalAlert({
+            id: `${gid}-${status}-${decidedAtMs}`,
+            groupId: gid,
+            missionId,
+            status,
+            updatedBy: actor,
+            timestampMs: decidedAtMs,
+          })
+        );
         switch (status) {
           case 'ACCEPTED':
             dispatch(accept_Fod(gid));

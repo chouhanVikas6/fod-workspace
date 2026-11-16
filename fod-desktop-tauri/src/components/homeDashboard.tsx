@@ -19,6 +19,9 @@ const HomeDashboard = () => {
   const missionDisplayId = useSelector(
     (state: RootState) => state.MissionState?.displayId
   );
+  const operationalAlerts = useSelector(
+    (state: RootState) => state.MissionState?.operationalAlerts || []
+  );
   const missionLabel = missionDisplayId ? `#${missionDisplayId}` : missionNumber || "—";
 
   // Live FOD data from Redux
@@ -316,50 +319,63 @@ const HomeDashboard = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 p-3">
-            {/* FOD detected */}
-            <div
-              className={`rounded-md border-l-2 border-[#E5A12B] p-3 ${cardBg}`}
-            >
-              <p className="text-xs font-semibold text-[#E5A12B]">
-                FOD DETECTED
-              </p>
+            {operationalAlerts.length === 0 ? (
+              <div
+                className={`rounded-md border-l-2 border-[#4C9FE8] p-3 ${cardBg}`}
+              >
+                <p className="text-xs font-semibold text-[#4C9FE8]">
+                  LIVE GROUP ACTIONS
+                </p>
+                <p className={`mt-1 text-xs ${primaryText}`}>
+                  FOD group status changes from Car, ATC, or operators will appear here in real time.
+                </p>
+                <p className={`mt-2 text-[10px] ${secondaryText}`}>Listening</p>
+              </div>
+            ) : (
+              operationalAlerts.map((alert: any) => {
+                const st = String(alert.status || "NEW").toUpperCase();
+                const style =
+                  st === "ACCEPTED"
+                    ? { border: "border-[#00B957]", text: "text-[#00B957]", title: "FOD CONFIRMED" }
+                    : st === "REJECTED"
+                    ? { border: "border-[#D51F32]", text: "text-[#D51F32]", title: "FOD REJECTED" }
+                    : st === "CLEARED"
+                    ? { border: "border-[#4C9FE8]", text: "text-[#4C9FE8]", title: "FOD CLEARED" }
+                    : { border: "border-[#E5A12B]", text: "text-[#E5A12B]", title: "FOD STATUS UPDATED" };
+                const timeStr = alert.timestampMs
+                  ? new Date(alert.timestampMs).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })
+                  : "";
 
-              <p className={`mt-1 text-xs ${primaryText}`}>
-                A new FOD detection alert will appear here.
-              </p>
-
-              <p className={`mt-2 text-[10px] ${secondaryText}`}>Placeholder</p>
-            </div>
-
-            {/* Device disconnected */}
-            <div
-              className={`rounded-md border-l-2 border-[#D51F32] p-3 ${cardBg}`}
-            >
-              <p className="text-xs font-semibold text-[#D51F32]">
-                DEVICE DISCONNECTED
-              </p>
-
-              <p className={`mt-1 text-xs ${primaryText}`}>
-                Device connection alerts will appear here.
-              </p>
-
-              <p className={`mt-2 text-[10px] ${secondaryText}`}>Placeholder</p>
-            </div>
-
-            {/* Mission status */}
-            <div
-              className={`rounded-md border-l-2 border-[#00B957] p-3 ${cardBg}`}
-            >
-              <p className="text-xs font-semibold text-[#00B957]">
-                MISSION STATUS
-              </p>
-
-              <p className={`mt-1 text-xs ${primaryText}`}>
-                Mission status notifications will appear here.
-              </p>
-
-              <p className={`mt-2 text-[10px] ${secondaryText}`}>Placeholder</p>
-            </div>
+                return (
+                  <div
+                    key={alert.id}
+                    className={`rounded-md border-l-2 ${style.border} p-3 ${cardBg}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className={`text-xs font-semibold ${style.text}`}>
+                        {style.title}
+                      </p>
+                      {timeStr && (
+                        <span className={`text-[10px] font-mono ${secondaryText}`}>
+                          {timeStr}
+                        </span>
+                      )}
+                    </div>
+                    <p className={`mt-1 text-xs ${primaryText}`}>
+                      FOD #{alert.groupId} marked as{" "}
+                      <span className="font-semibold">{st}</span>
+                    </p>
+                    <p className={`mt-1.5 text-[10px] ${secondaryText}`}>
+                      By {alert.updatedBy || "Operator"}
+                    </p>
+                  </div>
+                );
+              })
+            )}
           </div>
         </section>
       </div>
