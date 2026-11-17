@@ -234,7 +234,7 @@ const Filters = () => {
       </button>
 
       {isToolTipOpen && (
-        <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-32px)] bg-white dark:bg-[#1C222A] border border-slate-200 dark:border-[#454B53] text-slate-800 dark:text-white rounded-xl shadow-2xl p-4 z-30 animate-in fade-in duration-150">
+        <div className="absolute right-12 top-full mt-2 w-72 max-w-[calc(100vw-32px)] bg-white dark:bg-[#1C222A] border border-slate-200 dark:border-[#454B53] text-slate-800 dark:text-white rounded-xl shadow-2xl p-4 z-50 animate-in fade-in duration-150">
           <ClassForm
             classes={classes}
             formData={formData}

@@ -48,6 +48,7 @@ const Mission_Control_Reducer = createSlice({
 
       state.selectedQueue= updatedSelectedQueue; // Return a new state object with updated selectedQueue
     },
+    reset_MapState: () => initialState,
   },
 });
 
@@ -56,5 +57,6 @@ export const {
   set_Mapview,
   update_collector_location,
   set_selectedQueue,
+  reset_MapState,
 } = Mission_Control_Reducer.actions;
 export default Mission_Control_Reducer.reducer;

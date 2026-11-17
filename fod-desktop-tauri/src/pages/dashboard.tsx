@@ -2,7 +2,7 @@ import OperationSideBar from "@/components/OperationSideBar/OperationSideBar";
 import FodCategoryAndDetail from "@/components/fodCategoryAndDetail/fodCategoryAndDetail";
 import ClearedFodDetailView from "@/components/fodPanel/clearedFodDetailedView";
 import DetailedView from "@/components/fodPanel/fodDetailedView";
-import FodPanel from "@/components/fodPanel/fodPanel";
+import FodPanel, { useMissionFodSync } from "@/components/fodPanel/fodPanel";
 import Header from "@/components/layout/header/header";
 import Map from "@/components/map/map";
 import MissionSelector from "@/components/mission/missionSelecter";
@@ -10,8 +10,13 @@ import FodFinalReview from "@/components/webcam/fodFinalReview";
 import WebCam from "@/components/webcam/webcam";
 import useSocket from "@/hooks/useWebSocket";
 import { RootState } from "@/store";
-import { useState } from "react";
-import { useSelector } from "react-redux";
+import { reset_ClearedDetailedViewFod } from "@/store/slices/clearedFodDetailView-slice";
+import { reset_DetailedViewFod } from "@/store/slices/fodDetailesView-slice";
+import { reset_MapState } from "@/store/slices/mapReducer-slice";
+import { reset_SelectedFod } from "@/store/slices/selectedFod-slice";
+import { resetSideBarLists } from "@/store/slices/webCam-slice";
+import { useEffect, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import HomeDashboard from "@/components/homeDashboard";
 import MissionReport from "@/components/mission/missionReport";
 //@ts-ignore
@@ -22,8 +27,20 @@ const MissionControl = () => {
   // Real-time channel to the internal GUI socket server (fod alerts,
   // fodGroup status updates, mission terminate, health broadcasts).
   useSocket();
+  const dispatch = useDispatch();
   const [tab, setTab] = useState("dashboard");
   const missionState = useSelector((store: RootState) => store.MissionState);
+  useMissionFodSync(missionState?.missionNumber);
+
+  // Reset UI panels, drawers, modals, and active tab to defaults whenever a mission opens or changes.
+  useEffect(() => {
+    setTab("dashboard");
+    dispatch(reset_SelectedFod());
+    dispatch(reset_DetailedViewFod());
+    dispatch(reset_ClearedDetailedViewFod());
+    dispatch(resetSideBarLists());
+    dispatch(reset_MapState());
+  }, [missionState?.missionNumber, dispatch]);
   const webCamState = useSelector((store: RootState) => store.WebCam);
   const isSidebarVisible = useSelector(
     (store: RootState) => store.SelectedFod.isSidebarVisible,
@@ -105,7 +122,7 @@ const MissionControl = () => {
             <ClearedFodDetailView />
             {isOpen ? <DetailedView /> : <></>}
             {(tab === "dashboard" || isMapOpen) && (
-              <FodCategoryAndDetail />
+              <FodCategoryAndDetail key={missionState.missionNumber} />
             )}
           </div>
         </>

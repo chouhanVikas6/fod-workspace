@@ -4,11 +4,13 @@ import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import { useSSE } from "@/hooks/subscribeHealth";
 import { config } from "@/config/clientConfig";
+import axiosClient from "@/utils/axios";
 
 const HealthBar = () => {
   useSSE("/api/sse/health-data");
 
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+  const [atcConnected, setAtcConnected] = useState(false);
   const [selectedCam, setSelectedCam] = useState<{
     index: number;
     data: any;
@@ -16,6 +18,18 @@ const HealthBar = () => {
 
   const { latency, availableCommunication, RtkData, carData, AiHealth } =
     useSelector((state: RootState) => state.SystemHealth);
+  const atcHealth = useSelector((state: RootState) => state.BiteState.atcData);
+
+  useEffect(() => {
+    const checkAtc = () => {
+      axiosClient({ method: "GET", url: "/api/health/atc-status" })
+        .then((res) => setAtcConnected(Boolean(res?.data?.connected)))
+        .catch(() => setAtcConnected(false));
+    };
+    checkAtc();
+    const interval = setInterval(checkAtc, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
@@ -44,13 +58,26 @@ const HealthBar = () => {
     };
   }, []);
 
-  // COMM status
-  const isCommConnected = Boolean(
+  // COMM status: prefer Car link, fall back to ATC when Car is unavailable
+  const isCarComm = Boolean(
     latency?.connected ||
       (availableCommunication as any[])?.some(
         (c: any) => c?.type === "car" || c?.type?.startsWith("car"),
       ),
   );
+  const isAtcComm = Boolean(
+    atcConnected ||
+      atcHealth?.connected ||
+      (availableCommunication as any[])?.some(
+        (c: any) => c?.type === "atc" || c?.type?.startsWith("atc"),
+      ),
+  );
+  const isCommConnected = isCarComm || isAtcComm;
+  const commLinkLabel = isCarComm
+    ? "Car (Primary)"
+    : isAtcComm
+      ? "ATC (Fallback)"
+      : "Offline";
 
   const commStatus = isCommConnected ? "ok" : "error";
 
@@ -300,10 +327,20 @@ const HealthBar = () => {
           <div className="space-y-2">
             <div className="flex justify-between gap-3">
               <span className="text-slate-500 dark:text-[#8C939C]">
+                Active Link:
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                {commLinkLabel}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-500 dark:text-[#8C939C]">
                 Ping / Latency:
               </span>
               <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
-                {latency?.ping != null ? `${latency.ping} ms` : "—"}
+                {latency?.connected && latency?.ping != null
+                  ? `${latency.ping} ms`
+                  : "—"}
               </span>
             </div>
             <div className="flex justify-between gap-3">
@@ -311,7 +348,10 @@ const HealthBar = () => {
                 Available nodes:
               </span>
               <span className="font-mono text-slate-700 dark:text-slate-300">
-                {(availableCommunication as any[])?.length || 0}
+                {Math.max(
+                  (availableCommunication as any[])?.length || 0,
+                  (isCarComm ? 1 : 0) + (isAtcComm ? 1 : 0),
+                )}
               </span>
             </div>
           </div>

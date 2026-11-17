@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState, startTransition } from "react";
+import React, { useEffect, useRef, startTransition } from "react";
 import FilterBar from "./filterBar";
 import FodDisplay from "./fodDisplay";
 import { useDispatch, useSelector } from "react-redux";
-import { syncFod, resetFods } from "@/store/slices/fodReducer-slice";
+import { syncFod, resetFods, setFodSyncStatus } from "@/store/slices/fodReducer-slice";
 import { CircleLoader } from "../commen/loader";
 import { RootState } from "@/store";
 import { invoke } from "@tauri-apps/api/core";
@@ -14,11 +14,11 @@ const DEBOUNCE_MS = 250;
 const MAX_WAIT_MS = 500;
 const CHUNK_FLUSH_DELAY_MS = 100;
 
-const FodPanel = ({ open }) => {
-  const [fodLoading, setFodLoading] = useState(true);
-  const [streamingCount, setStreamingCount] = useState(0);
-  const missionNumber = useSelector((store: RootState) => store.MissionState.missionNumber);
-  const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
+/**
+ * Keeps FOD groups synced for the active mission across view/tab switches.
+ * Mounted once at the MissionControl level so toggling Home/Alerts never resets or re-syncs.
+ */
+export const useMissionFodSync = (missionNumber: number | string | null | undefined) => {
   const dispatch = useDispatch();
   const pendingMapRef = useRef<Map<string | number, any>>(new Map());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -27,8 +27,6 @@ const FodPanel = ({ open }) => {
   useEffect(() => {
     if (!missionNumber) return;
     dispatch(resetFods());
-    setFodLoading(true);
-    setStreamingCount(0);
     pendingMapRef.current.clear();
     firstQueuedAtRef.current = 0;
     let disposed = false;
@@ -49,7 +47,7 @@ const FodPanel = ({ open }) => {
       const pending = pendingMapRef.current;
       if (pending.size === 0) {
         firstQueuedAtRef.current = 0;
-        setStreamingCount(0);
+        dispatch(setFodSyncStatus({ streamingCount: 0 }));
         return;
       }
 
@@ -65,8 +63,7 @@ const FodPanel = ({ open }) => {
 
       startTransition(() => {
         dispatch(syncFod(chunk));
-        setFodLoading(false);
-        setStreamingCount(remaining);
+        dispatch(setFodSyncStatus({ fodsLoading: false, streamingCount: remaining }));
       });
 
       if (remaining > 0 && !disposed) {
@@ -93,7 +90,7 @@ const FodPanel = ({ open }) => {
         const rows = typeof data === "string" ? JSON.parse(data) : data;
         if (Array.isArray(rows)) {
           if (rows.length === 0) {
-            setFodLoading(false);
+            dispatch(setFodSyncStatus({ fodsLoading: false }));
             return;
           }
           const maxPending = config?.FodListsLimit ?? 25000;
@@ -145,9 +142,15 @@ const FodPanel = ({ open }) => {
       invoke("stop_retrive_stream", { subId }).catch(() => {});
     };
   }, [dispatch, missionNumber]);
+};
+
+const FodPanel = ({ open }) => {
+  const fodLoading = useSelector((store: RootState) => store.FodReducer.fodsLoading);
+  const streamingCount = useSelector((store: RootState) => store.FodReducer.streamingCount);
+  const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
 
   return (
-    <div className={`relative h-full w-full flex flex-col z-9 overflow-hidden ${isMapOpen || !open ? "hidden" : ""}`}>
+    <div className={`relative h-full w-full flex flex-col overflow-hidden ${isMapOpen || !open ? "hidden" : ""}`}>
       <div className="h-full w-full flex flex-col px-5 pt-3 pb-2 relative overflow-hidden">
         <div className="w-full shrink-0 mb-3 flex items-center justify-between gap-2">
           <div className="flex-1 min-w-0">

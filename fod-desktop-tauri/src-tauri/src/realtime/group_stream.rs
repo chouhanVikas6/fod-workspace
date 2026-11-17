@@ -161,7 +161,7 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
             } else if local_ver > incoming_ver {
                 // Collector has higher version than upstream; retain local and mark dirty so resolve pushes to upstream.
                 let _ = sqlx::query(
-                    r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2 AND COALESCE("dirty", 0) = 0"#,
+                    r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2 AND COALESCE("dirty", false) = false"#,
                 )
                 .bind(gid)
                 .bind(mission_id)

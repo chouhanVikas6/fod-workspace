@@ -37,6 +37,8 @@ export interface FodStateType {
   doubleAccepted:{
     [key: number]: boolean;
   };
+  fodsLoading: boolean;
+  streamingCount: number;
 }
 
 const { FodListsLimit } = config;
@@ -51,6 +53,8 @@ const initialState: FodStateType = {
   },
   fods: [],
   doubleAccepted: {},
+  fodsLoading: true,
+  streamingCount: 0,
 };
 
 function normalizeFodItem(item: any) {
@@ -261,13 +265,30 @@ const FodReducer = createSlice({
       const { payload: fodId } = action;
       state.doubleAccepted[fodId] = true;
     },
+    setFodSyncStatus: (state, action) => {
+      const { fodsLoading, streamingCount } = action.payload;
+      if (typeof fodsLoading === "boolean") {
+        state.fodsLoading = fodsLoading;
+      }
+      if (typeof streamingCount === "number") {
+        state.streamingCount = streamingCount;
+      }
+    },
     resetFods: (state) => {
       state.fods = [];
       state.fodMap = {};
       state.doubleAccepted = {};
+      state.fodsLoading = true;
+      state.streamingCount = 0;
+      state.filters = {
+        sortby: initialState.filters.sortby,
+        classes: [...initialState.filters.classes],
+        size: { ...initialState.filters.size },
+        groupStatus: initialState.filters.groupStatus,
+      };
     },
   },
 });
 
-export const { pushFod, syncFod, add_updateFod, accept_Fod, reject_Fod, set_ImageModal, add_ToClearedFod, undo_fod, add_FodsOnRefresh, set_SortBy, set_Class_Size, remove_Class, setDashboardStatus, doubleAccept, resetFods } = FodReducer.actions;
+export const { pushFod, syncFod, add_updateFod, accept_Fod, reject_Fod, set_ImageModal, add_ToClearedFod, undo_fod, add_FodsOnRefresh, set_SortBy, set_Class_Size, remove_Class, setDashboardStatus, doubleAccept, setFodSyncStatus, resetFods } = FodReducer.actions;
 export default FodReducer.reducer;
