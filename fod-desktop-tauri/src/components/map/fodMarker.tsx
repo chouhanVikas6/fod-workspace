@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import mapboxgl from "mapbox-gl";
+import { invoke } from "@tauri-apps/api/core";
 import { RootState, AppDispatch } from "@/store";
 import { updateSelectedFod } from "@/store/actions/SelectedFod";
 import { setSideBarVisibility } from "@/store/slices/selectedFod-slice";
-import { config } from "@/config/clientConfig";
 
 const THUMBNAIL_MIN_ZOOM = 20;
 const MAX_THUMBNAIL_MARKERS = 60;
+const thumbCache = new Map<string, string>();
+const MAX_THUMB_CACHE = 300;
 
 const STATUS_BORDER_COLOR: Record<string, string> = {
   CLEARED: "#22c55e",
@@ -175,14 +177,16 @@ const FodMarkers = ({
       if (thumbnailMarkersRef.current.has(key)) continue;
 
       const resolvedMissionId = fod.missionId ?? fod.mission_id ?? storeMissionNumber;
-      const imgSrc =
+      const inlineFrame =
         fod.frame && String(fod.frame).startsWith("data:")
-          ? fod.frame
-          : resolvedMissionId && fod.groupId !== undefined && fod.id !== undefined
-          ? `${config.ImagesBase}/${resolvedMissionId}/${fod.groupId}/${fod.id}.jpg`
+          ? String(fod.frame)
+          : null;
+      const relPath =
+        resolvedMissionId && fod.groupId !== undefined && fod.id !== undefined
+          ? `${resolvedMissionId}/${fod.groupId}/${fod.id}.jpg`
           : null;
 
-      if (!imgSrc) continue;
+      if (!inlineFrame && !relPath) continue;
 
       const borderColor = STATUS_BORDER_COLOR[fod.groupStatus] || STATUS_BORDER_COLOR.NEW;
       const el = document.createElement("div");
@@ -193,17 +197,19 @@ const FodMarkers = ({
         border-radius: 8px;
         overflow: hidden;
         border: 2px solid ${borderColor};
-        background: #0f172a;
+        background: transparent;
         box-shadow: 0 2px 8px rgba(0,0,0,0.45);
         cursor: pointer;
         position: relative;
+        display: none;
       `;
 
       const img = document.createElement("img");
-      img.src = imgSrc;
       img.alt = `FOD #${fod.groupId}`;
-      img.loading = "lazy";
       img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+      img.onload = () => {
+        el.style.display = "block";
+      };
       img.onerror = () => {
         el.style.display = "none";
       };
@@ -240,6 +246,23 @@ const FodMarkers = ({
         .setLngLat([loc.lon, loc.lat])
         .addTo(m);
       thumbnailMarkersRef.current.set(key, marker);
+
+      const initialUrl = inlineFrame || (relPath ? thumbCache.get(relPath) : undefined);
+      if (initialUrl) {
+        img.src = initialUrl;
+      } else if (relPath) {
+        invoke<string | null>("get_fod_image", { path: relPath })
+          .then((dataUrl) => {
+            if (!dataUrl || !thumbnailMarkersRef.current.has(key)) return;
+            if (thumbCache.size >= MAX_THUMB_CACHE) {
+              const oldest = thumbCache.keys().next().value;
+              if (oldest) thumbCache.delete(oldest);
+            }
+            thumbCache.set(relPath, dataUrl);
+            img.src = dataUrl;
+          })
+          .catch(() => {});
+      }
     }
   }, [map, groupRepresentatives, storeMissionNumber, dispatch, clearThumbnailMarkers]);
 
@@ -394,20 +417,27 @@ const FodMarkers = ({
   }, [fodGeoJson]);
 
   // Show biggest-FOD group thumbnails when zoomed in very close (zoom >= THUMBNAIL_MIN_ZOOM)
+  const syncThumbnailsRef = useRef(syncThumbnailMarkers);
+  syncThumbnailsRef.current = syncThumbnailMarkers;
+
+  useEffect(() => {
+    syncThumbnailMarkers();
+  }, [syncThumbnailMarkers]);
+
   useEffect(() => {
     const m = map.current;
     if (!m) return;
 
-    syncThumbnailMarkers();
-    m.on("zoomend", syncThumbnailMarkers);
-    m.on("moveend", syncThumbnailMarkers);
+    const handleViewChange = () => syncThumbnailsRef.current();
+    m.on("zoomend", handleViewChange);
+    m.on("moveend", handleViewChange);
 
     return () => {
-      m.off("zoomend", syncThumbnailMarkers);
-      m.off("moveend", syncThumbnailMarkers);
+      m.off("zoomend", handleViewChange);
+      m.off("moveend", handleViewChange);
       clearThumbnailMarkers();
     };
-  }, [map, syncThumbnailMarkers, clearThumbnailMarkers]);
+  }, [map, clearThumbnailMarkers]);
 
   return null;
 };

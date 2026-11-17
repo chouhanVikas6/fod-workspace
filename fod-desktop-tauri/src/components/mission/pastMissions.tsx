@@ -16,13 +16,27 @@ function getMissionDateInfo(mission: any): { key: string; label: string } {
     return { key, label };
 }
 
-// Mission list comes from MissionSelector's 1.5s poll so card stats stay live.
-const PastMission = ({ missions, setMission, selectedMission }: any) => {
-    const groupedMissions = useMemo(() => {
+// Mission list comes from MissionSelector's 2.5s poll so card stats stay live.
+const PastMission = ({
+    missions,
+    visibleLimit = 25,
+    onLoadMore,
+    setMission,
+    selectedMission,
+}: any) => {
+    const visibleMissions = useMemo(() => {
         if (!missions?.length) return [];
+        return missions.slice(0, visibleLimit);
+    }, [missions, visibleLimit]);
+
+    const hasMore = (missions?.length ?? 0) > visibleMissions.length;
+    const remainingCount = Math.max(0, (missions?.length ?? 0) - visibleMissions.length);
+
+    const groupedMissions = useMemo(() => {
+        if (!visibleMissions.length) return [];
         const groups: { key: string; label: string; items: { mission: any; index: number }[] }[] = [];
-        for (let i = 0; i < missions.length; i++) {
-            const mission = missions[i];
+        for (let i = 0; i < visibleMissions.length; i++) {
+            const mission = visibleMissions[i];
             const { key, label } = getMissionDateInfo(mission);
             const last = groups[groups.length - 1];
             if (last && last.key === key) {
@@ -32,31 +46,42 @@ const PastMission = ({ missions, setMission, selectedMission }: any) => {
             }
         }
         return groups;
-    }, [missions]);
+    }, [visibleMissions]);
 
     return (
         <div className='flex-1 min-h-0 w-full flex flex-col justify-start items-stretch space-y-2.5 overflow-y-auto pr-1'>
-            {groupedMissions.length ?
-                groupedMissions.map((group) => (
-                    <React.Fragment key={group.key}>
-                        <div className="flex items-center gap-2 pt-1.5 pb-0.5 select-none">
-                            <div className="h-px flex-1 bg-slate-200 dark:bg-[#2E343D]" />
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-[#8C939C] shrink-0">
-                                {group.label}
-                            </span>
-                            <div className="h-px flex-1 bg-slate-200 dark:bg-[#2E343D]" />
-                        </div>
-                        {group.items.map(({ mission, index }) => (
-                            <MissionCard
-                                missionData={mission}
-                                key={mission.mission_id || index}
-                                index={index}
-                                {...{ selectedMission, setMission }}
-                            />
-                        ))}
-                    </React.Fragment>
-                ))
-                :
+            {groupedMissions.length ? (
+                <>
+                    {groupedMissions.map((group) => (
+                        <React.Fragment key={group.key}>
+                            <div className="flex items-center gap-2 pt-1.5 pb-0.5 select-none">
+                                <div className="h-px flex-1 bg-slate-200 dark:bg-[#2E343D]" />
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-[#8C939C] shrink-0">
+                                    {group.label}
+                                </span>
+                                <div className="h-px flex-1 bg-slate-200 dark:bg-[#2E343D]" />
+                            </div>
+                            {group.items.map(({ mission, index }) => (
+                                <MissionCard
+                                    missionData={mission}
+                                    key={mission.mission_id || index}
+                                    index={index}
+                                    {...{ selectedMission, setMission }}
+                                />
+                            ))}
+                        </React.Fragment>
+                    ))}
+                    {hasMore && onLoadMore && (
+                        <button
+                            type="button"
+                            onClick={onLoadMore}
+                            className="w-full py-2 mt-1 rounded-xl border border-slate-200 dark:border-[#323842] bg-slate-50 hover:bg-slate-100 dark:bg-[#22262D] dark:hover:bg-[#2B3038] text-xs font-semibold text-[#4C9FE8] transition-colors cursor-pointer shrink-0"
+                        >
+                            Load More ({Math.min(25, remainingCount)} of {remainingCount} remaining)
+                        </button>
+                    )}
+                </>
+            ) : (
                 <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 dark:border-[#323842] bg-slate-50/70 dark:bg-[#22262D]/60 px-4 py-10 text-center">
                     <div className="w-11 h-11 rounded-full bg-slate-100 dark:bg-[#2A3038] flex items-center justify-center text-slate-400 dark:text-slate-500 mb-3">
                         <FolderOpen size={20} strokeWidth={1.8} />
@@ -68,7 +93,7 @@ const PastMission = ({ missions, setMission, selectedMission }: any) => {
                         Start a new mission above or wait for missions to sync.
                     </p>
                 </div>
-            }
+            )}
         </div>
     );
 };

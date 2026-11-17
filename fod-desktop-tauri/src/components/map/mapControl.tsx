@@ -3,9 +3,8 @@ import React, { useEffect, useState } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 import { useSelector } from "react-redux";
+import { SlidersHorizontal, Crosshair } from "lucide-react";
 
-import TrackIcon from "@/assets/images/svg/map/trackbutton.svg";
-import FilterIcon from "@/assets/images/svg/map/filter.svg";
 import HeadingIcon from "@/assets/images/svg/map/heading.svg";
 
 import {
@@ -284,22 +283,12 @@ const MapControls = ({ map }: { map: any }) => {
             title="Filter FODs"
             className={`w-11 h-11 flex items-center justify-center rounded-xl filter-button transition-all active:scale-95 cursor-pointer ${
               isfilterboxOpen
-                ? "bg-[#4C9FE8] shadow-[0_2px_10px_rgba(76,159,232,0.45)]"
-                : "bg-slate-100 hover:bg-slate-200/80 dark:bg-white/10 dark:hover:bg-white/20"
+                ? "bg-[#4C9FE8] text-white shadow-[0_2px_10px_rgba(76,159,232,0.45)]"
+                : "bg-slate-100 hover:bg-slate-200 border border-slate-200/80 dark:border-white/10 text-slate-700 dark:text-slate-200 dark:bg-white/10 dark:hover:bg-white/20"
             }`}
             onClick={toggle}
           >
-            <Image
-              src={FilterIcon}
-              alt="Filter"
-              width={44}
-              height={44}
-              className={`translate scale-[125%] transform-origin-center transition-all ${
-                isfilterboxOpen
-                  ? "brightness-100"
-                  : "brightness-0 opacity-70 dark:brightness-100 dark:opacity-100"
-              }`}
-            />
+            <SlidersHorizontal size={19} strokeWidth={2.2} />
           </button>
 
           {isfilterboxOpen && <FilterBox />}
@@ -311,25 +300,15 @@ const MapControls = ({ map }: { map: any }) => {
           title="Track Location / FOD"
           className={`w-11 h-11 flex items-center justify-center rounded-xl transition-all active:scale-95 cursor-pointer ${
             isFodTrackON
-              ? "bg-[#4C9FE8] shadow-[0_2px_10px_rgba(76,159,232,0.45)]"
-              : "bg-slate-100 hover:bg-slate-200/80 dark:bg-white/10 dark:hover:bg-white/20"
+              ? "bg-[#4C9FE8] text-white shadow-[0_2px_10px_rgba(76,159,232,0.45)]"
+              : "bg-slate-100 hover:bg-slate-200 border border-slate-200/80 dark:border-white/10 text-slate-700 dark:text-slate-200 dark:bg-white/10 dark:hover:bg-white/20"
           }`}
           onClick={() => {
             setGoToZoom(true);
             setIsFodTrackON(!isFodTrackON);
           }}
         >
-          <Image
-            src={TrackIcon}
-            alt="FOD tracking"
-            width={44}
-            height={44}
-            className={`translate scale-[140%] transform-origin-center mr-[1px] mt-[1px] transition-all ${
-              isFodTrackON
-                ? "brightness-100"
-                : "brightness-0 opacity-70 dark:brightness-100 dark:opacity-100"
-            }`}
-          />
+          <Crosshair size={20} strokeWidth={2.2} />
         </button>
 
         {/* 3. Heading */}

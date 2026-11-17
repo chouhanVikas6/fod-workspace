@@ -91,31 +91,48 @@ const MissionControl = () => {
             <OperationSideBar tab={tab} setTab={handleTab} />
 
             <div className="h-full flex-1 min-w-0 relative overflow-hidden">
-              {tab === "home" && !isMapOpen && (
-                <ErrorBoundary name="Home Dashboard">
-                  <HomeDashboard />
-                </ErrorBoundary>
-              )}
+              {/* Active non-map tab layer */}
+              <div
+                className={`relative h-full w-full ${
+                  isMapOpen
+                    ? "z-0 opacity-0 pointer-events-none invisible"
+                    : "z-10 opacity-100 pointer-events-auto visible"
+                }`}
+              >
+                {tab === "home" && !isMapOpen && (
+                  <ErrorBoundary name="Home Dashboard">
+                    <HomeDashboard />
+                  </ErrorBoundary>
+                )}
 
-              {tab === "dashboard" && (
-                <ErrorBoundary name="FOD Panel">
-                  <FodPanel open={true} />
-                </ErrorBoundary>
-              )}
+                {tab === "dashboard" && (
+                  <ErrorBoundary name="FOD Panel">
+                    <FodPanel open={true} />
+                  </ErrorBoundary>
+                )}
 
-              {tab === "reports" && !isMapOpen && (
-                <ErrorBoundary name="Mission Reports">
-                  <MissionReport />
-                </ErrorBoundary>
-              )}
+                {tab === "reports" && !isMapOpen && (
+                  <ErrorBoundary name="Mission Reports">
+                    <MissionReport />
+                  </ErrorBoundary>
+                )}
 
-              <Setting open={tab === "setting"} />
+                <Setting open={tab === "setting"} />
+              </div>
 
-              {isMapOpen && (
-                <ErrorBoundary name="Map">
+              {/* Persistent Map layer kept mounted in background */}
+              <div
+                aria-hidden={!isMapOpen}
+                className={`absolute inset-0 h-full w-full ${
+                  isMapOpen
+                    ? "z-20 opacity-100 pointer-events-auto visible"
+                    : "z-0 opacity-0 pointer-events-none invisible"
+                }`}
+              >
+                <ErrorBoundary name="Map" key={missionState.missionNumber}>
                   <Map />
                 </ErrorBoundary>
-              )}
+              </div>
             </div>
 
             {isFodFinalReviewOpen ? <FodFinalReview /> : <></>}

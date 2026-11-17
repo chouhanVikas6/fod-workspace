@@ -69,32 +69,34 @@ const FodDetail = () => {
   }, [safeFod]);
 
   return (
-    <div className="h-full w-full min-w-0 px-2 sm:px-3 py-2 sm:py-3 flex flex-col justify-between bg-white dark:bg-[#181C23] text-slate-700 dark:text-[#D9DDE2] font-semibold overflow-y-auto transition-colors">
-      <div className="w-full min-w-0 flex flex-col gap-2">
-        {/* Header */}
-        <div className="w-full flex justify-between items-center text-base sm:text-xl shrink-0 text-slate-900 dark:text-white">
-          <div className="flex items-center gap-1 min-w-0">
-            {!isFodFinalReviewOpen && (
-              <MdKeyboardArrowLeft
-                className="text-2xl shrink-0 cursor-pointer text-slate-600 dark:text-slate-300 hover:text-blue-500 transition-colors"
-                onClick={() => dispatch(close_SideBarFodDetail())}
-              />
-            )}
-
-            <div className="font-bold truncate">
-              {Fod_FodId(fod)}
-            </div>
-          </div>
-
-          {`${origin}` === "backend" ? (
-            <div className="w-12 sm:w-[70px] h-6 sm:h-[26px] bg-emerald-500 rounded shrink-0" />
-          ) : (
-            <div className="w-12 sm:w-[70px] h-6 sm:h-[26px] bg-amber-500 rounded shrink-0" />
+    <div className="h-full w-full min-w-0 px-2 sm:px-3 py-2 sm:py-3 flex flex-col gap-2 bg-white dark:bg-[#181C23] text-slate-700 dark:text-[#D9DDE2] font-semibold overflow-hidden transition-colors">
+      {/* Header */}
+      <div className="w-full flex justify-between items-center text-base sm:text-xl shrink-0 text-slate-900 dark:text-white">
+        <div className="flex items-center gap-1 min-w-0">
+          {!isFodFinalReviewOpen && (
+            <MdKeyboardArrowLeft
+              className="text-2xl shrink-0 cursor-pointer text-slate-600 dark:text-slate-300 hover:text-blue-500 transition-colors"
+              onClick={() => dispatch(close_SideBarFodDetail())}
+            />
           )}
+
+          <div className="font-bold truncate">
+            {Fod_FodId(fod)}
+          </div>
         </div>
 
-        <FodGrid />
+        {`${origin}` === "backend" ? (
+          <div className="w-12 sm:w-[70px] h-6 sm:h-[26px] bg-emerald-500 rounded shrink-0" />
+        ) : (
+          <div className="w-12 sm:w-[70px] h-6 sm:h-[26px] bg-amber-500 rounded shrink-0" />
+        )}
+      </div>
 
+      {/* Frames list fills remaining space above metadata */}
+      <FodGrid />
+
+      {/* Bottom section: FOD metadata + actions */}
+      <div className="w-full min-w-0 flex flex-col gap-2 shrink-0">
         {/* FOD information */}
         <div className="w-full min-w-0 flex flex-col gap-1.5 text-[11px] sm:text-xs shrink-0">
           <div className="w-full min-w-0 bg-slate-50 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] rounded-md flex justify-between items-center gap-2 px-2 sm:px-2.5 py-1.5">
@@ -160,11 +162,10 @@ const FodDetail = () => {
             </span>
           </div>
         </div>
-      </div>
 
-      {/* Bottom actions */}
-      {!isClearedFod && (
-        <div className="w-full min-w-0 flex flex-col gap-1.5 sm:gap-2 mt-auto pt-2 shrink-0">
+        {/* Bottom actions */}
+        {!isClearedFod && (
+          <div className="w-full min-w-0 flex flex-col gap-1.5 sm:gap-2 shrink-0">
           {/* FOD status buttons */}
           <div className="w-full h-[32px] sm:h-[36px] flex justify-between items-stretch gap-1 sm:gap-1.5">
             <button
@@ -241,6 +242,7 @@ const FodDetail = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
@@ -281,11 +283,11 @@ export const FodGrid = () => {
   }));
 
   return (
-    <div className="w-full h-[120px] sm:h-[150px] max-h-[160px] bg-slate-100 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] rounded-md p-1.5 overflow-y-auto space-y-1.5 shrink-0 transition-colors">
+    <div className="w-full flex-1 min-h-0 bg-slate-100 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] rounded-md p-1.5 overflow-y-auto space-y-2 transition-colors">
       {FodPointArr.map((f: any, index: number) => (
         <div
           key={index}
-          className={`w-full h-[105px] sm:h-[130px] rounded overflow-hidden cursor-pointer transition-colors ${
+          className={`w-full aspect-video rounded overflow-hidden cursor-pointer transition-colors ${
             index === 0
               ? "border-2 border-slate-900 dark:border-white"
               : selectedFrame?.id == f.id
@@ -296,10 +298,10 @@ export const FodGrid = () => {
         >
           <Image
             src={`${config.ImagesBase}/${missionState.missionNumber}/${f.groupId}/${f.id}.jpg`}
-            className="w-full h-full object-contain object-center"
+            className="w-full h-full object-cover object-center"
             alt="FOD frame"
-            width={100}
-            height={100}
+            width={320}
+            height={180}
           />
         </div>
       ))}
