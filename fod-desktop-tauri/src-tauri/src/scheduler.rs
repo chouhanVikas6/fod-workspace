@@ -358,6 +358,34 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
         targets.push(fallback_id);
     }
 
+    // Also include up to 4 recent missions + any unsynced missions (0 FodGroups locally)
+    // so missions 20, 19, 18, etc. stay synced even before the user clicks into them.
+    if let Ok(recent_ids) = sqlx::query_scalar::<_, i64>(
+        r#"SELECT "id" FROM "Mission" ORDER BY "id" DESC LIMIT 6"#,
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        for rid in recent_ids {
+            if !targets.contains(&rid) {
+                targets.push(rid);
+            }
+        }
+    }
+
+    if let Ok(unsynced_ids) = sqlx::query_scalar::<_, i64>(
+        r#"SELECT m."id" FROM "Mission" m LEFT JOIN "FodGroup" fg ON fg."missionId" = m."id" GROUP BY m."id" HAVING COUNT(fg."id") = 0 ORDER BY m."id" DESC LIMIT 3"#,
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        for uid in unsynced_ids {
+            if !targets.contains(&uid) {
+                targets.push(uid);
+            }
+        }
+    }
+
     for mid in targets {
         sync_fod(state, mid).await?;
     }

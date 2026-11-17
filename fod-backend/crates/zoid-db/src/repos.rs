@@ -552,13 +552,6 @@ impl Db {
             if fod.size > entry.1 {
                 *entry = (fod.id, fod.size);
             }
-
-            let _ = sqlx::query(
-                "INSERT INTO change_log (seq, entity, entity_key) VALUES (nextval('change_seq'), 3, $1)",
-            )
-            .bind(format!("{}:{}", mission_id, fod.id))
-            .execute(&mut *tx)
-            .await;
         }
 
         let mut updated_groups = Vec::with_capacity(group_biggest.len());
@@ -590,6 +583,14 @@ impl Db {
             .fetch_one(&mut *tx)
             .await
             .map_err(db_err)?;
+
+            let rep_fod_id = group_row.biggest_fod.unwrap_or(biggest_fod);
+            let _ = sqlx::query(
+                "INSERT INTO change_log (seq, entity, entity_key) VALUES (nextval('change_seq'), 3, $1)",
+            )
+            .bind(format!("{}:{}", mission_id, rep_fod_id))
+            .execute(&mut *tx)
+            .await;
 
             let _ = sqlx::query(
                 "INSERT INTO change_log (seq, entity, entity_key) VALUES (nextval('change_seq'), 2, $1)",

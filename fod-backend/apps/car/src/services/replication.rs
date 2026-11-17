@@ -126,12 +126,19 @@ impl ReplicationService for ReplicationServiceImpl {
 
         let output_stream = async_stream::try_stream! {
             let mut replica_cursor: i64 = 0;
+            let mut priority_batches: std::collections::VecDeque<ChangeBatch> = std::collections::VecDeque::new();
 
             // Wait for Hello message from replica
             if let Some(first_msg) = in_stream.next().await {
                 let msg = first_msg.map_err(|e| Status::internal(e.to_string()))?;
                 if let Some(ReplicaMsg::Hello(hello)) = msg.msg {
                     replica_cursor = hello.cursor;
+                    tracing::info!(
+                        "Replica '{}' connected (cursor={}, head_seq={})",
+                        hello.node_id,
+                        replica_cursor,
+                        head_seq
+                    );
                     yield PrimaryMessage {
                         msg: Some(PrimaryMsg::Welcome(Welcome {
                             primary_node_id: primary_node_id.clone(),
@@ -141,85 +148,70 @@ impl ReplicationService for ReplicationServiceImpl {
                         })),
                     };
 
-                    // Catch up replica from its cursor to head_seq
-                    while replica_cursor < head_seq {
-                        let change_rows = db.get_changes_since(replica_cursor, 200).await.unwrap_or_default();
-                        if change_rows.is_empty() {
-                            break;
+                    // Queue priority snapshot of recent missions + their groups & biggest FODs
+                    // so recent missions (e.g. 20, 19, 18) are populated on ATC immediately
+                    // without waiting behind historical change_log backlogs.
+                    if let Ok((missions, _)) = db.list_missions(10, 0).await {
+                        let mut m_changes = Vec::with_capacity(missions.len());
+                        for m in &missions {
+                            m_changes.push(Change {
+                                seq: replica_cursor,
+                                entity: Some(change::Entity::Mission(m.to_proto())),
+                            });
                         }
-                        let mut changes = Vec::with_capacity(change_rows.len());
-                        let mut last_seq = replica_cursor;
+                        if !m_changes.is_empty() {
+                            priority_batches.push_back(ChangeBatch {
+                                from_seq: replica_cursor,
+                                to_seq: replica_cursor,
+                                changes: m_changes,
+                            });
+                        }
 
-                        for row in change_rows {
-                            last_seq = row.seq;
-                            // Fetch corresponding entity
-                            let c = match row.entity {
-                                1 => {
-                                    if let Ok(id) = row.entity_key.parse::<i64>() {
-                                        db.get_mission(id).await.ok().flatten().map(|m| Change {
-                                            seq: row.seq,
-                                            entity: Some(change::Entity::Mission(m.to_proto())),
-                                        })
-                                    } else { None }
-                                }
-                                2 => {
-                                    let parts: Vec<&str> = row.entity_key.split(':').collect();
-                                    if parts.len() == 2 {
-                                        if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                                            db.get_fod_group(m, g).await.ok().flatten().map(|grp| Change {
-                                                seq: row.seq,
-                                                entity: Some(change::Entity::Group(grp.to_proto())),
-                                            })
-                                        } else { None }
-                                    } else { None }
-                                }
-                                3 => {
-                                    let parts: Vec<&str> = row.entity_key.split(':').collect();
-                                    let u_str = if parts.len() == 2 { parts[1] } else { &row.entity_key };
-                                    if let Ok(u) = Uuid::parse_str(u_str) {
-                                        db.get_fod(u).await.ok().flatten().map(|f| Change {
-                                            seq: row.seq,
+                        for m in missions.iter().take(6) {
+                            if let Ok(fods) = db.get_biggest_fods_for_mission(m.id).await {
+                                for chunk in fods.chunks(200) {
+                                    let changes: Vec<Change> = chunk
+                                        .iter()
+                                        .map(|f| Change {
+                                            seq: replica_cursor,
                                             entity: Some(change::Entity::Fod(f.to_proto())),
                                         })
-                                    } else { None }
+                                        .collect();
+                                    priority_batches.push_back(ChangeBatch {
+                                        from_seq: replica_cursor,
+                                        to_seq: replica_cursor,
+                                        changes,
+                                    });
                                 }
-                                4 => {
-                                    let parts: Vec<&str> = row.entity_key.split(':').collect();
-                                    if parts.len() == 2 {
-                                        if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                                            db.get_cleared_fod(m, g).await.ok().flatten().map(|c| Change {
-                                                seq: row.seq,
-                                                entity: Some(change::Entity::Cleared(c.to_proto())),
-                                            })
-                                        } else { None }
-                                    } else { None }
-                                }
-                                _ => None,
-                            };
-
-                            if let Some(ch) = c {
-                                changes.push(ch);
                             }
-                        }
-
-                        replica_cursor = last_seq;
-
-                        if !changes.is_empty() {
-                            yield PrimaryMessage {
-                                msg: Some(PrimaryMsg::Batch(ChangeBatch {
-                                    from_seq: changes.first().map(|c| c.seq).unwrap_or(replica_cursor),
-                                    to_seq: last_seq,
-                                    changes,
-                                })),
-                            };
+                            if let Ok((groups, _)) = db.list_fod_groups(m.id, 5000, 0).await {
+                                for chunk in groups.chunks(200) {
+                                    let changes: Vec<Change> = chunk
+                                        .iter()
+                                        .map(|g| Change {
+                                            seq: replica_cursor,
+                                            entity: Some(change::Entity::Group(g.to_proto())),
+                                        })
+                                        .collect();
+                                    priority_batches.push_back(ChangeBatch {
+                                        from_seq: replica_cursor,
+                                        to_seq: replica_cursor,
+                                        changes,
+                                    });
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Loop processing incoming replica messages or outgoing broadcast changes
+            let mut catchup_tick = tokio::time::interval(std::time::Duration::from_millis(25));
+            catchup_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            // Loop processing incoming replica messages, priority snapshot batches, and incremental catch-up
             loop {
                 tokio::select! {
+                    biased;
                     in_res = in_stream.next() => {
                         match in_res {
                             Some(Ok(rep_msg)) => {
@@ -232,84 +224,6 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 head_seq: current_head,
                                             })),
                                         };
-
-                                        while replica_cursor < current_head {
-                                            let change_rows = db.get_changes_since(replica_cursor, 200).await.unwrap_or_default();
-                                            if change_rows.is_empty() {
-                                                break;
-                                            }
-                                            let mut changes = Vec::with_capacity(change_rows.len());
-                                            let mut last_seq = replica_cursor;
-
-                                            for row in change_rows {
-                                                last_seq = row.seq;
-                                                let c = match row.entity {
-                                                    1 => {
-                                                        if let Ok(id) = row.entity_key.parse::<i64>() {
-                                                            db.get_mission(id).await.ok().flatten().map(|m| Change {
-                                                                seq: row.seq,
-                                                                entity: Some(change::Entity::Mission(m.to_proto())),
-                                                            })
-                                                        } else { None }
-                                                    }
-                                                    2 => {
-                                                        let parts: Vec<&str> = row.entity_key.split(':').collect();
-                                                        if parts.len() == 2 {
-                                                            if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                                                                db.get_fod_group(m, g).await.ok().flatten().map(|grp| Change {
-                                                                    seq: row.seq,
-                                                                    entity: Some(change::Entity::Group(grp.to_proto())),
-                                                                })
-                                                            } else { None }
-                                                        } else { None }
-                                                    }
-                                                    3 => {
-                                                        let parts: Vec<&str> = row.entity_key.split(':').collect();
-                                                        let u_str = if parts.len() == 2 { parts[1] } else { &row.entity_key };
-                                                        if let Ok(u) = Uuid::parse_str(u_str) {
-                                                            db.get_fod(u).await.ok().flatten().map(|f| Change {
-                                                                seq: row.seq,
-                                                                entity: Some(change::Entity::Fod(f.to_proto())),
-                                                            })
-                                                        } else { None }
-                                                    }
-                                                    4 => {
-                                                        let parts: Vec<&str> = row.entity_key.split(':').collect();
-                                                        if parts.len() == 2 {
-                                                            if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                                                                db.get_cleared_fod(m, g).await.ok().flatten().map(|c| Change {
-                                                                    seq: row.seq,
-                                                                    entity: Some(change::Entity::Cleared(c.to_proto())),
-                                                                })
-                                                            } else { None }
-                                                        } else { None }
-                                                    }
-                                                    5 => {
-                                                        db.get_user_by_username(&row.entity_key).await.ok().flatten().map(|u| Change {
-                                                            seq: row.seq,
-                                                            entity: Some(change::Entity::User(u.to_proto())),
-                                                        })
-                                                    }
-                                                    _ => None,
-                                                };
-
-                                                if let Some(ch) = c {
-                                                    changes.push(ch);
-                                                }
-                                            }
-
-                                            replica_cursor = last_seq;
-
-                                            if !changes.is_empty() {
-                                                yield PrimaryMessage {
-                                                    msg: Some(PrimaryMsg::Batch(ChangeBatch {
-                                                        from_seq: changes.first().map(|c| c.seq).unwrap_or(replica_cursor),
-                                                        to_seq: last_seq,
-                                                        changes,
-                                                    })),
-                                                };
-                                            }
-                                        }
                                     }
                                     Some(ReplicaMsg::Ack(ack)) => {
                                         replica_cursor = replica_cursor.max(ack.cursor);
@@ -453,6 +367,103 @@ impl ReplicationService for ReplicationServiceImpl {
                                         changes: vec![live_change],
                                     })),
                                 };
+                            }
+                        }
+                    }
+                    _ = catchup_tick.tick() => {
+                        // 1. Drain up to 3 priority snapshot batches (newest missions first)
+                        for _ in 0..3 {
+                            if let Some(batch) = priority_batches.pop_front() {
+                                yield PrimaryMessage {
+                                    msg: Some(PrimaryMsg::Batch(batch)),
+                                };
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // 2. If priority batches are done, stream incremental change_log batches
+                        if priority_batches.is_empty() {
+                            let current_head = db.get_head_seq().await.unwrap_or(0);
+                            for _ in 0..2 {
+                                if replica_cursor >= current_head {
+                                    break;
+                                }
+                                let change_rows = db.get_changes_since(replica_cursor, 200).await.unwrap_or_default();
+                                if change_rows.is_empty() {
+                                    break;
+                                }
+                                let mut changes = Vec::with_capacity(change_rows.len());
+                                let mut last_seq = replica_cursor;
+
+                                for row in change_rows {
+                                    last_seq = row.seq;
+                                    let c = match row.entity {
+                                        1 => {
+                                            if let Ok(id) = row.entity_key.parse::<i64>() {
+                                                db.get_mission(id).await.ok().flatten().map(|m| Change {
+                                                    seq: row.seq,
+                                                    entity: Some(change::Entity::Mission(m.to_proto())),
+                                                })
+                                            } else { None }
+                                        }
+                                        2 => {
+                                            let parts: Vec<&str> = row.entity_key.split(':').collect();
+                                            if parts.len() == 2 {
+                                                if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
+                                                    db.get_fod_group(m, g).await.ok().flatten().map(|grp| Change {
+                                                        seq: row.seq,
+                                                        entity: Some(change::Entity::Group(grp.to_proto())),
+                                                    })
+                                                } else { None }
+                                            } else { None }
+                                        }
+                                        3 => {
+                                            let parts: Vec<&str> = row.entity_key.split(':').collect();
+                                            let u_str = if parts.len() == 2 { parts[1] } else { &row.entity_key };
+                                            if let Ok(u) = Uuid::parse_str(u_str) {
+                                                db.get_fod(u).await.ok().flatten().map(|f| Change {
+                                                    seq: row.seq,
+                                                    entity: Some(change::Entity::Fod(f.to_proto())),
+                                                })
+                                            } else { None }
+                                        }
+                                        4 => {
+                                            let parts: Vec<&str> = row.entity_key.split(':').collect();
+                                            if parts.len() == 2 {
+                                                if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
+                                                    db.get_cleared_fod(m, g).await.ok().flatten().map(|c| Change {
+                                                        seq: row.seq,
+                                                        entity: Some(change::Entity::Cleared(c.to_proto())),
+                                                    })
+                                                } else { None }
+                                            } else { None }
+                                        }
+                                        5 => {
+                                            db.get_user_by_username(&row.entity_key).await.ok().flatten().map(|u| Change {
+                                                seq: row.seq,
+                                                entity: Some(change::Entity::User(u.to_proto())),
+                                            })
+                                        }
+                                        _ => None,
+                                    };
+
+                                    if let Some(ch) = c {
+                                        changes.push(ch);
+                                    }
+                                }
+
+                                replica_cursor = last_seq;
+
+                                if !changes.is_empty() {
+                                    yield PrimaryMessage {
+                                        msg: Some(PrimaryMsg::Batch(ChangeBatch {
+                                            from_seq: changes.first().map(|c| c.seq).unwrap_or(replica_cursor),
+                                            to_seq: last_seq,
+                                            changes,
+                                        })),
+                                    };
+                                }
                             }
                         }
                     }

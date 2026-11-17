@@ -87,7 +87,7 @@ impl SyncClient {
                         .await
                         .unwrap_or(0);
 
-                    let (out_tx, out_rx) = mpsc::channel::<ReplicaMessage>(100);
+                    let (out_tx, out_rx) = mpsc::channel::<ReplicaMessage>(4096);
 
                     // Send initial Hello
                     let hello_msg = ReplicaMessage {
@@ -98,21 +98,20 @@ impl SyncClient {
                             cursor,
                         })),
                     };
-                    let _ = out_tx.send(hello_msg).await;
-
-                    // Immediately push any offline/dirty groups from ATC to Car!
-                    if let Ok(dirty_groups) = self.db.list_dirty_fod_groups(200).await {
-                        for dg in dirty_groups {
-                            let _ = out_tx.send(ReplicaMessage {
-                                msg: Some(ReplicaMsg::GroupPush(dg.to_proto())),
-                            }).await;
-                        }
-                    }
+                    let _ = out_tx.try_send(hello_msg);
 
                     let in_stream_req = Request::new(ReceiverStream::new(out_rx));
 
                     match client.session(in_stream_req).await {
                         Ok(resp) => {
+                            // Push any offline/dirty groups from ATC to Car after session is open
+                            if let Ok(dirty_groups) = self.db.list_dirty_fod_groups(200).await {
+                                for dg in dirty_groups {
+                                    let _ = out_tx.try_send(ReplicaMessage {
+                                        msg: Some(ReplicaMsg::GroupPush(dg.to_proto())),
+                                    });
+                                }
+                            }
                             let mut in_stream = resp.into_inner();
                             let mut ping_interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -388,7 +387,7 @@ impl SyncClient {
                         cursor: batch.to_seq,
                     })),
                 };
-                let _ = out_tx.send(ack_msg).await;
+                let _ = out_tx.try_send(ack_msg);
             }
             Some(PrimaryMsg::GroupAck(ack)) => {
                 tracing::info!(
