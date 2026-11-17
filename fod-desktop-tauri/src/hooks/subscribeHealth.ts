@@ -18,8 +18,13 @@ export const useSSE = (url: string) => {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
         if (parsed) {
           dispatch(update_SystemHealth(parsed));
-          if (parsed.car_health) {
-            dispatch(update_BiteState({ carData: parsed.car_health }));
+          if (parsed.car_health || parsed.atc_health) {
+            dispatch(
+              update_BiteState({
+                ...(parsed.car_health ? { carData: parsed.car_health } : {}),
+                ...(parsed.atc_health !== undefined ? { atcData: parsed.atc_health } : {}),
+              })
+            );
           }
         }
       } catch (error) {

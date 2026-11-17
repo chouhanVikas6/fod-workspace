@@ -9,6 +9,7 @@ import {
   terminateMission,
 } from "@/store/actions/MissionControls";
 import { toggle_Mapview } from "@/store/slices/mapReducer-slice";
+import { useTranslations } from "@/hooks/useTranslations";
 import { toast } from "react-toastify";
 
 import {
@@ -26,6 +27,7 @@ import { HiOutlineMap } from "react-icons/hi";
 
 const MissionControlPanel = ({ tab, setTab }: any) => {
   const dispatch = useDispatch<AppDispatch>();
+  const t = useTranslations("sidebar");
 
   const mission = useSelector((store: any) => store.MissionState);
 
@@ -179,7 +181,7 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
           }`}
         >
           <RxHome className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
-          <span className={navLabel}>Home</span>
+          <span className={navLabel}>{t("home")}</span>
         </button>
 
         {/* 2. SETUP */}
@@ -200,7 +202,7 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
           }`}
         >
           <RxGear className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
-          <span className={navLabel}>Setup</span>
+          <span className={navLabel}>{t("setup")}</span>
         </button>
 
         <div className={divider} />
@@ -223,7 +225,7 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
           }`}
         >
           <RxBell className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
-          <span className={navLabel}>Alerts</span>
+          <span className={navLabel}>{t("alerts")}</span>
         </button>
 
         {/* 4. MAP */}
@@ -237,7 +239,7 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
           }`}
         >
           <HiOutlineMap className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
-          <span className={navLabel}>Map</span>
+          <span className={navLabel}>{t("map")}</span>
         </button>
 
         {/* 5. REPORTS */}
@@ -258,7 +260,7 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
           }`}
         >
           <RxFileText className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
-          <span className={navLabel}>Reports</span>
+          <span className={navLabel}>{t("reports")}</span>
         </button>
       </div>
 

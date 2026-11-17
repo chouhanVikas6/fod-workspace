@@ -10,9 +10,11 @@ import MissionTemplate from "./missionTemplate";
 import MissionExplore from "./missionExplore";
 import MissionCard from "./missionCard";
 import { RootState } from "@/store";
+import { useTranslations } from "@/hooks/useTranslations";
 import { toast } from "react-toastify";
 
 const MissionSelector = () => {
+    const t = useTranslations("missions");
     const [currentScreen, setCurrentScreen] = useState("");
     const [loading, setLoading] = useState(true);
     const [missions, setMissions] = useState<any[]>([]);
@@ -115,7 +117,7 @@ const MissionSelector = () => {
                     onClick={startTemplateView}
                     className="w-full h-10 px-4 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] transition-all text-white font-bold text-sm flex items-center justify-center space-x-2 shadow cursor-pointer"
                 >
-                    <span>+ Start New Mission</span>
+                    <span>{t("start-new-mission")}</span>
                 </button>
 
                 {/* If an active mission is currently running, show it as a high priority card */}
@@ -128,10 +130,10 @@ const MissionSelector = () => {
                 {/* Previous Missions Header */}
                 <div className="flex items-center justify-between px-1 mt-4 mb-2.5 shrink-0">
                     <span className="text-[11px] font-semibold text-slate-500 dark:text-[#8C939C] uppercase tracking-wider">
-                        PREVIOUS MISSIONS
+                        {t("previous-missions")}
                     </span>
                     <span className="text-xs font-semibold text-[#4C9FE8] font-mono">
-                        {missions.length} total
+                        {missions.length} {t("total")}
                     </span>
                 </div>
 
@@ -164,7 +166,7 @@ const MissionSelector = () => {
                                 ZOID
                             </h1>
                             <p className="text-slate-500 dark:text-[#8C939C] text-xs mt-3 text-center max-w-sm leading-relaxed">
-                                Select a mission from the list to review it, or start a new mission.
+                                {t("select-prompt")}
                             </p>
                         </div>
 

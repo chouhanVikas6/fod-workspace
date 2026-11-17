@@ -1,12 +1,10 @@
 import { useSelector } from 'react-redux';
 import { RootState } from '@/store';
 import en from '../messages/en.json';
-import fr from '../messages/fr.json';
 import hindi from '../messages/hindi.json';
 
 const languages: Record<string, any> = {
   en,
-  fr,
   hindi,
 };
 

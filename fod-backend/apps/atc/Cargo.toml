@@ -15,6 +15,7 @@ anyhow = { workspace = true }
 grpc-core = { workspace = true }
 proto-defination = { workspace = true }
 zoid-core = { workspace = true }
+zoid-bite = { workspace = true }
 zoid-storage = { workspace = true }
 zoid-db = { workspace = true }
 zoid-replication = { workspace = true }

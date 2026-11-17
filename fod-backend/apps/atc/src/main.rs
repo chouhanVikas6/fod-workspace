@@ -1,3 +1,4 @@
+use proto_defination::bite::bite_service_server::BiteServiceServer;
 use proto_defination::cleared_fod::cleared_fod_service_server::ClearedFodServiceServer;
 use proto_defination::fod::fod_service_server::FodServiceServer;
 use proto_defination::fod_group::fod_group_service_server::FodGroupServiceServer;
@@ -15,10 +16,11 @@ mod services;
 mod sync_client;
 
 use services::{
-    AtcClearedFodServiceImpl, AtcFodGroupServiceImpl, AtcFodServiceImpl, AtcImageServiceImpl,
-    AtcMissionServiceImpl, AtcUserServiceImpl,
+    AtcBiteServiceImpl, AtcClearedFodServiceImpl, AtcFodGroupServiceImpl, AtcFodServiceImpl,
+    AtcImageServiceImpl, AtcMissionServiceImpl, AtcUserServiceImpl, spawn_health_collector,
 };
 use sync_client::SyncClient;
+use zoid_bite::BiteAggregator;
 use zoid_db::Db;
 use zoid_storage::{FrameStorage, StorageConfig};
 
@@ -57,7 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             tracing::warn!(
                 "Could not connect to database ({}): {}. Running with lazy pool if available.",
-                db_url, e
+                db_url,
+                e
             );
             Db::connect(&db_url, 2).await?
         }
@@ -71,8 +74,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (group_tx, _) = broadcast::channel(1000);
 
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx, user_rx, group_push_rx) =
-        SyncClient::new(car_url, db.clone(), node_id.clone(), group_tx.clone());
+    let (sync_client, cmd_rx, user_rx, group_push_rx) = SyncClient::new(
+        car_url.clone(),
+        db.clone(),
+        node_id.clone(),
+        group_tx.clone(),
+    );
     let group_push_tx = sync_client.group_push_sender();
     let user_tx = sync_client.user_sender();
     let sync_client_arc = Arc::new(sync_client);
@@ -83,7 +90,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
     });
 
+    // BITE Health Aggregator (ATC host + replicated Car health)
+    let bite = Arc::new(BiteAggregator::new());
+    spawn_health_collector(car_url, bite.clone());
+
     // Instantiate gRPC Services
+    let bite_svc = AtcBiteServiceImpl::new(bite);
     let fod_group_svc = AtcFodGroupServiceImpl::new(db.clone(), node_id, group_push_tx, group_tx);
     let fod_svc = AtcFodServiceImpl::new(db.clone());
     let cleared_fod_svc = AtcClearedFodServiceImpl::new(db.clone());
@@ -109,6 +121,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_serving::<ImageServiceServer<AtcImageServiceImpl>>()
         .await;
     health_reporter
+        .set_serving::<BiteServiceServer<AtcBiteServiceImpl>>()
+        .await;
+    health_reporter
         .set_serving::<UserServiceServer<AtcUserServiceImpl>>()
         .await;
 
@@ -119,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(grpc_core::cors_layer())
         .layer(tonic_web::GrpcWebLayer::new())
         .add_service(health_service)
+        .add_service(BiteServiceServer::new(bite_svc))
         .add_service(FodGroupServiceServer::new(fod_group_svc))
         .add_service(FodServiceServer::new(fod_svc))
         .add_service(ClearedFodServiceServer::new(cleared_fod_svc))

@@ -113,9 +113,56 @@ pub async fn health_data(
 /// GET car-backend bite state; `const { latency, ...biteState } = r.data.data || {}`
 /// — latency stays owned by the desktop's own heartbeat tracking.
 pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Value> {
-    if let Ok(mut client) = proto_defination::bite::bite_service_client::BiteServiceClient::connect(state.cfg.car_backend_url.clone()).await {
-        if let Ok(resp) = client.get_bite_state(tonic::Request::new(proto_defination::bite::GetBiteStateRequest {})).await {
-            let b = resp.into_inner();
+    let mut atc_health_val: Option<Value> = None;
+    let mut atc_bite_opt: Option<proto_defination::bite::BiteState> = None;
+
+    if state.cfg.atc_backend_url != state.cfg.car_backend_url {
+        if let Ok(mut atc_client) =
+            proto_defination::bite::bite_service_client::BiteServiceClient::connect(
+                state.cfg.atc_backend_url.clone(),
+            )
+            .await
+        {
+            if let Ok(resp) = atc_client
+                .get_bite_state(tonic::Request::new(
+                    proto_defination::bite::GetBiteStateRequest {},
+                ))
+                .await
+            {
+                let ab = resp.into_inner();
+                let atc_pc = ab.pc_nodes.get("atc-server").cloned();
+                atc_health_val = Some(json!({
+                    "connected": true,
+                    "temp": atc_pc.as_ref().map(|p| p.temperature_c).filter(|t| *t > 0.0),
+                    "memory_pct": atc_pc.as_ref().map(|p| p.memory_usage_percent).unwrap_or(0.0),
+                    "disk_pct": atc_pc.as_ref().map(|p| p.disk_usage_percent).unwrap_or(0.0),
+                    "cpu_pct": atc_pc.as_ref().map(|p| p.cpu_usage_percent).unwrap_or(0.0),
+                    "updatedAt": chrono::Utc::now().to_rfc3339(),
+                }));
+                atc_bite_opt = Some(ab);
+            }
+        }
+    }
+
+    let car_bite_opt = if let Ok(mut client) =
+        proto_defination::bite::bite_service_client::BiteServiceClient::connect(
+            state.cfg.car_backend_url.clone(),
+        )
+        .await
+    {
+        client
+            .get_bite_state(tonic::Request::new(
+                proto_defination::bite::GetBiteStateRequest {},
+            ))
+            .await
+            .ok()
+            .map(|r| r.into_inner())
+    } else {
+        None
+    };
+
+    if let Some(b) = car_bite_opt.or_else(|| atc_bite_opt.filter(|ab| ab.connected)) {
+        {
             let mut cameras_obj = serde_json::Map::new();
             for c in b.cameras {
                 cameras_obj.insert(c.cam_id.clone(), json!({
@@ -128,7 +175,11 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
                 }));
             }
             let mut pc_nodes_obj = serde_json::Map::new();
+            let mut first_car_pc: Option<proto_defination::bite::PcHealthMetrics> = None;
             for (k, v) in &b.pc_nodes {
+                if k != "atc-server" && first_car_pc.is_none() {
+                    first_car_pc = Some(v.clone());
+                }
                 pc_nodes_obj.insert(k.clone(), json!({
                     "cpuUsagePercent": v.cpu_usage_percent,
                     "memoryUsagePercent": v.memory_usage_percent,
@@ -136,11 +187,11 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
                     "temperatureC": v.temperature_c,
                 }));
             }
-            let pc = b.pc_nodes.values().next().cloned().unwrap_or(proto_defination::bite::PcHealthMetrics {
-                cpu_usage_percent: 15.0,
-                memory_usage_percent: 25.0,
-                disk_usage_percent: 30.0,
-                temperature_c: 45.0,
+            let pc = first_car_pc.unwrap_or(proto_defination::bite::PcHealthMetrics {
+                cpu_usage_percent: 0.0,
+                memory_usage_percent: 0.0,
+                disk_usage_percent: 0.0,
+                temperature_c: 0.0,
             });
             let p_gps = b.primary_gps.as_ref();
             let s_gps = b.secondary_gps.as_ref();
@@ -148,6 +199,8 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
                 "temp": pc.temperature_c,
                 "volt": 24.0,
                 "connection": b.connected,
+                "memory_pct": pc.memory_usage_percent,
+                "disk_pct": pc.disk_usage_percent,
                 "memory_gb": ((pc.memory_usage_percent / 100.0) * 32.0).round(),
                 "space_gb": (((100.0 - pc.disk_usage_percent) / 100.0) * 500.0).round(),
                 "rtk": {
@@ -198,9 +251,18 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
                 "cameras": Value::Object(cameras_obj),
                 "pcNodes": Value::Object(pc_nodes_obj),
                 "car_health": car_health,
+                "atc_health": atc_health_val,
                 "RtkData": rtk,
             }));
         }
+    }
+
+    if let Some(atc_h) = atc_health_val {
+        let rtk = state.health.read().await.rtk_data.clone();
+        return Some(json!({
+            "atc_health": atc_h,
+            "RtkData": rtk,
+        }));
     }
 
     let resp = state

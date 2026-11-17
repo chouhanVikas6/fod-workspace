@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/store';
 import { setTheme } from '@/store/slices/theme-slice';
 import { setLanguage } from '@/store/slices/language-slice';
+import { useTranslations } from '@/hooks/useTranslations';
 import { toast } from 'react-toastify';
 import notificationSound from '@/assets/audio/notification.mp3';
 
@@ -34,6 +35,7 @@ const DEFAULT_SETTINGS: GeneralSettingsState = {
 
 export default function General() {
   const dispatch = useDispatch();
+  const t = useTranslations('settings');
   const theme = useSelector((store: RootState) => store.theme.theme);
   const lang = useSelector((store: RootState) => store.language.lang);
   const isDark = theme === 'dark';
@@ -104,10 +106,10 @@ export default function General() {
         {/* Header */}
         <div className="mb-4">
           <h1 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
-            General
+            {t('general')}
           </h1>
           <p className={`text-xs mt-0.5 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
-            App preferences for this console
+            {t('general-subtitle')}
           </p>
         </div>
 
@@ -413,16 +415,16 @@ export default function General() {
               }`}
             >
               <h2 className={`text-xs font-semibold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                Language
+                {t('language-section')}
               </h2>
             </div>
 
             <div className="p-4 flex flex-col gap-3.5">
               {/* Language Selector */}
               <div className="flex items-center justify-between">
-                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Language</span>
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>{t('language-label')}</span>
                 <select
-                  value={lang}
+                  value={lang === 'hindi' ? 'hindi' : 'en'}
                   onChange={(e) => dispatch(setLanguage(e.target.value))}
                   className={`w-44 px-3 py-1.5 rounded-lg text-xs font-medium border outline-none cursor-pointer transition ${
                     isDark
@@ -430,17 +432,14 @@ export default function General() {
                       : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-blue-500'
                   }`}
                 >
-                  <option value="en">English (US)</option>
-                  <option value="en-gb">English (UK)</option>
+                  <option value="en">English</option>
                   <option value="hindi">Hindi (हिन्दी)</option>
-                  <option value="fr">French (Français)</option>
-                  <option value="de">German (Deutsch)</option>
                 </select>
               </div>
 
               {/* Date Format */}
               <div className="flex items-center justify-between">
-                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>Date format</span>
+                <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>{t('date-format')}</span>
                 <select
                   value={settings.dateFormat}
                   onChange={(e) => updateSetting('dateFormat', e.target.value)}
@@ -505,14 +504,14 @@ export default function General() {
               : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-700'
           }`}
         >
-          Reset to defaults
+          {t('reset-defaults')}
         </button>
         <button
           type="button"
           onClick={handleSave}
           className="px-4 py-2 rounded-lg bg-[#4C9FE8] hover:bg-[#4997db] text-white text-xs font-semibold shadow-xs active:scale-95 transition cursor-pointer"
         >
-          Save Changes
+          {t('save-changes')}
         </button>
       </div>
     </div>

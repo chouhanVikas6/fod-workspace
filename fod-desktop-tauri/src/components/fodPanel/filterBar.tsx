@@ -10,6 +10,7 @@ import {
 } from "@/store/slices/fodReducer-slice";
 
 import { RootState } from "@/store";
+import { useTranslations } from "@/hooks/useTranslations";
 import { RxChevronDown } from "react-icons/rx";
 
 const FilterBar = () => {
@@ -29,6 +30,7 @@ export default FilterBar;
 // SORT BY
 const SortBy = () => {
   const dispatch = useDispatch();
+  const t = useTranslations("fod");
 
   const { sortby } = useSelector(
     (state: RootState) => state.FodReducer.filters,
@@ -37,7 +39,7 @@ const SortBy = () => {
   return (
     <div className="flex items-center gap-2 shrink-0">
       <span className="text-xs font-medium text-slate-500 dark:text-[#A8B0BA]">
-        Sort By:
+        {t("sort-by")}
       </span>
 
       <div className="relative">
@@ -46,11 +48,11 @@ const SortBy = () => {
           value={sortby}
           className="bg-white dark:bg-[#181D24] text-slate-800 dark:text-white border border-slate-300 dark:border-[#2B323D] hover:border-slate-400 dark:hover:border-[#3E4755] rounded-lg pl-3 pr-7 py-1.5 text-xs font-semibold appearance-none cursor-pointer shadow-xs focus:outline-none focus:border-[#388AEB] transition-colors"
         >
-          <option value="latest">Latest</option>
-          <option value="oldest">Oldest</option>
-          <option value="biggestTosmallest">Size: Largest</option>
-          <option value="smallestTobiggest">Size: Smallest</option>
-          <option value="nearestFirst">Distance: Nearest</option>
+          <option value="latest">{t("latest")}</option>
+          <option value="oldest">{t("oldest")}</option>
+          <option value="biggestTosmallest">{t("size-largest")}</option>
+          <option value="smallestTobiggest">{t("size-smallest")}</option>
+          <option value="nearestFirst">{t("distance-nearest")}</option>
         </select>
 
         <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500 dark:text-[#7E8691]">
@@ -64,6 +66,7 @@ const SortBy = () => {
 // FOD STATUS TABS
 const FodStatusTabs = () => {
   const dispatch = useDispatch();
+  const t = useTranslations("fod");
 
   const { groupStatus } = useSelector(
     (state: RootState) => state.FodReducer.filters,
@@ -108,7 +111,7 @@ const FodStatusTabs = () => {
           isLeftActive ? activeTabStyle : inactiveTabStyle
         }`}
       >
-        FOD Left ({String(leftCount).padStart(2, "0")})
+        {t("fod-left")} ({String(leftCount).padStart(2, "0")})
       </button>
 
       <button
@@ -118,7 +121,7 @@ const FodStatusTabs = () => {
           !isLeftActive ? activeTabStyle : inactiveTabStyle
         }`}
       >
-        FOD Found ({String(foundCount).padStart(2, "0")})
+        {t("fod-found")} ({String(foundCount).padStart(2, "0")})
       </button>
     </div>
   );
@@ -127,6 +130,7 @@ const FodStatusTabs = () => {
 // FILTERS
 const Filters = () => {
   const dispatch = useDispatch();
+  const t = useTranslations("fod");
   const fods = useSelector((state: RootState) => state.FodReducer.fods) as any[];
 
   const fodSizeBounds = useMemo(() => {
@@ -226,7 +230,7 @@ const Filters = () => {
           strokeWidth={2.2}
           className="shrink-0"
         />
-        <span>Filter</span>
+        <span>{t("filter")}</span>
       </button>
 
       {isToolTipOpen && (

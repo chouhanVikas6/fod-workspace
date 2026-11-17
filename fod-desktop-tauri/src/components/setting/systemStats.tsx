@@ -9,6 +9,7 @@ export default function SystemStats() {
   const isDark = theme === 'dark';
 
   const bite = useSelector((state: RootState) => state.BiteState.carData);
+  const atcHealth = useSelector((state: RootState) => state.BiteState.atcData);
   const latency = useSelector((state: RootState) => state.SystemHealth.latency);
   const availableCommunication = useSelector(
     (state: RootState) => state.SystemHealth.availableCommunication
@@ -27,29 +28,38 @@ export default function SystemStats() {
   );
   const isAtcAvailable = Boolean(
     atcConnected ||
+      atcHealth?.connected ||
       (availableCommunication as any[])?.some((c: any) => c?.type === 'atc')
   );
 
-  // Live health metrics with fallback defaults
-  const temp = bite?.temp ?? 54;
-  const memoryUsedGb = bite?.memory_gb ?? 6.2;
-  const totalMemoryGb = 16.0;
-  const memoryPct = Math.round((memoryUsedGb / totalMemoryGb) * 100);
+  // Live Car health metrics (only shown when collector is connected to Car)
+  const hasCarTelemetry = isCarAvailable && Boolean(bite?.updatedAt && bite.updatedAt !== '1970-01-01T00:00:00.000Z');
+  const temp = hasCarTelemetry && typeof bite?.temp === 'number' && bite.temp > 0 ? bite.temp : null;
+  const memoryUsedGb = hasCarTelemetry ? (bite?.memory_gb ?? 0) : null;
+  const totalMemoryGb = 32.0;
+  const memoryPct =
+    hasCarTelemetry
+      ? Math.round(bite?.memory_pct ?? ((memoryUsedGb ?? 0) / totalMemoryGb) * 100)
+      : 0;
 
-  const freeStorageGb = bite?.space_gb ?? 612;
-  const totalStorageGb = 1024;
-  const usedStorageGb = totalStorageGb - freeStorageGb;
-  const storagePct = Math.round((usedStorageGb / totalStorageGb) * 100);
+  const freeStorageGb = hasCarTelemetry ? (bite?.space_gb ?? 0) : null;
+  const totalStorageGb = 500;
+  const usedStorageGb = freeStorageGb !== null ? Math.max(0, totalStorageGb - freeStorageGb) : null;
+  const storagePct =
+    hasCarTelemetry
+      ? Math.round(bite?.disk_pct ?? (((usedStorageGb ?? 0) / totalStorageGb) * 100))
+      : 0;
 
-  const pingMs = latency?.connected ? Math.max(12, Math.min(60, latency.ping || 28)) : 28;
-  const isOnline = latency?.connected ?? true;
+  const pingMs = latency?.connected ? Math.max(12, Math.min(200, latency.ping || 28)) : 0;
+  const isOnline = isCarAvailable;
 
   // Recent temperature history for the area line chart
-  const tempHistory = useMemo(() => [
-    48, 50, 49, 52, 51, 54, 52, 55, 53, 57, 56, 59, 57, 61, 58, 60, 58, 59, 57, temp,
-  ], [temp]);
+  const tempHistory = useMemo(() => {
+    const base = temp ?? 0;
+    return [base, base, base, base, base, base, base, base, base, base];
+  }, [temp]);
 
-  const peakTemp = Math.max(...tempHistory);
+  const peakTemp = temp !== null ? Math.max(...tempHistory) : null;
 
   const temperatureNodes = useMemo(
     () => [
@@ -57,18 +67,20 @@ export default function SystemStats() {
         id: 'car-server',
         name: 'Car Server',
         role: 'Vehicle Compute Node',
-        tempC: isCarAvailable ? temp : null,
+        tempC: temp,
         online: isCarAvailable,
       },
       {
         id: 'atc-server',
         name: 'ATC Server',
-        role: 'Tower / Ground Control',
-        tempC: null as number | null, // Expandable when ATC temperature telemetry is added
+        role: atcHealth
+          ? `Disk ${Math.round(atcHealth.disk_pct || 0)}% • Mem ${Math.round(atcHealth.memory_pct || 0)}%`
+          : 'Tower / Ground Control',
+        tempC: isAtcAvailable && typeof atcHealth?.temp === 'number' && atcHealth.temp > 0 ? atcHealth.temp : null,
         online: isAtcAvailable,
       },
     ],
-    [temp, isCarAvailable, isAtcAvailable]
+    [temp, isCarAvailable, isAtcAvailable, atcHealth]
   );
 
   const getTempBadge = (tempC: number | null, online: boolean) => {
@@ -212,63 +224,81 @@ const renderGaugeRing = (
       >
         {/* Top 4 Metric Gauge Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {/* Metric 1: Temperature */}
+          {/* Metric 1: Car Temperature */}
           <div
             className={`rounded-xl p-4 border flex items-center gap-3.5 transition-all ${
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
-            {renderGaugeRing((temp / 80) * 100, '#00B957', `${Math.round(temp)}°`)}
+            {renderGaugeRing(
+              temp !== null ? (temp / 100) * 100 : 0,
+              temp !== null ? '#00B957' : '#64748b',
+              temp !== null ? `${Math.round(temp)}°` : '—'
+            )}
             <div>
               <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
-                Temperature
+                Car Temperature
               </div>
               <div className={`text-lg font-bold tracking-tight mt-0.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                {temp}°C
+                {temp !== null ? `${temp}°C` : '—'}
               </div>
-              <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#00B957]/15 text-[#00B957]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00B957]" />
-                <span>Normal</span>
+              <div
+                className={`inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                  temp !== null
+                    ? 'bg-[#00B957]/15 text-[#00B957]'
+                    : 'bg-slate-500/15 text-slate-400'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${temp !== null ? 'bg-[#00B957]' : 'bg-slate-400'}`} />
+                <span>{temp !== null ? 'Normal' : isCarAvailable ? 'No telemetry' : 'Offline'}</span>
               </div>
             </div>
           </div>
 
-          {/* Metric 2: Memory */}
+          {/* Metric 2: Car Memory */}
           <div
             className={`rounded-xl p-4 border flex items-center gap-3.5 transition-all ${
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
-            {renderGaugeRing(memoryPct, '#4C9FE8', `${memoryPct}%`)}
+            {renderGaugeRing(
+              memoryPct,
+              hasCarTelemetry ? '#4C9FE8' : '#64748b',
+              hasCarTelemetry ? `${memoryPct}%` : '—'
+            )}
             <div>
               <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
-                Memory
+                Car Memory
               </div>
               <div className={`text-lg font-bold tracking-tight mt-0.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                {memoryUsedGb.toFixed(1)} GB
+                {memoryUsedGb !== null ? `${memoryUsedGb.toFixed(1)} GB` : '—'}
               </div>
               <div className={`text-[11px] mt-1 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
-                of {totalMemoryGb} GB
+                {hasCarTelemetry ? `of ${totalMemoryGb} GB` : 'Car disconnected'}
               </div>
             </div>
           </div>
 
-          {/* Metric 3: Storage */}
+          {/* Metric 3: Car Storage */}
           <div
             className={`rounded-xl p-4 border flex items-center gap-3.5 transition-all ${
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
-            {renderGaugeRing(storagePct, '#4C9FE8', `${storagePct}%`)}
+            {renderGaugeRing(
+              storagePct,
+              hasCarTelemetry ? '#4C9FE8' : '#64748b',
+              hasCarTelemetry ? `${storagePct}%` : '—'
+            )}
             <div>
               <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
-                Storage
+                Car Storage
               </div>
               <div className={`text-lg font-bold tracking-tight mt-0.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                {usedStorageGb} GB
+                {usedStorageGb !== null ? `${usedStorageGb} GB` : '—'}
               </div>
               <div className={`text-[11px] mt-1 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
-                {freeStorageGb} GB free
+                {freeStorageGb !== null ? `${freeStorageGb} GB free` : 'Car disconnected'}
               </div>
             </div>
           </div>
@@ -279,7 +309,7 @@ const renderGaugeRing = (
               isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
             }`}
           >
-            {renderGaugeRing(85, '#00B957', `${pingMs}ms`)}
+            {renderGaugeRing(isOnline ? 85 : 0, isOnline ? '#00B957' : '#64748b', isOnline ? `${pingMs}ms` : '—')}
             <div>
               <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
                 Network
@@ -288,7 +318,7 @@ const renderGaugeRing = (
                 {isOnline ? 'Online' : 'Offline'}
               </div>
               <div className={`text-[11px] mt-1 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
-                ↓ 42 • ↑ 11 Mbps
+                {isOnline ? `Ping ${pingMs} ms` : 'No vehicle link'}
               </div>
             </div>
           </div>
@@ -425,7 +455,7 @@ const renderGaugeRing = (
                 Car Server Temperature – last 60 min
               </h3>
               <span className={`text-xs font-medium ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}>
-                Peak {peakTemp}°C
+                {peakTemp !== null ? `Peak ${peakTemp}°C` : '—'}
               </span>
             </div>
 

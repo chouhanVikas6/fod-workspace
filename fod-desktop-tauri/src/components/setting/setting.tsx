@@ -4,6 +4,7 @@ import { RootState } from '@/store';
 import axiosClient from '@/utils/axios';
 import { config } from '@/config/clientConfig';
 import { toast } from 'react-toastify';
+import { useTranslations } from '@/hooks/useTranslations';
 
 import General from './general';
 import SystemStats from './systemStats';
@@ -27,6 +28,7 @@ interface SettingProps {
 }
 
 export default function Setting({ open }: SettingProps) {
+  const t = useTranslations('settings');
   const theme = useSelector((store: RootState) => store.theme.theme);
   const isDark = theme === 'dark';
 
@@ -117,7 +119,7 @@ export default function Setting({ open }: SettingProps) {
                 isDark ? 'text-white' : 'text-slate-900'
               }`}
             >
-              Settings
+              {t('settings')}
             </h2>
           </div>
 
@@ -150,7 +152,7 @@ export default function Setting({ open }: SettingProps) {
                   d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"
                 />
               </svg>
-              <span>General</span>
+              <span>{t('general')}</span>
             </button>
 
             {/* System Stats */}
@@ -180,7 +182,7 @@ export default function Setting({ open }: SettingProps) {
                   d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"
                 />
               </svg>
-              <span>System Stats</span>
+              <span>{t('system-stats')}</span>
             </button>
 
             {/* Mission Management */}
@@ -210,7 +212,7 @@ export default function Setting({ open }: SettingProps) {
                   d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z"
                 />
               </svg>
-              <span>Mission Management</span>
+              <span>{t('mission-management')}</span>
             </button>
 
             {/* User Profile */}
@@ -240,7 +242,7 @@ export default function Setting({ open }: SettingProps) {
                   d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
                 />
               </svg>
-              <span>User Profile</span>
+              <span>{t('user-profile')}</span>
             </button>
           </nav>
 
@@ -252,7 +254,7 @@ export default function Setting({ open }: SettingProps) {
                   isDark ? 'text-[#8E95A2]' : 'text-slate-500'
                 }`}
               >
-                ADMIN
+                {t('admin')}
               </span>
               <svg
                 className={`w-3.5 h-3.5 ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'}`}

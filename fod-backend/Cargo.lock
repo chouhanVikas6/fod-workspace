@@ -90,6 +90,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zoid-bite",
  "zoid-core",
  "zoid-db",
  "zoid-replication",

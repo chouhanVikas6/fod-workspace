@@ -1,5 +1,14 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+export interface AtcHealthData {
+    connected: boolean;
+    temp: number | null;
+    memory_pct: number;
+    disk_pct: number;
+    cpu_pct: number;
+    updatedAt?: string;
+}
+
 export interface BiteStateType {
     carData: {
         temp: number;
@@ -7,6 +16,8 @@ export interface BiteStateType {
         connection: boolean;
         memory_gb: number;
         space_gb: number;
+        memory_pct?: number;
+        disk_pct?: number;
         rtk: {
             primary: {
                 location: {
@@ -33,6 +44,7 @@ export interface BiteStateType {
         };
         updatedAt: string;
     };
+    atcData?: AtcHealthData | null;
 }
 
 const initialState: BiteStateType = {
@@ -67,7 +79,8 @@ const initialState: BiteStateType = {
             "updatedAt": "1970-01-01T00:00:00.000Z"
         },
         "updatedAt": "1970-01-01T00:00:00.000Z"
-    }
+    },
+    atcData: null,
 };
 
 const BiteStateReducer = createSlice({
@@ -75,8 +88,9 @@ const BiteStateReducer = createSlice({
     initialState,
     reducers: {
         update_BiteState: (state, action) => {
-            const { carData } = action.payload;
-            state.carData = carData;
+            const { carData, atcData } = action.payload;
+            if (carData) state.carData = carData;
+            if (atcData !== undefined) state.atcData = atcData;
         },
     },
 });
