@@ -16,8 +16,8 @@ mod services;
 mod sync_client;
 
 use services::{
-    AtcBiteServiceImpl, AtcClearedFodServiceImpl, AtcFodGroupServiceImpl, AtcFodServiceImpl,
-    AtcImageServiceImpl, AtcMissionServiceImpl, AtcUserServiceImpl, spawn_health_collector,
+    spawn_health_collector, AtcBiteServiceImpl, AtcClearedFodServiceImpl, AtcFodGroupServiceImpl,
+    AtcFodServiceImpl, AtcImageServiceImpl, AtcMissionServiceImpl, AtcUserServiceImpl,
 };
 use sync_client::SyncClient;
 use zoid_bite::BiteAggregator;
@@ -59,8 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             tracing::warn!(
                 "Could not connect to database ({}): {}. Running with lazy pool if available.",
-                db_url,
-                e
+                db_url, e
             );
             Db::connect(&db_url, 2).await?
         }
@@ -74,12 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (group_tx, _) = broadcast::channel(1000);
 
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx, user_rx, group_push_rx) = SyncClient::new(
-        car_url.clone(),
-        db.clone(),
-        node_id.clone(),
-        group_tx.clone(),
-    );
+    let (sync_client, cmd_rx, user_rx, group_push_rx) =
+        SyncClient::new(car_url.clone(), db.clone(), node_id.clone(), group_tx.clone());
     let group_push_tx = sync_client.group_push_sender();
     let user_tx = sync_client.user_sender();
     let sync_client_arc = Arc::new(sync_client);
