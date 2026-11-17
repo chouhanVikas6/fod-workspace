@@ -36,7 +36,9 @@ fn main() -> ExitCode {
         .status();
 
     match status {
-        Ok(s) if s.success() => println!("[car-clean] Database tables truncated (users preserved)."),
+        Ok(s) if s.success() => {
+            println!("[car-clean] Database tables truncated (users preserved).")
+        }
         Ok(s) => {
             eprintln!("[car-clean] psql failed with status: {s}");
             return ExitCode::FAILURE;
@@ -49,14 +51,23 @@ fn main() -> ExitCode {
 
     let frames_path = Path::new(&frames_dir);
     if frames_path.exists() {
-        println!("[car-clean] Removing frames directory: {}", frames_path.display());
+        println!(
+            "[car-clean] Removing frames directory: {}",
+            frames_path.display()
+        );
         if let Err(e) = fs::remove_dir_all(frames_path) {
-            eprintln!("[car-clean] Failed to remove {}: {e}", frames_path.display());
+            eprintln!(
+                "[car-clean] Failed to remove {}: {e}",
+                frames_path.display()
+            );
             return ExitCode::FAILURE;
         }
     }
     if let Err(e) = fs::create_dir_all(frames_path) {
-        eprintln!("[car-clean] Failed to recreate {}: {e}", frames_path.display());
+        eprintln!(
+            "[car-clean] Failed to recreate {}: {e}",
+            frames_path.display()
+        );
         return ExitCode::FAILURE;
     }
 
