@@ -86,6 +86,10 @@ const MissionSelector = () => {
             toast.error("Vehicle is not in communication");
             return;
         }
+        if (activeMission?.length > 0) {
+            toast.info("A live mission is already running. Join or terminate it first.");
+            return;
+        }
         setCurrentScreen('MissionTemplate');
     };
 
@@ -179,19 +183,16 @@ const MissionSelector = () => {
                     ? "bg-[#1A1E24] border-[#2E343D] shadow-lg"
                     : "bg-white border-slate-200/90 shadow-sm"
             }`}>
-                {/* + Start New Mission Primary Button */}
-                <button
-                    onClick={startTemplateView}
-                    className="w-full h-10 px-4 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] transition-all text-white font-bold text-sm flex items-center justify-center space-x-2 shadow cursor-pointer"
-                >
-                    <span>{t("start-new-mission")}</span>
-                </button>
-
-                {/* If an active mission is currently running, show it as a high priority card */}
-                {activeMission?.length > 0 && (
-                    <div className="mt-3">
-                        <MissionCard active={true} missionData={activeMission[0]} isCarLive={isCarLive} />
-                    </div>
+                {/* Show either Live Mission (Join) OR + Start New Mission */}
+                {activeMission?.length > 0 ? (
+                    <MissionCard active={true} missionData={activeMission[0]} isCarLive={isCarLive} />
+                ) : (
+                    <button
+                        onClick={startTemplateView}
+                        className="w-full h-10 px-4 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] transition-all text-white font-bold text-sm flex items-center justify-center space-x-2 shadow cursor-pointer"
+                    >
+                        <span>{t("start-new-mission")}</span>
+                    </button>
                 )}
 
                 {/* Previous Missions Header */}
@@ -356,14 +357,16 @@ const MissionSelector = () => {
                             </p>
                         </div>
 
-                        {/* Floating Action Button (+) */}
-                        <button
-                            onClick={startTemplateView}
-                            title="Start New Mission"
-                            className="absolute bottom-6 right-6 w-14 h-14 rounded-full border-2 border-[#4C9FE8] bg-transparent hover:bg-[#4C9FE8]/10 active:scale-95 flex items-center justify-center text-[#4C9FE8] shadow-lg transition-all cursor-pointer"
-                        >
-                            <span className="text-3xl font-light leading-none -mt-0.5">+</span>
-                        </button>
+                        {/* Floating Action Button (+) — hidden while a live mission is running */}
+                        {activeMission?.length === 0 && (
+                            <button
+                                onClick={startTemplateView}
+                                title="Start New Mission"
+                                className="absolute bottom-6 right-6 w-14 h-14 rounded-full border-2 border-[#4C9FE8] bg-transparent hover:bg-[#4C9FE8]/10 active:scale-95 flex items-center justify-center text-[#4C9FE8] shadow-lg transition-all cursor-pointer"
+                            >
+                                <span className="text-3xl font-light leading-none -mt-0.5">+</span>
+                            </button>
+                        )}
                     </div>
                 )}
             </div>

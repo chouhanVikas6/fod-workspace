@@ -329,13 +329,15 @@ pub async fn call_car_grpc(
         )).await {
             Ok(resp) => resp.into_inner(),
             Err(status) if status.code() == tonic::Code::AlreadyExists => {
-                tracing::warn!("Car backend reported mission already active, terminating previous and starting new");
-                let _ = client.terminate_mission(tonic::Request::new(
-                    proto_defination::mission_control::TerminateMissionRequest { mission_id: 0 },
-                )).await;
-                client.start_mission(tonic::Request::new(
-                    proto_defination::mission_control::StartMissionRequest { speed, pass },
-                )).await.ok()?.into_inner()
+                tracing::warn!("Car backend reported mission already active; rejecting start_mission");
+                return Some(json!({
+                    "statusCode": 409,
+                    "status": 409,
+                    "error": {
+                        "message": "A live mission is already active. Please join or terminate it first."
+                    },
+                    "message": "A live mission is already active. Please join or terminate it first."
+                }));
             }
             Err(e) => {
                 tracing::error!("start_mission failed: {e}");

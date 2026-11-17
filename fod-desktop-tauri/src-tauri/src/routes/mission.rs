@@ -781,6 +781,20 @@ async fn load_new(method: Method, State(s): State<AppState>, bytes: axum::body::
             },
         }
     }
+    let existing_active: Option<i64> = sqlx::query_scalar(
+        "SELECT \"id\" FROM \"Mission\" WHERE \"status\" = 'ACTIVE' LIMIT 1",
+    )
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten();
+    if existing_active.is_some() {
+        return err_json(
+            StatusCode::CONFLICT,
+            json!({ "error": "A live mission is already active. Please join or terminate it first." }),
+        );
+    }
+
     let mut data = serde_json::Map::new();
     for key in ["speed", "pass"] {
         if let Some(v) = body.get(key) {
