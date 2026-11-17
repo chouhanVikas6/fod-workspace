@@ -254,6 +254,7 @@ const EMBEDDED_ENV: &str = include_str!(concat!(env!("OUT_DIR"), "/embedded.env"
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     dotenvy::dotenv().ok();
+    let _ = dotenvy::from_path("../.env");
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             for candidate in [

@@ -329,26 +329,48 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
         }
     }
 
-    // Active mission if any, otherwise latest mission by createdAt (fallback 1)
+    // Sync active mission, currently viewed mission, and latest mission
     let active_id: Option<i64> = sqlx::query_scalar(
         r#"SELECT "id" FROM "Mission" WHERE "status" = 'ACTIVE' ORDER BY "createdAt" DESC LIMIT 1"#,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    let mission_id = match active_id {
-        Some(id) => id,
-        None => {
-            let latest: Option<i64> = sqlx::query_scalar(
-                r#"SELECT "id" FROM "Mission" ORDER BY "createdAt" DESC LIMIT 1"#,
-            )
-            .fetch_optional(&state.db)
-            .await?;
-            latest.unwrap_or(1)
-        }
-    };
-    sync_fod(state, mission_id).await?;
+    let latest_id: Option<i64> = sqlx::query_scalar(
+        r#"SELECT "id" FROM "Mission" ORDER BY "createdAt" DESC LIMIT 1"#,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let viewed_id = VIEWED_MISSION_ID.load(std::sync::atomic::Ordering::Relaxed);
+
+    let mut targets: Vec<i64> = Vec::with_capacity(3);
+    if viewed_id > 0 {
+        targets.push(viewed_id);
+    }
+    if let Some(id) = active_id
+        && !targets.contains(&id)
+    {
+        targets.push(id);
+    }
+    let fallback_id = latest_id.unwrap_or(1);
+    if !targets.contains(&fallback_id) {
+        targets.push(fallback_id);
+    }
+
+    for mid in targets {
+        sync_fod(state, mid).await?;
+    }
     Ok(())
+}
+
+static VIEWED_MISSION_ID: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(0);
+
+pub fn set_viewed_mission(mission_id: i64) {
+    if mission_id > 0 {
+        VIEWED_MISSION_ID.store(mission_id, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 static SYNC_FOD_IN_FLIGHT: std::sync::atomic::AtomicBool =
@@ -427,7 +449,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             .get("createdAt")
             .and_then(crate::services::parse_js_date)
             .unwrap_or(now);
-        let updated_at = g
+        let _updated_at = g
             .get("updatedAt")
             .and_then(crate::services::parse_js_date)
             .unwrap_or(now);
@@ -466,7 +488,7 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                 .bind(biggest_fod)
                 .bind(biggest_fod_size)
                 .bind(created)
-                .bind(updated_at)
+                .bind(now)
                 .execute(&state.db)
                 .await;
 
@@ -497,8 +519,13 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                     }
                 } else if local_dirty {
                     // Local operator decision in progress; retain local until resolved with upstream.
-                } else if incoming_ver > local_ver {
-                    // Case 2: received data has greater version than local -> replace
+                } else if incoming_ver > local_ver
+                    || (incoming_ver == local_ver
+                        && (local_g.status.to_string() != st
+                            || (biggest_fod.is_some()
+                                && local_g.biggest_fod_id.as_deref() != biggest_fod)))
+                {
+                    // Case 2: received data has greater version (or equal version with changed status/biggestFod) -> replace
                     let status_changed = local_g.status.to_string() != st;
                     let _ = sqlx::query(
                         r#"UPDATE "FodGroup" SET
@@ -558,8 +585,9 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         }
     }
 
-    // Sync biggest FOD entities from Car backend into Fod table
+    // Sync biggest FOD entities from Car/ATC backend into Fod table
     let biggest_fods = crate::services::fetch_biggest_fods_for_mission(state, mission_id).await;
+    let mut missing_images: Vec<(String, String, String, String)> = Vec::new();
     for f in biggest_fods {
         let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
         let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
@@ -618,8 +646,8 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             .await;
         }
 
-        // Cache frame image locally if available
-        if !f.image_sha256.is_empty() {
+        // Queue missing frame image for background fetch (Car -> ATC fallback)
+        if !f.image_sha256.is_empty() && missing_images.len() < 12 {
             let m_str = f.mission_id.to_string();
             let g_str = f.group_id.to_string();
             let img_file = std::path::Path::new("fod-images/mission")
@@ -627,11 +655,20 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
                 .join(&g_str)
                 .join(format!("{}.jpg", f.id));
             if !img_file.exists() {
-                if let Some(bytes) = crate::services::fetch_image_from_car(state, &f.image_sha256, false).await {
-                    let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &bytes).await;
-                }
+                missing_images.push((m_str, g_str, f.id, f.image_sha256));
             }
         }
+    }
+
+    if !missing_images.is_empty() {
+        let st = state.clone();
+        tokio::spawn(async move {
+            for (m_str, g_str, fod_id, sha) in missing_images {
+                if let Some(bytes) = crate::services::fetch_image_from_car(&st, &sha, false).await {
+                    let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &fod_id, &bytes).await;
+                }
+            }
+        });
     }
 
     Ok(())
@@ -931,7 +968,7 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
     // Prune users identified as deleted in delta sync
     for del in incoming.deleted_usernames {
         let _ = sqlx::query(
-            r#"DELETE FROM "User" WHERE ("username" = $1 OR LOWER("username") = LOWER($1)) AND COALESCE("dirty", 0) = 0"#,
+            r#"DELETE FROM "User" WHERE ("username" = $1 OR LOWER("username") = LOWER($1)) AND COALESCE("dirty", false) = false"#,
         )
         .bind(&del)
         .execute(&state.db)
@@ -941,7 +978,7 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
     // Full reconciliation: prune any local non-dirty user missing from upstream active users
     if let Some(active_names) = incoming.all_active_usernames.filter(|names| !names.is_empty()) {
         let local_users = sqlx::query_as::<_, (String, String)>(
-            r#"SELECT "id", "username" FROM "User" WHERE COALESCE("dirty", 0) = 0"#,
+            r#"SELECT "id", "username" FROM "User" WHERE COALESCE("dirty", false) = false"#,
         )
         .fetch_all(&state.db)
         .await
@@ -1000,7 +1037,7 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
                 "isActive" = EXCLUDED."isActive",
                 "role" = EXCLUDED."role",
                 "updatedAt" = EXCLUDED."updatedAt"
-            WHERE "User"."updatedAt" <= EXCLUDED."updatedAt" AND COALESCE("User"."dirty", 0) = 0
+            WHERE "User"."updatedAt" <= EXCLUDED."updatedAt" AND COALESCE("User"."dirty", false) = false
             "#,
         )
         .bind(id)

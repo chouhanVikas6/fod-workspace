@@ -15,25 +15,23 @@ pub fn spawn(state: AppState) {
     tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
         loop {
-            let endpoint_str = state.cfg.car_backend_url.clone();
-            tracing::info!(endpoint = %endpoint_str, "Connecting to Car backend gRPC StreamMissionEvents");
+            let primary = state.cfg.car_backend_url.clone();
+            let secondary = state.cfg.atc_backend_url.clone();
 
-            let endpoint = match tonic::transport::Endpoint::from_shared(endpoint_str.clone()) {
-                Ok(ep) => ep
-                    .connect_timeout(Duration::from_millis(1500))
-                    .tcp_keepalive(Some(Duration::from_secs(5)))
-                    .http2_keep_alive_interval(Duration::from_secs(2))
-                    .keep_alive_while_idle(true),
-                Err(e) => {
-                    tracing::warn!("Invalid car endpoint: {e}");
-                    tokio::time::sleep(backoff).await;
-                    continue;
+            let client_res = match connect_mission_stream_client(&primary).await {
+                Some(c) => Some((primary, c)),
+                None => {
+                    if secondary != primary {
+                        connect_mission_stream_client(&secondary).await.map(|c| (secondary, c))
+                    } else {
+                        None
+                    }
                 }
             };
 
-            match MissionControlServiceClient::connect(endpoint).await {
-                Ok(mut client) => {
-                    tracing::info!(endpoint = %endpoint_str, "Connected to Car StreamMissionEvents");
+            match client_res {
+                Some((endpoint_str, mut client)) => {
+                    tracing::info!(endpoint = %endpoint_str, "Connected to StreamMissionEvents");
                     backoff = Duration::from_secs(1);
 
                     match client.stream_mission_events(Request::new(MissionSubscriptionRequest { mission_id: 0 })).await {
@@ -54,12 +52,12 @@ pub fn spawn(state: AppState) {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to subscribe to StreamMissionEvents: {e}");
+                            tracing::warn!("Failed to subscribe to StreamMissionEvents on {endpoint_str}: {e}");
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::debug!("StreamMissionEvents connect failed: {e}");
+                None => {
+                    tracing::debug!("StreamMissionEvents connect failed on both primary and secondary");
                 }
             }
 
@@ -67,6 +65,17 @@ pub fn spawn(state: AppState) {
             backoff = (backoff * 2).min(Duration::from_secs(10));
         }
     });
+}
+
+async fn connect_mission_stream_client(
+    endpoint_str: &str,
+) -> Option<MissionControlServiceClient<tonic::transport::Channel>> {
+    let endpoint = tonic::transport::Endpoint::from_shared(endpoint_str.to_string()).ok()?
+        .connect_timeout(Duration::from_millis(1500))
+        .tcp_keepalive(Some(Duration::from_secs(5)))
+        .http2_keep_alive_interval(Duration::from_secs(2))
+        .keep_alive_while_idle(true);
+    MissionControlServiceClient::connect(endpoint).await.ok()
 }
 
 async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::Result<()> {

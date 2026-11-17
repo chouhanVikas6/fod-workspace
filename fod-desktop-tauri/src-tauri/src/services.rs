@@ -903,10 +903,12 @@ pub async fn fetch_image_from_car(
     thumbnail: bool,
 ) -> Option<Vec<u8>> {
     let prefix = if sha256.len() >= 2 { &sha256[0..2] } else { "xx" };
-    // Direct disk paths
+    // Direct disk paths (Car priority, then ATC fallback)
     for base in [
         std::path::Path::new("../fod-backend/apps/car/data/frames"),
         std::path::Path::new("/home/zoid/workspace/fod-backend/apps/car/data/frames"),
+        std::path::Path::new("../fod-backend/apps/atc/data/frames"),
+        std::path::Path::new("/home/zoid/workspace/fod-backend/apps/atc/data/frames"),
     ] {
         let candidate = if thumbnail {
             base.join(prefix).join("thumb").join(format!("{sha256}.jpg"))
@@ -925,9 +927,8 @@ pub async fn fetch_image_from_car(
         }
     }
 
-    // gRPC download from Car backend
-    let car_url = state.cfg.car_backend_url.clone();
-    let mut client = proto_defination::image::image_service_client::ImageServiceClient::connect(car_url).await.ok()?;
+    // gRPC download with Car priority and ATC fallback
+    let mut client = connect_image_client(state).await?;
     let stream_res = client.download_image(tonic::Request::new(
         proto_defination::image::ImageDownloadRequest {
             sha256: sha256.to_string(),
@@ -1523,7 +1524,7 @@ async fn create_fod_inner(state: &AppState, fod: &Value) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Image first if frame is present
+    // Image first if frame is present, otherwise fetch via imageSha256 (Car -> ATC fallback)
     if let Some(frame) = fod.get("frame").filter(|v| js_truthy(v)) {
         if let Some(bytes) = frame_to_bytes(frame) {
             let _ = crate::imagewriter::write_fod_jpeg(
@@ -1533,6 +1534,19 @@ async fn create_fod_inner(state: &AppState, fod: &Value) -> anyhow::Result<()> {
                 &bytes,
             )
             .await;
+        }
+    } else if let Some(sha) = fod.get("imageSha256").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        let m_seg = js_seg(fod.get("missionId"));
+        let g_seg = js_seg(fod.get("groupId"));
+        let f_seg = js_seg(fod.get("id"));
+        let img_file = std::path::Path::new("fod-images/mission")
+            .join(&m_seg)
+            .join(&g_seg)
+            .join(format!("{f_seg}.jpg"));
+        if !img_file.exists() {
+            if let Some(bytes) = fetch_image_from_car(state, sha, false).await {
+                let _ = crate::imagewriter::write_fod_jpeg(&m_seg, &g_seg, &f_seg, &bytes).await;
+            }
         }
     }
 

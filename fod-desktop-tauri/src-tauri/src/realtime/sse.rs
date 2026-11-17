@@ -359,6 +359,7 @@ pub async fn start_retrive_ipc_stream(state: AppState, sub_id: String, mission_i
     stop_retrive_ipc_stream(&state, &sub_id).await;
 
     if let Some(mid) = mission_id {
+        crate::scheduler::set_viewed_mission(mid);
         let st = state.clone();
         tokio::spawn(async move {
             if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
