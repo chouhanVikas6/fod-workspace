@@ -265,24 +265,31 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
         }));
     }
 
-    let resp = state
+    if let Ok(resp) = state
         .http
         .get(url)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(2))
         .send()
         .await
-        .ok()?
-        .error_for_status()
-        .ok()?;
-    let body: Value = resp.json().await.ok()?;
-    match body.get("data") {
-        Some(Value::Object(m)) => {
-            let mut m = m.clone();
-            m.remove("latency");
-            Some(Value::Object(m))
+        .and_then(|r| r.error_for_status())
+    {
+        if let Ok(body) = resp.json::<Value>().await {
+            return match body.get("data") {
+                Some(Value::Object(m)) => {
+                    let mut m = m.clone();
+                    m.remove("latency");
+                    Some(Value::Object(m))
+                }
+                _ => Some(json!({})),
+            };
         }
-        _ => Some(json!({})),
     }
+
+    let rtk = state.health.read().await.rtk_data.clone();
+    Some(json!({
+        "atc_health": { "connected": false },
+        "RtkData": rtk,
+    }))
 }
 
 // ---------------------------------------------------------------------------

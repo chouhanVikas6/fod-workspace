@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 
     let car_url = std::env::var("CAR_REPLICATION_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string());
+        .unwrap_or_else(|_| "http://192.168.0.176:50051".to_string());
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:1234@localhost:5432/zoid_atc".to_string());
     let frames_dir = std::env::var("FRAMES_DIR")

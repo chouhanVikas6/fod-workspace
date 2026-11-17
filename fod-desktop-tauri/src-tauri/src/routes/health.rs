@@ -25,14 +25,22 @@ pub fn router() -> Router<AppState> {
 
 async fn atc_status(State(state): State<AppState>) -> impl IntoResponse {
     let url = state.cfg.atc_backend_url.clone();
-    let addr = url.trim_start_matches("http://").trim_start_matches("https://");
-    let connected = tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        tokio::net::TcpStream::connect(addr),
-    )
+    let connected = tokio::time::timeout(std::time::Duration::from_millis(1000), async move {
+        let mut client =
+            proto_defination::bite::bite_service_client::BiteServiceClient::connect(url)
+                .await
+                .ok()?;
+        client
+            .get_bite_state(tonic::Request::new(
+                proto_defination::bite::GetBiteStateRequest {},
+            ))
+            .await
+            .ok()
+    })
     .await
-    .map(|r| r.is_ok())
-    .unwrap_or(false);
+    .ok()
+    .flatten()
+    .is_some();
 
     Json(json!({ "connected": connected }))
 }
