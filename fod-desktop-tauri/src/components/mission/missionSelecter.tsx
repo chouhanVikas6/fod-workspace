@@ -111,7 +111,11 @@ const MissionSelector = () => {
             isDark ? "bg-[#22262B] text-slate-100" : "bg-[#F1F5F9] text-slate-900"
         }`}>
             {/* Left Column: Actions & Previous Missions */}
-            <div className="h-full w-[270px] shrink-0 flex flex-col">
+            <div className={`h-full w-[286px] shrink-0 flex flex-col rounded-2xl p-3.5 border transition-colors duration-200 ${
+                isDark
+                    ? "bg-[#1A1E24] border-[#2E343D] shadow-lg"
+                    : "bg-white border-slate-200/90 shadow-sm"
+            }`}>
                 {/* + Start New Mission Primary Button */}
                 <button
                     onClick={startTemplateView}

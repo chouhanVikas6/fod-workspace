@@ -78,7 +78,11 @@ const FodGridCell = ({
   );
 };
 
-const FodDisplay = () => {
+const FodDisplay = ({
+  onGridWidthChange,
+}: {
+  onGridWidthChange?: (width: number) => void;
+}) => {
   const dispatch = useDispatch<AppDispatch>();
 
   const fods = useSelector(
@@ -161,6 +165,11 @@ const FodDisplay = () => {
     Math.floor(containerWidth / GRID_COLUMN_WIDTH)
   );
 
+  useEffect(() => {
+    if (!onGridWidthChange || containerWidth <= 0) return;
+    onGridWidthChange(columnCount * GRID_COLUMN_WIDTH - 16);
+  }, [columnCount, containerWidth, onGridWidthChange]);
+
   const rowCount = Math.ceil(
     filteredFods.length / columnCount
   );
@@ -214,39 +223,31 @@ const FodDisplay = () => {
     ]
   );
 
-  // Temporary debugging output.
-  console.log({
-    containerWidth,
-    columnCount,
-    gridColumnWidth: GRID_COLUMN_WIDTH,
-  });
-
-  if (filteredFods.length === 0) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm font-medium text-slate-400 dark:text-slate-500 select-none">
-        No FODs match the selected filter
-      </div>
-    );
-  }
-
   return (
     <div
       ref={gridContainerRef}
       className="relative h-full w-full min-h-0 min-w-0 overflow-hidden select-none"
     >
-      <Grid
-        cellComponent={FodGridCell as any}
-        cellProps={cellProps}
-        columnCount={columnCount}
-        rowCount={rowCount}
-        columnWidth={GRID_COLUMN_WIDTH}
-        rowHeight={ITEM_HEIGHT + 16}
-        overscanCount={2}
-        style={{
-          height: "100%",
-          width: "100%",
-        }}
-      />
+      {filteredFods.length === 0 ? (
+        <div className="flex h-full w-full items-center justify-center text-sm font-medium text-slate-400 dark:text-slate-500 select-none">
+          No FODs match the selected filter
+        </div>
+      ) : (
+        <Grid
+          cellComponent={FodGridCell as any}
+          cellProps={cellProps}
+          columnCount={columnCount}
+          rowCount={rowCount}
+          columnWidth={GRID_COLUMN_WIDTH}
+          rowHeight={ITEM_HEIGHT + 16}
+          overscanCount={2}
+          style={{
+            height: "100%",
+            width: containerWidth > 0 ? Math.min(containerWidth, columnCount * GRID_COLUMN_WIDTH) : "100%",
+            margin: "0 auto",
+          }}
+        />
+      )}
     </div>
   );
 };

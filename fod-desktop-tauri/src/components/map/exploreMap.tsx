@@ -52,7 +52,7 @@ const ExploreMap = ({
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
-      minZoom: 1,
+      minZoom: 0,
       maxZoom: 22,
       style: {
         version: 8,
@@ -86,7 +86,7 @@ const ExploreMap = ({
           },
         ],
         center: config.map.initialCenter as [number, number],
-        zoom: 19,
+        zoom: 3,
       },
       attributionControl: false,
     });

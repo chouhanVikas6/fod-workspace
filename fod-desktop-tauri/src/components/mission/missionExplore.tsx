@@ -9,6 +9,7 @@ import { config } from '@/config/clientConfig';
 import Image from 'next/image';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import MissionReport from './missionReport';
 
 // Timer is elapsed ms — render as 1h 05m / 12m 30s / 45s
 function formatDuration(ms: any) {
@@ -61,6 +62,11 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
     const [fodList, setFodList] = useState<any[]>([]);
     const [selectedFod, setSelectedFod] = useState<any>(null);
     const [displayLimit, setDisplayLimit] = useState(60);
+    const [showReport, setShowReport] = useState(false);
+
+    useEffect(() => {
+        setShowReport(false);
+    }, [selectedMission?.id]);
 
     const cardRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
     const dispatch = useDispatch();
@@ -249,6 +255,19 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
 
     const selectedKey = selectedFod?.groupId ?? selectedFod?.id;
 
+    if (showReport) {
+        return (
+            <MissionReport
+                fodsOverride={uniqueFodList}
+                missionNumberOverride={selectedMission?.id}
+                displayIdOverride={selectedMission?.displayId}
+                durationOverride={selectedMission?.timer ?? selectedMission?.duration ?? null}
+                statusOverride={selectedMission?.status}
+                onClose={() => setShowReport(false)}
+            />
+        );
+    }
+
     return (
         <div className="w-full h-full flex flex-col gap-2 xl:gap-3 p-3 xl:p-4 bg-[#F8FAFC] dark:bg-[#22262B] text-slate-800 dark:text-slate-100 transition-colors duration-200 select-none">
 
@@ -273,7 +292,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                     {/* View Report */}
                     <button
                         type="button"
-                        onClick={() => toast.info('Report view coming soon')}
+                        onClick={() => setShowReport(true)}
                         className="
                             h-8 sm:h-9 lg:h-[35px]
                             px-2.5 sm:px-3 lg:px-5

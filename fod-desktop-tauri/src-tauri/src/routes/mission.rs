@@ -191,7 +191,9 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
          COUNT(CASE WHEN fg.status = 'REJECTED' THEN 1 END) AS "rejected",
          COUNT(CASE WHEN fg.status = 'CLEARED' THEN 1 END) AS "cleared",
          COUNT(CASE WHEN fg.status = 'NEW' THEN 1 END) AS "newFodGroups",
-         COUNT(fg.id) AS "total"
+         COUNT(fg.id) AS "total",
+         (SELECT fg2."groupId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestGroupId",
+         (SELECT fg2."biggestFodId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestFodId"
        FROM "Mission" m
        LEFT JOIN "FodGroup" fg ON m.id = fg."missionId"
        GROUP BY m.id
@@ -218,6 +220,16 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
         for key in ["accepted", "rejected", "cleared", "newFodGroups", "total"] {
             let n: i64 = row.try_get(key).unwrap_or(0);
             o.insert(key.to_string(), json!(n));
+        }
+        if let (Ok(Some(bgid)), Ok(Some(bfid))) = (
+            row.try_get::<Option<i32>, _>("biggestGroupId"),
+            row.try_get::<Option<String>, _>("biggestFodId"),
+        ) && !bfid.is_empty()
+        {
+            o.insert(
+                "thumbnail".to_string(),
+                json!(format!("/images/{}/{}/{}.jpg", mission.id, bgid, bfid)),
+            );
         }
         o.insert("mission_id".to_string(), json!(mission.id));
         out.push(v);

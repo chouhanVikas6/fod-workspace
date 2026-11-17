@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, startTransition } from "react";
+import React, { useEffect, useRef, useState, startTransition } from "react";
 import FilterBar from "./filterBar";
 import FodDisplay from "./fodDisplay";
 import { useDispatch, useSelector } from "react-redux";
@@ -148,11 +148,19 @@ const FodPanel = ({ open }) => {
   const fodLoading = useSelector((store: RootState) => store.FodReducer.fodsLoading);
   const streamingCount = useSelector((store: RootState) => store.FodReducer.streamingCount);
   const isMapOpen = useSelector((store: RootState) => store.MapReducer.isMapOpen);
+  const [gridWidth, setGridWidth] = useState<number | null>(null);
 
   return (
     <div className={`relative h-full w-full flex flex-col overflow-hidden ${isMapOpen || !open ? "hidden" : ""}`}>
       <div className="h-full w-full flex flex-col px-5 pt-3 pb-2 relative overflow-hidden">
-        <div className="w-full shrink-0 mb-3 flex items-center justify-between gap-2">
+        <div
+          className="shrink-0 mb-3 mx-auto flex items-center justify-between gap-2"
+          style={
+            gridWidth
+              ? { width: gridWidth, maxWidth: "calc(100% - 16px)" }
+              : { width: "calc(100% - 16px)" }
+          }
+        >
           <div className="flex-1 min-w-0">
             <FilterBar />
           </div>
@@ -168,7 +176,7 @@ const FodPanel = ({ open }) => {
               <CircleLoader />
             </div>
           ) : (
-            <FodDisplay />
+            <FodDisplay onGridWidthChange={setGridWidth} />
           )}
         </div>
       </div>

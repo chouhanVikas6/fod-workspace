@@ -1,22 +1,72 @@
-import React from "react";
+import React, { useMemo } from "react";
+import { FolderOpen } from "lucide-react";
 import MissionCard from "./missionCard";
+
+function getMissionDateInfo(mission: any): { key: string; label: string } {
+    const raw = mission?.createdAt ?? mission?.created_at;
+    if (!raw) return { key: "unknown", label: "Unknown Date" };
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return { key: "unknown", label: "Unknown Date" };
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const label = d.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    });
+    return { key, label };
+}
 
 // Mission list comes from MissionSelector's 1.5s poll so card stats stay live.
 const PastMission = ({ missions, setMission, selectedMission }: any) => {
+    const groupedMissions = useMemo(() => {
+        if (!missions?.length) return [];
+        const groups: { key: string; label: string; items: { mission: any; index: number }[] }[] = [];
+        for (let i = 0; i < missions.length; i++) {
+            const mission = missions[i];
+            const { key, label } = getMissionDateInfo(mission);
+            const last = groups[groups.length - 1];
+            if (last && last.key === key) {
+                last.items.push({ mission, index: i });
+            } else {
+                groups.push({ key, label, items: [{ mission, index: i }] });
+            }
+        }
+        return groups;
+    }, [missions]);
+
     return (
         <div className='flex-1 min-h-0 w-full flex flex-col justify-start items-stretch space-y-2.5 overflow-y-auto pr-1'>
-            {missions?.length ?
-                missions.map((mission: any, index: number) => (
-                    <MissionCard
-                        missionData={mission}
-                        key={mission.mission_id || index}
-                        index={index}
-                        {...{ selectedMission, setMission }}
-                    />
+            {groupedMissions.length ?
+                groupedMissions.map((group) => (
+                    <React.Fragment key={group.key}>
+                        <div className="flex items-center gap-2 pt-1.5 pb-0.5 select-none">
+                            <div className="h-px flex-1 bg-slate-200 dark:bg-[#2E343D]" />
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-[#8C939C] shrink-0">
+                                {group.label}
+                            </span>
+                            <div className="h-px flex-1 bg-slate-200 dark:bg-[#2E343D]" />
+                        </div>
+                        {group.items.map(({ mission, index }) => (
+                            <MissionCard
+                                missionData={mission}
+                                key={mission.mission_id || index}
+                                index={index}
+                                {...{ selectedMission, setMission }}
+                            />
+                        ))}
+                    </React.Fragment>
                 ))
                 :
-                <div className="m-auto text-sm text-slate-500 font-medium py-12 text-center">
-                    No missions found
+                <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 dark:border-[#323842] bg-slate-50/70 dark:bg-[#22262D]/60 px-4 py-10 text-center">
+                    <div className="w-11 h-11 rounded-full bg-slate-100 dark:bg-[#2A3038] flex items-center justify-center text-slate-400 dark:text-slate-500 mb-3">
+                        <FolderOpen size={20} strokeWidth={1.8} />
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                        No missions found
+                    </p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 leading-relaxed max-w-[185px]">
+                        Start a new mission above or wait for missions to sync.
+                    </p>
                 </div>
             }
         </div>

@@ -8,6 +8,7 @@ import { useTranslations } from "@/hooks/useTranslations";
 
 import { RootState } from "@/store";
 import { useSelector } from "react-redux";
+import Image from "@/mocks/next-image";
 
 const MissionCard = ({ missionData, active, setMission, selectedMission, index, isCarLive }: any) => {
     const dispatch = useDispatch();
@@ -47,9 +48,9 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
         });
     }
 
-    // Default thumbnails matching the reference screenshot:
-    // First card: aerial overview; subsequent cards: driver-perspective pavement view
-    const thumbnailSrc = missionData?.thumbnail || (index === 0 ? '/images/runway_aerial.jpg' : '/images/runway_pavement.jpg');
+    const fallbackThumbnail = index === 0 ? '/images/runway_aerial.jpg' : '/images/runway_pavement.jpg';
+    const [thumbFailed, setThumbFailed] = useState(false);
+    const thumbnailSrc = !thumbFailed && missionData?.thumbnail ? missionData.thumbnail : fallbackThumbnail;
 
     if (active) {
         if (!carLive) return null;
@@ -122,14 +123,13 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
 
             {/* Right thumbnail photo */}
             <div className="w-[72px] h-[52px] rounded-md overflow-hidden border border-slate-200 dark:border-[#373C43] shrink-0 bg-slate-100 dark:bg-[#22262B]">
-                <img
+                <Image
                     src={thumbnailSrc}
-                    alt="Runway thumbnail"
+                    alt="Mission biggest FOD thumbnail"
+                    width={72}
+                    height={52}
                     className="w-full h-full object-cover"
-                    loading="lazy"
-                    onError={(e) => {
-                        (e.target as HTMLImageElement).src = '/images/runway_aerial.jpg';
-                    }}
+                    onError={() => setThumbFailed(true)}
                 />
             </div>
         </div>

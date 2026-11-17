@@ -41,18 +41,36 @@ const CLASS_COLORS: Record<string, string> = {
 
 const PAGE_SIZE = 60;
 
-const MissionReport: React.FC = () => {
+interface MissionReportProps {
+  fodsOverride?: any[];
+  missionNumberOverride?: number | string;
+  displayIdOverride?: number | string;
+  durationOverride?: number | null;
+  statusOverride?: string;
+  onClose?: () => void;
+}
+
+const MissionReport: React.FC<MissionReportProps> = ({
+  fodsOverride,
+  missionNumberOverride,
+  displayIdOverride,
+  durationOverride,
+  statusOverride,
+  onClose,
+}) => {
   const dispatch = useDispatch<AppDispatch>();
-  const fods = useSelector((state: RootState) => state.FodReducer.fods) as any[];
+  const storeFods = useSelector((state: RootState) => state.FodReducer.fods) as any[];
   const missionState = useSelector((state: RootState) => state.MissionState);
   const isDark = useSelector((state: RootState) => state.theme.theme === "dark");
 
+  const fods = fodsOverride ?? storeFods;
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
   const heatmapCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const missionNumber = missionState?.missionNumber;
-  const displayId = missionState?.displayId;
+  const missionNumber = missionNumberOverride ?? missionState?.missionNumber;
+  const displayId = displayIdOverride ?? missionState?.displayId;
+  const durationMs = durationOverride !== undefined ? durationOverride : missionState?.duration;
   const missionTitle = displayId ? `Mission #${displayId}` : `Mission ${missionNumber ?? "—"}`;
 
   // Aggregate FOD Summary
@@ -213,7 +231,9 @@ const MissionReport: React.FC = () => {
     [filteredFods, visibleCount]
   );
 
-  const statusText = missionState?.isActive
+  const statusText = statusOverride
+    ? statusOverride
+    : missionState?.isActive
     ? missionState?.isPause
       ? "PAUSED"
       : "ACTIVE"
@@ -262,7 +282,7 @@ const MissionReport: React.FC = () => {
 
       const missionCols = [
         { label: "Mission", value: missionTitle },
-        { label: "Duration", value: formatDuration(missionState?.duration) },
+        { label: "Duration", value: formatDuration(durationMs) },
         { label: "Total FODs", value: summary.total.toLocaleString() },
         { label: "Active Cameras", value: String(summary.cameraCount || "—") },
       ];
@@ -490,14 +510,29 @@ const MissionReport: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleDownloadPdf}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer"
-        >
-          <RxDownload className="w-4 h-4" />
-          <span>Download PDF</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] text-white text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer"
+          >
+            <RxDownload className="w-4 h-4" />
+            <span>Download PDF</span>
+          </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold border transition active:scale-95 cursor-pointer ${
+                isDark
+                  ? "bg-[#292D33] border-[#3E444D] text-slate-200 hover:bg-[#353A42]"
+                  : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Back
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Mission Summary Stat Strip (4 cards, consistent with MissionExplore & SystemStats) */}
@@ -520,7 +555,7 @@ const MissionReport: React.FC = () => {
               isDark ? "text-white" : "text-slate-900"
             }`}
           >
-            {formatDuration(missionState?.duration)}
+            {formatDuration(durationMs)}
           </div>
         </div>
 
