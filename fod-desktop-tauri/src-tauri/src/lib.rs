@@ -249,6 +249,169 @@ async fn stop_retrive_stream(
     Ok(())
 }
 
+/// Read local tablet/host battery telemetry from OS power supply interfaces when available.
+#[tauri::command]
+async fn get_tablet_battery() -> Result<Value, String> {
+    Ok(read_tablet_battery())
+}
+
+#[cfg(target_os = "linux")]
+fn read_tablet_battery() -> Value {
+    let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") else {
+        return json!({ "available": false, "percentage": Value::Null, "charging": false, "status": "Unavailable" });
+    };
+
+    let mut weighted_energy_now: f64 = 0.0;
+    let mut weighted_energy_full: f64 = 0.0;
+    let mut capacities: Vec<f64> = Vec::new();
+    let mut any_charging = false;
+    let mut any_discharging = false;
+    let mut any_full = false;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = std::fs::read_to_string(path.join("type")) else {
+            continue;
+        };
+        if kind.trim() != "Battery" {
+            continue;
+        }
+        // Skip peripheral device batteries (e.g. stylus/mouse) when scope is explicitly Device.
+        if let Ok(scope) = std::fs::read_to_string(path.join("scope")) {
+            if scope.trim().eq_ignore_ascii_case("Device") {
+                continue;
+            }
+        }
+        if let Ok(present) = std::fs::read_to_string(path.join("present")) {
+            if present.trim() == "0" {
+                continue;
+            }
+        }
+
+        let cap = std::fs::read_to_string(path.join("capacity"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|v| (0.0..=100.0).contains(v));
+
+        let full = std::fs::read_to_string(path.join("energy_full"))
+            .or_else(|_| std::fs::read_to_string(path.join("charge_full")))
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|&v| v > 0.0);
+
+        let now = std::fs::read_to_string(path.join("energy_now"))
+            .or_else(|_| std::fs::read_to_string(path.join("charge_now")))
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|&v| v >= 0.0);
+
+        if let (Some(n), Some(f)) = (now, full) {
+            weighted_energy_now += n.min(f);
+            weighted_energy_full += f;
+        } else if let Some(c) = cap {
+            capacities.push(c);
+        } else {
+            continue;
+        }
+
+        if let Some(c) = cap {
+            if capacities.is_empty() && now.is_none() {
+                capacities.push(c);
+            }
+        }
+
+        if let Ok(st) = std::fs::read_to_string(path.join("status")) {
+            match st.trim() {
+                "Charging" => any_charging = true,
+                "Discharging" => any_discharging = true,
+                "Full" => any_full = true,
+                _ => {}
+            }
+        }
+    }
+
+    let pct_opt = if weighted_energy_full > 0.0 {
+        Some(((weighted_energy_now / weighted_energy_full) * 100.0).round().clamp(0.0, 100.0) as u64)
+    } else if !capacities.is_empty() {
+        let avg = capacities.iter().sum::<f64>() / capacities.len() as f64;
+        Some(avg.round().clamp(0.0, 100.0) as u64)
+    } else {
+        None
+    };
+
+    match pct_opt {
+        Some(pct) => {
+            let status = if any_charging {
+                "Charging"
+            } else if any_full || (!any_discharging && pct >= 99) {
+                "Full"
+            } else if any_discharging {
+                "Discharging"
+            } else {
+                "AC Power"
+            };
+            json!({
+                "available": true,
+                "percentage": pct,
+                "charging": any_charging,
+                "status": status,
+            })
+        }
+        None => json!({ "available": false, "percentage": Value::Null, "charging": false, "status": "Unavailable" }),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_tablet_battery() -> Value {
+    #[repr(C)]
+    struct SystemPowerStatus {
+        ac_line_status: u8,
+        battery_flag: u8,
+        battery_life_percent: u8,
+        system_status_flag: u8,
+        battery_life_time: u32,
+        battery_full_life_time: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetSystemPowerStatus(lp_system_power_status: *mut SystemPowerStatus) -> i32;
+    }
+
+    let mut status = SystemPowerStatus {
+        ac_line_status: 0,
+        battery_flag: 255,
+        battery_life_percent: 255,
+        system_status_flag: 0,
+        battery_life_time: u32::MAX,
+        battery_full_life_time: u32::MAX,
+    };
+    let ok = unsafe { GetSystemPowerStatus(&mut status as *mut SystemPowerStatus) };
+    if ok == 0 || status.battery_flag == 128 || status.battery_flag == 255 || status.battery_life_percent > 100 {
+        return json!({ "available": false, "percentage": Value::Null, "charging": false, "status": "Unavailable" });
+    }
+    let charging = (status.battery_flag & 8) != 0 || status.ac_line_status == 1;
+    let label = if (status.battery_flag & 8) != 0 {
+        "Charging"
+    } else if status.ac_line_status == 1 && status.battery_life_percent >= 99 {
+        "Full"
+    } else if status.ac_line_status == 1 {
+        "AC Power"
+    } else {
+        "Discharging"
+    };
+    json!({
+        "available": true,
+        "percentage": status.battery_life_percent,
+        "charging": charging,
+        "status": label,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn read_tablet_battery() -> Value {
+    json!({ "available": false, "percentage": Value::Null, "charging": false, "status": "Unavailable" })
+}
+
 const EMBEDDED_ENV: &str = include_str!(concat!(env!("OUT_DIR"), "/embedded.env"));
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -305,6 +468,7 @@ pub fn run() {
             get_health_bite_state,
             start_retrive_stream,
             stop_retrive_stream,
+            get_tablet_battery,
         ])
         .setup(move |app| {
             app_state.set_app_handle(app.handle().clone());

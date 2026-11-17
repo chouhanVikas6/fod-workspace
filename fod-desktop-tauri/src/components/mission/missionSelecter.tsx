@@ -4,7 +4,7 @@ import axiosClient from "@/utils/axios";
 import { useDispatch, useSelector } from "react-redux";
 import { start_Mission } from "@/store/slices/missionState-slice";
 import RestPath from "@/constants/apiPaths";
-import { CircleLoader } from "../commen/loader";
+import { MissionSelectorSkeleton } from "../commen/Skeleton";
 import zoidLogo from "@/assets/images/svg/zoid_logo.svg";
 import MissionTemplate from "./missionTemplate";
 import MissionExplore from "./missionExplore";
@@ -171,7 +171,9 @@ const MissionSelector = () => {
         return missionsWithDisplayId?.filter((mission: any) => mission.status === 'ACTIVE') || [];
     }, [missionsWithDisplayId, isCarLive]);
 
-    if (loading) return <CircleLoader />;
+    if (loading) return <MissionSelectorSkeleton />;
+
+    const viewKey = `${currentScreen || "welcome"}-${selectedMission?.id ?? "none"}`;
 
     return (
         <div className={`mission-selector-native-theme h-full w-full flex items-center gap-6 p-5 overflow-hidden select-none transition-colors duration-200 ${
@@ -336,6 +338,7 @@ const MissionSelector = () => {
                         : "bg-white border border-slate-200 shadow-sm rounded-2xl"
                     : ""
             }`}>
+                <div key={viewKey} className="w-full h-full flex items-center justify-center zoid-fade-slide">
                 {currentScreen === 'MissionTemplate' ? (
                     <MissionTemplate {...{ stopTemplateView, nextDisplayId: missions.length + 1 }} />
                 ) : currentScreen === 'MissionExplore' ? (
@@ -369,6 +372,7 @@ const MissionSelector = () => {
                         )}
                     </div>
                 )}
+                </div>
             </div>
         </div>
     );

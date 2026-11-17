@@ -215,8 +215,11 @@ const Fodcard = ({
       }`}
     >
       {imgModal && (
-        <div className="absolute inset-0 rounded-xl bg-black/20 dark:bg-black/60 backdrop-blur-xs z-30 flex items-center justify-center">
-          <BarLoader />
+        <div className="absolute inset-0 rounded-xl bg-slate-900/20 dark:bg-black/60 backdrop-blur-xs z-30 flex flex-col items-center justify-center gap-2 zoid-fade-slide">
+          <div className="w-7 h-7 rounded-full border-2 border-[#4C9FE8] border-t-transparent animate-spin" />
+          <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 bg-white/90 dark:bg-[#1C2129]/90 px-2.5 py-0.5 rounded-full shadow-xs">
+            Updating…
+          </span>
         </div>
       )}
 

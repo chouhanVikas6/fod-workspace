@@ -99,6 +99,25 @@ impl Db {
         Ok(())
     }
 
+    pub async fn increment_mission_timer(
+        &self,
+        mission_id: i64,
+        delta_seconds: i64,
+    ) -> Result<()> {
+        if delta_seconds <= 0 {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE missions SET timer = timer + $2, updated_at = now() WHERE id = $1 AND status = 'ACTIVE'",
+        )
+        .bind(mission_id)
+        .bind(delta_seconds)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub async fn terminate_mission(&self, mission_id: i64) -> Result<()> {
         sqlx::query(
             "UPDATE missions SET status = 'TERMINATED', scan_status = 'PAUSE', updated_at = now() WHERE id = $1",

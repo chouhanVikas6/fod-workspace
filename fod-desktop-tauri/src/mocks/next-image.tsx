@@ -190,11 +190,16 @@ const Image = ({ src, alt, className, width, height, onClick, style, draggable, 
     };
   }, [rawSrc]);
 
+  const isPendingIpc =
+    needsIpcResolution(rawSrc) && resolvedSrc === TRANSPARENT_PIXEL;
+
   return (
     <img
       src={resolvedSrc || TRANSPARENT_PIXEL}
       alt={alt}
-      className={className}
+      className={`${className || ""} ${
+        isPendingIpc ? "zoid-shimmer" : "transition-opacity duration-200"
+      }`.trim()}
       width={width}
       height={height}
       onClick={onClick}

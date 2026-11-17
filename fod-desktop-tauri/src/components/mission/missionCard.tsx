@@ -26,11 +26,15 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
     const missionLabel = displayId ?? mission_id;
     const isSelected = selectedMission?.mission_id === mission_id;
 
+    const [joining, setJoining] = useState(false);
+
     function loadMission(id: any) {
         if (!carLive) {
             toast.error('Vehicle is not in communication');
             return;
         }
+        if (joining) return;
+        setJoining(true);
         axiosClient({
             method: "GET",
             url: RestPath.JOINMISSIONWITHID(id)
@@ -45,6 +49,8 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
             }
         }).catch((error) => {
             toast.error(error?.data?.error || 'Failed to join mission — is the vehicle connected?');
+        }).finally(() => {
+            setJoining(false);
         });
     }
 
@@ -71,10 +77,15 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
                     </h4>
                 </div>
                 <button
+                    type="button"
+                    disabled={joining}
                     onClick={() => loadMission(mission_id)}
-                    className="py-1.5 px-3 bg-[#01B656] hover:bg-[#009E48] text-white font-bold text-xs rounded-lg shadow transition-all active:scale-95 shrink-0"
+                    className="py-1.5 px-3 bg-[#01B656] hover:bg-[#009E48] disabled:opacity-75 text-white font-bold text-xs rounded-lg shadow transition-all active:scale-95 shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                    Join
+                    {joining && (
+                        <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    )}
+                    <span>{joining ? "Joining..." : "Join"}</span>
                 </button>
             </div>
         );

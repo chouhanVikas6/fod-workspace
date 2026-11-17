@@ -1,8 +1,16 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '@/store';
 import { HiArrowPath } from 'react-icons/hi2';
+import { invoke } from '@tauri-apps/api/core';
 import axiosClient from '@/utils/axios';
+
+interface TabletBatteryState {
+  available: boolean;
+  percentage: number | null;
+  charging: boolean;
+  status: string;
+}
 
 export default function SystemStats() {
   const theme = useSelector((store: RootState) => store.theme.theme);
@@ -19,6 +27,46 @@ export default function SystemStats() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [secondsAgo, setSecondsAgo] = useState(2);
   const [atcConnected, setAtcConnected] = useState(false);
+  const [tabletBattery, setTabletBattery] = useState<TabletBatteryState>({
+    available: false,
+    percentage: null,
+    charging: false,
+    status: 'Unavailable',
+  });
+
+  const fetchTabletBattery = useCallback(async () => {
+    try {
+      const nativeRes = await invoke<TabletBatteryState>('get_tablet_battery');
+      if (nativeRes?.available && typeof nativeRes.percentage === 'number') {
+        setTabletBattery(nativeRes);
+        return;
+      }
+    } catch {
+      // Fallback to Web Battery API if running outside Tauri or native probe unavailable
+    }
+
+    try {
+      const nav: any = typeof navigator !== 'undefined' ? navigator : null;
+      if (nav && typeof nav.getBattery === 'function') {
+        const bm = await nav.getBattery();
+        if (bm && typeof bm.level === 'number' && isFinite(bm.level)) {
+          const pct = Math.round(Math.min(100, Math.max(0, bm.level * 100)));
+          const charging = Boolean(bm.charging);
+          setTabletBattery({
+            available: true,
+            percentage: pct,
+            charging,
+            status: charging ? (pct >= 99 ? 'Full' : 'Charging') : 'Discharging',
+          });
+          return;
+        }
+      }
+    } catch {
+      // Battery API unsupported
+    }
+
+    setTabletBattery({ available: false, percentage: null, charging: false, status: 'Unavailable' });
+  }, []);
 
   const isCarAvailable = Boolean(
     latency?.connected ||
@@ -117,6 +165,58 @@ export default function SystemStats() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    fetchTabletBattery();
+    const interval = setInterval(fetchTabletBattery, 15000);
+
+    let batteryObj: any = null;
+    const onBatteryChange = () => {
+      fetchTabletBattery();
+    };
+    const nav: any = typeof navigator !== 'undefined' ? navigator : null;
+    if (nav && typeof nav.getBattery === 'function') {
+      nav
+        .getBattery()
+        .then((bm: any) => {
+          batteryObj = bm;
+          bm?.addEventListener?.('levelchange', onBatteryChange);
+          bm?.addEventListener?.('chargingchange', onBatteryChange);
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      clearInterval(interval);
+      batteryObj?.removeEventListener?.('levelchange', onBatteryChange);
+      batteryObj?.removeEventListener?.('chargingchange', onBatteryChange);
+    };
+  }, [fetchTabletBattery]);
+
+  const hasTabletBattery =
+    tabletBattery.available &&
+    typeof tabletBattery.percentage === 'number' &&
+    isFinite(tabletBattery.percentage);
+
+  const batteryBadge = useMemo(() => {
+    const pct = tabletBattery.percentage ?? 0;
+    if (tabletBattery.charging) {
+      return { label: 'Charging', cls: 'bg-[#00B957]/15 text-[#00B957]', dot: 'bg-[#00B957]', ring: '#00B957' };
+    }
+    if (tabletBattery.status === 'Full') {
+      return { label: 'Full', cls: 'bg-[#00B957]/15 text-[#00B957]', dot: 'bg-[#00B957]', ring: '#00B957' };
+    }
+    if (tabletBattery.status === 'AC Power') {
+      return { label: 'AC Power', cls: 'bg-[#00B957]/15 text-[#00B957]', dot: 'bg-[#00B957]', ring: '#00B957' };
+    }
+    if (pct <= 15) {
+      return { label: 'Critical', cls: 'bg-rose-500/15 text-rose-500', dot: 'bg-rose-500', ring: '#ef4444' };
+    }
+    if (pct <= 30) {
+      return { label: 'Low', cls: 'bg-amber-500/15 text-amber-500', dot: 'bg-amber-500', ring: '#f59e0b' };
+    }
+    return { label: 'On Battery', cls: 'bg-[#4C9FE8]/15 text-[#4C9FE8]', dot: 'bg-[#4C9FE8]', ring: '#4C9FE8' };
+  }, [tabletBattery]);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -125,6 +225,7 @@ export default function SystemStats() {
         axiosClient({ method: 'GET', url: '/api/health/atc-status' }).then((res) =>
           setAtcConnected(Boolean(res?.data?.connected))
         ),
+        fetchTabletBattery(),
       ]);
     } catch {
       // Ignore background refresh errors
@@ -222,8 +323,12 @@ const renderGaugeRing = (
           isDark ? 'bg-[#262A30]/60 border-[#333840]' : 'bg-white/60 border-slate-200'
         }`}
       >
-        {/* Top 4 Metric Gauge Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* Top Metric Gauge Cards */}
+        <div
+          className={`grid grid-cols-1 sm:grid-cols-2 gap-3.5 ${
+            hasTabletBattery ? 'lg:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-4'
+          }`}
+        >
           {/* Metric 1: Car Temperature */}
           <div
             className={`rounded-xl p-4 border flex items-center gap-3.5 transition-all ${
@@ -322,6 +427,35 @@ const renderGaugeRing = (
               </div>
             </div>
           </div>
+
+          {/* Metric 5: Tablet Battery (shown when battery telemetry is available) */}
+          {hasTabletBattery && tabletBattery.percentage !== null && (
+            <div
+              className={`rounded-xl p-4 border flex items-center gap-3.5 transition-all ${
+                isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+              }`}
+            >
+              {renderGaugeRing(
+                tabletBattery.percentage,
+                batteryBadge.ring,
+                `${tabletBattery.percentage}%`
+              )}
+              <div>
+                <div className={`text-xs font-medium ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'}`}>
+                  Tablet Battery
+                </div>
+                <div className={`text-lg font-bold tracking-tight mt-0.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  {tabletBattery.percentage}%
+                </div>
+                <div
+                  className={`inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${batteryBadge.cls}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${batteryBadge.dot}`} />
+                  <span>{batteryBadge.label}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Connections */}

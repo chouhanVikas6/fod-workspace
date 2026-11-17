@@ -10,12 +10,13 @@ import Image from 'next/image';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import MissionReport from './missionReport';
+import { ExploreFodListSkeleton } from '../commen/Skeleton';
 
 // Timer is elapsed ms — render as 1h 05m / 12m 30s / 45s
 function formatDuration(ms: any) {
     if (typeof ms !== 'number' || !isFinite(ms) || ms <= 0) return '—';
 
-    const totalSec = Math.floor(ms / 1000);
+    const totalSec = Math.max(1, Math.floor(ms / 1000));
     const h = Math.floor(totalSec / 3600);
     const m = Math.floor((totalSec % 3600) / 60);
     const s = totalSec % 60;
@@ -24,6 +25,39 @@ function formatDuration(ms: any) {
     if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
 
     return `${s}s`;
+}
+
+// Resolve total active duration (in ms) from server duration/timer (seconds) or lifecycle timestamps.
+function computeMissionDurationMs(mission: any, nowMs: number, anchorMs: number): number | null {
+    if (!mission) return null;
+    const isLive = mission.status === 'ACTIVE';
+
+    const directMs = typeof mission.durationMs === 'number'
+        ? mission.durationMs
+        : typeof mission.duration === 'number'
+            ? mission.duration
+            : null;
+    if (directMs != null && isFinite(directMs) && directMs > 0) {
+        return isLive ? directMs + Math.max(0, nowMs - anchorMs) : directMs;
+    }
+
+    if (typeof mission.timer === 'number' && isFinite(mission.timer) && mission.timer > 0) {
+        const baseMs = Math.round(mission.timer * 1000);
+        return isLive ? baseMs + Math.max(0, nowMs - anchorMs) : baseMs;
+    }
+
+    const createdMs = mission.createdAt ? Date.parse(mission.createdAt) : NaN;
+    if (Number.isFinite(createdMs)) {
+        if (isLive) {
+            return Math.max(0, nowMs - createdMs);
+        }
+        const updatedMs = mission.updatedAt ? Date.parse(mission.updatedAt) : NaN;
+        if (Number.isFinite(updatedMs)) {
+            return Math.max(0, updatedMs - createdMs);
+        }
+    }
+
+    return null;
 }
 
 function formatDate(value: any) {
@@ -60,13 +94,29 @@ const GROUP_STATUS_BADGE: Record<string, string> = {
 
 function MissionExplore({ stopTemplateView, selectedMission }: any) {
     const [fodList, setFodList] = useState<any[]>([]);
+    const [fodsLoading, setFodsLoading] = useState(true);
+    const [exploring, setExploring] = useState(false);
     const [selectedFod, setSelectedFod] = useState<any>(null);
     const [displayLimit, setDisplayLimit] = useState(60);
     const [showReport, setShowReport] = useState(false);
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    const [statsAnchorMs, setStatsAnchorMs] = useState(() => Date.now());
 
     useEffect(() => {
         setShowReport(false);
     }, [selectedMission?.id]);
+
+    useEffect(() => {
+        const t = Date.now();
+        setStatsAnchorMs(t);
+        setNowMs(t);
+    }, [selectedMission?.id, selectedMission?.durationMs, selectedMission?.timer, selectedMission?.updatedAt]);
+
+    useEffect(() => {
+        if (selectedMission?.status !== 'ACTIVE') return;
+        const interval = setInterval(() => setNowMs(Date.now()), 1000);
+        return () => clearInterval(interval);
+    }, [selectedMission?.status, selectedMission?.id]);
 
     const cardRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
     const dispatch = useDispatch();
@@ -94,19 +144,37 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         return Array.from(map.values());
     }, [fodList]);
 
+    const isActive = selectedMission?.status === 'ACTIVE';
+    const durationMs = computeMissionDurationMs(selectedMission, nowMs, statsAnchorMs);
+
     function exploreMission() {
+        if (exploring) return;
+        setExploring(true);
         axiosClient({
             method: 'GET',
             url: RestPath.EXPLOREMISSION(selectedMission?.id),
         }).then((response) => {
             if (!!response?.data?.id) {
-                dispatch(start_Mission({ ...response.data, displayId: selectedMission?.displayId, isActive: false, isExplore: true }));
+                const resolvedDuration =
+                    durationMs ??
+                    (typeof response.data.timer === 'number' && response.data.timer > 0
+                        ? Math.round(response.data.timer * 1000)
+                        : null);
+                dispatch(start_Mission({
+                    ...response.data,
+                    displayId: selectedMission?.displayId,
+                    duration: resolvedDuration,
+                    isActive: false,
+                    isExplore: true,
+                }));
             } else {
                 toast.error(response?.data?.error || 'Mission not found')
             }
         }).catch((error) => {
             toast.error(error?.data?.error || 'Failed to explore mission');
-        })
+        }).finally(() => {
+            setExploring(false);
+        });
     }
 
     function handleSelectFod(fod: any, fromMap = false) {
@@ -144,6 +212,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
 
         const subId = `mission-explore-${selectedMission.id}-${Date.now()}`;
         setFodList([]);
+        setFodsLoading(true);
         setSelectedFod(null);
         setDisplayLimit(60);
 
@@ -175,18 +244,22 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
             try {
                 const rows = typeof data === 'string' ? JSON.parse(data) : data;
 
-                if (Array.isArray(rows) && rows.length > 0) {
-                    const maxLimit = config?.FodListsLimit ?? 25000;
+                if (Array.isArray(rows)) {
+                    setFodsLoading(false);
+                    if (rows.length > 0) {
+                        const maxLimit = config?.FodListsLimit ?? 25000;
 
-                    if (pendingRows.length < maxLimit) {
-                        pendingRows.push(...rows);
-                    }
+                        if (pendingRows.length < maxLimit) {
+                            pendingRows.push(...rows);
+                        }
 
-                    if (rafId === null) {
-                        rafId = window.requestAnimationFrame(flushRows);
+                        if (rafId === null) {
+                            rafId = window.requestAnimationFrame(flushRows);
+                        }
                     }
                 }
             } catch (err) {
+                setFodsLoading(false);
                 console.error('Failed to parse IPC retrive-data:', err);
             }
         }
@@ -196,6 +269,8 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
 
             if (payload?.event === 'update') {
                 getRealtimeData(payload.data);
+            } else if (payload?.event === 'error') {
+                setFodsLoading(false);
             }
         })
             .then((unlisten) => {
@@ -212,6 +287,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                 });
             })
             .catch((err) => {
+                setFodsLoading(false);
                 console.error('IPC retrive-data stream error:', err);
             });
 
@@ -231,11 +307,9 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         };
     }, [selectedMission]);
 
-    const isActive = selectedMission?.status === 'ACTIVE';
-
     const stats = [
         { label: 'Started', value: formatDate(selectedMission?.createdAt) ?? '—' },
-        { label: 'Duration', value: formatDuration(selectedMission?.timer) },
+        { label: 'Duration', value: formatDuration(durationMs) },
         {
             label: 'Speed',
             value:
@@ -261,7 +335,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                 fodsOverride={uniqueFodList}
                 missionNumberOverride={selectedMission?.id}
                 displayIdOverride={selectedMission?.displayId}
-                durationOverride={selectedMission?.timer ?? selectedMission?.duration ?? null}
+                durationOverride={durationMs}
                 statusOverride={selectedMission?.status}
                 onClose={() => setShowReport(false)}
             />
@@ -313,6 +387,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                     {/* Explore Mission */}
                     <button
                         type="button"
+                        disabled={exploring}
                         onClick={exploreMission}
                         className="
                             h-8 sm:h-9 lg:h-[35px]
@@ -323,13 +398,19 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                             text-[10px] sm:text-xs lg:text-sm
                             font-semibold
                             hover:bg-[#3B91DC]
+                            disabled:opacity-75
                             active:scale-95
                             transition-all
                             shadow
                             whitespace-nowrap
+                            inline-flex items-center gap-1.5
+                            cursor-pointer
                         "
                     >
-                        Explore Mission
+                        {exploring && (
+                            <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        )}
+                        <span>{exploring ? 'Opening...' : 'Explore Mission'}</span>
                     </button>
 
                     {/* Close */}
@@ -442,7 +523,9 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                     </div>
 
                     {/* Scrollable FOD Cards */}
-                    {uniqueFodList.length > 0 ? (
+                    {fodsLoading ? (
+                        <ExploreFodListSkeleton />
+                    ) : uniqueFodList.length > 0 ? (
                         <div className="flex-1 min-h-0 overflow-y-auto p-2 xl:p-2.5 space-y-1.5 xl:space-y-2">
                             {uniqueFodList.slice(0, displayLimit).map((fod: any) => {
                                 const itemKey = fod.groupId ?? fod.id;

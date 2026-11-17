@@ -93,28 +93,34 @@ const MissionControl = () => {
             <div className="h-full flex-1 min-w-0 relative overflow-hidden">
               {/* Active non-map tab layer */}
               <div
-                className={`relative h-full w-full ${
+                className={`relative h-full w-full transition-opacity duration-200 ${
                   isMapOpen
                     ? "z-0 opacity-0 pointer-events-none invisible"
                     : "z-10 opacity-100 pointer-events-auto visible"
                 }`}
               >
                 {tab === "home" && !isMapOpen && (
-                  <ErrorBoundary name="Home Dashboard">
-                    <HomeDashboard />
-                  </ErrorBoundary>
+                  <div key="tab-home" className="h-full w-full zoid-fade-slide">
+                    <ErrorBoundary name="Home Dashboard">
+                      <HomeDashboard />
+                    </ErrorBoundary>
+                  </div>
                 )}
 
                 {tab === "dashboard" && (
-                  <ErrorBoundary name="FOD Panel">
-                    <FodPanel open={true} />
-                  </ErrorBoundary>
+                  <div key="tab-dashboard" className="h-full w-full zoid-fade-slide">
+                    <ErrorBoundary name="FOD Panel">
+                      <FodPanel open={true} />
+                    </ErrorBoundary>
+                  </div>
                 )}
 
                 {tab === "reports" && !isMapOpen && (
-                  <ErrorBoundary name="Mission Reports">
-                    <MissionReport />
-                  </ErrorBoundary>
+                  <div key="tab-reports" className="h-full w-full zoid-fade-slide">
+                    <ErrorBoundary name="Mission Reports">
+                      <MissionReport />
+                    </ErrorBoundary>
+                  </div>
                 )}
 
                 <Setting open={tab === "setting"} />
@@ -123,7 +129,7 @@ const MissionControl = () => {
               {/* Persistent Map layer kept mounted in background */}
               <div
                 aria-hidden={!isMapOpen}
-                className={`absolute inset-0 h-full w-full ${
+                className={`absolute inset-0 h-full w-full transition-opacity duration-200 ${
                   isMapOpen
                     ? "z-20 opacity-100 pointer-events-auto visible"
                     : "z-0 opacity-0 pointer-events-none invisible"

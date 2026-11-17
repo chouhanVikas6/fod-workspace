@@ -3,7 +3,7 @@ import FilterBar from "./filterBar";
 import FodDisplay from "./fodDisplay";
 import { useDispatch, useSelector } from "react-redux";
 import { syncFod, resetFods, setFodSyncStatus } from "@/store/slices/fodReducer-slice";
-import { CircleLoader } from "../commen/loader";
+import { FodGridSkeleton } from "../commen/Skeleton";
 import { RootState } from "@/store";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -172,11 +172,11 @@ const FodPanel = ({ open }) => {
         </div>
         <div className="flex-1 w-full min-h-0 relative">
           {fodLoading ? (
-            <div className="h-full w-full flex items-center justify-center">
-              <CircleLoader />
-            </div>
+            <FodGridSkeleton />
           ) : (
-            <FodDisplay onGridWidthChange={setGridWidth} />
+            <div className="h-full w-full zoid-fade-slide">
+              <FodDisplay onGridWidthChange={setGridWidth} />
+            </div>
           )}
         </div>
       </div>

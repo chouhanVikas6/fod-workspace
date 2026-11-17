@@ -1094,3 +1094,53 @@ button:active {
 .selectedList-border {
   border: 1px solid #00b829;
 }
+
+/* =========================================
+   THEME SKELETONS & VIEW TRANSITIONS
+========================================= */
+
+@keyframes zoidShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.zoid-shimmer {
+  background: linear-gradient(
+    90deg,
+    #e2e8f0 25%,
+    #f1f5f9 50%,
+    #e2e8f0 75%
+  );
+  background-size: 200% 100%;
+  animation: zoidShimmer 1.4s ease-in-out infinite;
+}
+
+html.dark .zoid-shimmer,
+html.theme-dark .zoid-shimmer {
+  background: linear-gradient(
+    90deg,
+    #282e37 25%,
+    #323944 50%,
+    #282e37 75%
+  );
+  background-size: 200% 100%;
+}
+
+@keyframes zoidFadeSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.zoid-fade-slide {
+  animation: zoidFadeSlideIn 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

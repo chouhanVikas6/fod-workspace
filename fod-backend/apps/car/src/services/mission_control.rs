@@ -20,6 +20,8 @@ pub struct MissionControlServiceImpl {
     active_mission_id: Arc<AtomicI64>,
     scan_status: Arc<AtomicI32>,
     event_tx: broadcast::Sender<MissionEvent>,
+    /// Tracks active timer flushing: Some((mission_id, last_flushed_ms, last_replicated_ms)).
+    timer_anchor: Arc<tokio::sync::Mutex<Option<(i64, i64, i64)>>>,
 }
 
 impl MissionControlServiceImpl {
@@ -30,6 +32,78 @@ impl MissionControlServiceImpl {
             active_mission_id: Arc::new(AtomicI64::new(0)),
             scan_status: Arc::new(AtomicI32::new(MissionScanStatus::Play as i32)),
             event_tx,
+            timer_anchor: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Spawn a background loop that persists accumulated active mission duration
+    /// (`missions.timer` in seconds) every 2 seconds while a mission is active.
+    pub fn start_timer_loop(&self) {
+        let svc = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+            loop {
+                interval.tick().await;
+                if svc.active_mission_id.load(Ordering::SeqCst) > 0 {
+                    svc.flush_active_timer(false, None).await;
+                }
+            }
+        });
+    }
+
+    async fn set_timer_anchor(&self, mission_id: i64, now_ms: i64) {
+        let mut guard = self.timer_anchor.lock().await;
+        *guard = Some((mission_id, now_ms, now_ms));
+    }
+
+    async fn flush_active_timer(&self, finalizing: bool, expected_id: Option<i64>) {
+        let mut guard = self.timer_anchor.lock().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let target_id = expected_id.unwrap_or_else(|| self.active_mission_id.load(Ordering::SeqCst));
+
+        if target_id <= 0 {
+            if finalizing {
+                *guard = None;
+            }
+            return;
+        }
+
+        let current_anchor = *guard;
+        match current_anchor {
+            Some((mid, mut last_ms, mut last_rep_ms)) if mid == target_id => {
+                let raw_delta_ms = (now - last_ms).max(0);
+                let delta_sec = if finalizing {
+                    (raw_delta_ms + 500) / 1000
+                } else {
+                    raw_delta_ms / 1000
+                };
+                if delta_sec > 0 {
+                    let _ = self.db.increment_mission_timer(mid, delta_sec).await;
+                    last_ms += delta_sec * 1000;
+                    if !finalizing && now - last_rep_ms >= 10_000 {
+                        let _ = self.db.append_change(1, &mid.to_string()).await;
+                        last_rep_ms = now;
+                    }
+                } else if finalizing && raw_delta_ms > 0 {
+                    if let Ok(Some(m)) = self.db.get_mission(mid).await {
+                        if m.timer == 0 {
+                            let _ = self.db.increment_mission_timer(mid, 1).await;
+                        }
+                    }
+                }
+                if finalizing {
+                    *guard = None;
+                } else {
+                    *guard = Some((mid, last_ms, last_rep_ms));
+                }
+            }
+            _ => {
+                if finalizing {
+                    *guard = None;
+                } else {
+                    *guard = Some((target_id, now, now));
+                }
+            }
         }
     }
 
@@ -42,6 +116,7 @@ impl MissionControlServiceImpl {
         let current = self.active_mission_id.swap(0, Ordering::SeqCst);
         self.scan_status.store(MissionScanStatus::Pause as i32, Ordering::SeqCst);
         if current > 0 {
+            self.flush_active_timer(true, Some(current)).await;
             let _ = self.db.terminate_mission(current).await;
             let _ = self.db.append_change(1, &current.to_string()).await;
             let now = chrono::Utc::now().timestamp_millis();
@@ -118,6 +193,7 @@ impl MissionControlService for MissionControlServiceImpl {
         let _ = self.db.append_change(1, &new_id.to_string()).await;
 
         let now = chrono::Utc::now().timestamp_millis();
+        self.set_timer_anchor(new_id, now).await;
         let _ = self.event_tx.send(MissionEvent {
             mission_id: new_id,
             timestamp: now,
@@ -183,11 +259,22 @@ impl MissionControlService for MissionControlServiceImpl {
         }
 
         let scan = self.scan_status.load(Ordering::SeqCst);
+        let unflushed_ms = {
+            let mut guard = self.timer_anchor.lock().await;
+            let now = chrono::Utc::now().timestamp_millis();
+            match *guard {
+                Some((mid, last_ms, _)) if mid == current => (now - last_ms).max(0),
+                _ => {
+                    *guard = Some((current, now, now));
+                    0
+                }
+            }
+        };
         let (start_time, duration_ms, fod_group_count) = if let Ok(Some(m)) = self.db.get_mission(current).await {
             let start = m.created_at.timestamp_millis();
             let now = chrono::Utc::now().timestamp_millis();
-            let dur = if m.timer > 0 {
-                m.timer * 1000
+            let dur = if m.timer > 0 || unflushed_ms > 0 {
+                m.timer * 1000 + unflushed_ms
             } else {
                 (now - start).max(0)
             };
@@ -212,10 +299,13 @@ impl MissionControlService for MissionControlServiceImpl {
         request: Request<RestartMissionRequest>,
     ) -> Result<Response<MissionControlResponse>, Status> {
         let mission_id = request.into_inner().mission_id;
-        self.active_mission_id.store(mission_id, Ordering::SeqCst);
+        let prev = self.active_mission_id.swap(mission_id, Ordering::SeqCst);
+        if prev > 0 && prev != mission_id {
+            self.flush_active_timer(true, Some(prev)).await;
+        }
         self.scan_status.store(MissionScanStatus::Play as i32, Ordering::SeqCst);
 
-        let _ = self.db.update_mission(
+        let updated = self.db.update_mission(
             mission_id,
             Some(zoid_db::models::MissionStatus::Active),
             Some(zoid_db::models::MissionScanStatus::Play),
@@ -223,9 +313,11 @@ impl MissionControlService for MissionControlServiceImpl {
             None,
             None,
         ).await;
+        let timer_seconds = updated.map(|m| m.timer).unwrap_or(0);
         let _ = self.db.append_change(1, &mission_id.to_string()).await;
 
         let now = chrono::Utc::now().timestamp_millis();
+        self.set_timer_anchor(mission_id, now).await;
         let _ = self.event_tx.send(MissionEvent {
             mission_id,
             timestamp: now,
@@ -245,7 +337,7 @@ impl MissionControlService for MissionControlServiceImpl {
             mission_id,
             status: MissionStatus::Active as i32,
             scan_status: MissionScanStatus::Play as i32,
-            timer_seconds: 0,
+            timer_seconds,
             created_at: now,
         }))
     }
@@ -345,6 +437,7 @@ impl MissionControlService for MissionControlServiceImpl {
 
         let target_id = if req_id > 0 { req_id } else { current };
         if target_id > 0 {
+            self.flush_active_timer(true, Some(target_id)).await;
             let _ = self.db.terminate_mission(target_id).await;
             let _ = self.db.append_change(1, &target_id.to_string()).await;
         }

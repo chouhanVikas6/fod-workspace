@@ -193,7 +193,8 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
          COUNT(CASE WHEN fg.status = 'NEW' THEN 1 END) AS "newFodGroups",
          COUNT(fg.id) AS "total",
          (SELECT fg2."groupId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestGroupId",
-         (SELECT fg2."biggestFodId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestFodId"
+         (SELECT fg2."biggestFodId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestFodId",
+         (SELECT MAX(f."timestamp") FROM "Fod" f WHERE f."missionId" = m.id) AS "lastFodAt"
        FROM "Mission" m
        LEFT JOIN "FodGroup" fg ON m.id = fg."missionId"
        GROUP BY m.id
@@ -206,6 +207,7 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
             return err500("Failed to retrieve missions");
         }
     };
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut out: Vec<Value> = Vec::with_capacity(rows.len());
     for row in rows {
         let mission = match Mission::from_row(&row) {
@@ -215,6 +217,28 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
                 return err500("Failed to retrieve missions");
             }
         };
+        let created_ms = mission.created_at.and_utc().timestamp_millis();
+        let updated_ms = mission.updated_at.and_utc().timestamp_millis();
+        let last_fod_ms = row
+            .try_get::<Option<sqlx::types::chrono::NaiveDateTime>, _>("lastFodAt")
+            .ok()
+            .flatten()
+            .map(|dt| dt.and_utc().timestamp_millis());
+        let duration_ms: i64 = if mission.status == crate::models::MissionStatus::Active {
+            if mission.timer > 0.0 {
+                let base_ms = (mission.timer * 1000.0).round() as i64;
+                let tail_ms = (now_ms - updated_ms).clamp(0, 10_000);
+                base_ms + tail_ms
+            } else {
+                (now_ms - created_ms).max(0)
+            }
+        } else if mission.timer > 0.0 {
+            (mission.timer * 1000.0).round() as i64
+        } else {
+            let end_ms = updated_ms.max(last_fod_ms.unwrap_or(updated_ms));
+            (end_ms - created_ms).max(0)
+        };
+
         let mut v = svc::to_value(&mission);
         let o = v.as_object_mut().unwrap();
         for key in ["accepted", "rejected", "cleared", "newFodGroups", "total"] {
@@ -232,6 +256,8 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
             );
         }
         o.insert("mission_id".to_string(), json!(mission.id));
+        o.insert("durationMs".to_string(), json!(duration_ms));
+        o.insert("duration".to_string(), json!(duration_ms));
         out.push(v);
     }
     (StatusCode::OK, Json(out)).into_response()
@@ -1039,7 +1065,14 @@ async fn terminate(method: Method, State(s): State<AppState>, Path(id): Path<Str
     let Some(mission_id) = svc::js_parse_int(&id) else {
         return err500("Failed to terminate missions");
     };
-    let _ = sqlx::query("UPDATE \"Mission\" SET \"status\" = 'INACTIVE', \"scanStatus\" = 'PAUSE', \"updatedAt\" = $1 WHERE \"id\" = $2 OR \"status\" = 'ACTIVE'")
+    let _ = sqlx::query(
+        r#"UPDATE "Mission"
+           SET "status" = 'INACTIVE',
+               "scanStatus" = 'PAUSE',
+               "timer" = CASE WHEN "timer" > 0 THEN "timer" ELSE MAX(0.0, (julianday($1) - julianday("createdAt")) * 86400.0) END,
+               "updatedAt" = $1
+           WHERE "id" = $2 OR "status" = 'ACTIVE'"#,
+    )
         .bind(svc::now_naive())
         .bind(mission_id)
         .execute(&s.db)

@@ -88,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = db.terminate_mission(active.id).await;
         let _ = db.append_change(1, &active.id.to_string()).await;
     }
+    mission_ctrl_svc.start_timer_loop();
     let fod_group_svc =
         FodGroupServiceImpl::new(db.clone(), group_tx.clone(), "car-primary".to_string());
     let fod_svc = FodServiceImpl::new(db.clone(), storage.clone());

@@ -494,6 +494,11 @@ pub async fn call_car_grpc(
             .map(|arr| arr.iter().filter_map(Value::as_i64).collect())
             .unwrap_or_default();
 
+        let all_missions: Vec<Value> = all
+            .iter()
+            .map(proto_mission_detail_to_json)
+            .collect();
+
         let excluded_missions: Vec<Value> = all
             .into_iter()
             .filter(|m| !excluded_ids.contains(&m.id))
@@ -503,6 +508,7 @@ pub async fn call_car_grpc(
         return Some(json!({
             "activeMission": active.map(|m| proto_mission_detail_to_json(&m)).unwrap_or(Value::Null),
             "missionList": excluded_missions,
+            "allMissions": all_missions,
         }));
     }
 
@@ -1724,7 +1730,12 @@ pub async fn terminate_active_mission_if_car_down(state: &AppState) {
         tracing::warn!("Car is down — terminating live mission {id} instantly");
         let now = now_naive();
         let _ = sqlx::query(
-            r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = $1 WHERE "id" = $2"#,
+            r#"UPDATE "Mission"
+               SET "status" = 'INACTIVE',
+                   "scanStatus" = 'PAUSE',
+                   "timer" = CASE WHEN "timer" > 0 THEN "timer" ELSE MAX(0.0, (julianday($1) - julianday("createdAt")) * 86400.0) END,
+                   "updatedAt" = $1
+               WHERE "id" = $2"#,
         )
         .bind(now)
         .bind(id)
