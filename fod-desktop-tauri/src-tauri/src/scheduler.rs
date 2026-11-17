@@ -674,10 +674,12 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             .await;
         }
 
-        // Queue missing frame image for background fetch (Car -> ATC fallback)
-        if !f.image_sha256.is_empty() && missing_images.len() < 12 {
-            let m_str = f.mission_id.to_string();
-            let g_str = f.group_id.to_string();
+        // Save bundled frame JPEG immediately, or queue missing frame image for background fetch (Car -> ATC fallback)
+        let m_str = f.mission_id.to_string();
+        let g_str = f.group_id.to_string();
+        if !f.frame_jpeg.is_empty() {
+            let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await;
+        } else if !f.image_sha256.is_empty() && missing_images.len() < 12 {
             let img_file = std::path::Path::new("fod-images/mission")
                 .join(&m_str)
                 .join(&g_str)

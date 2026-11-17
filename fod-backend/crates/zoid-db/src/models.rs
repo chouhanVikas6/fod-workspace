@@ -319,6 +319,7 @@ impl FodRow {
             image_size: self.image_size.map(|s| s as i64).unwrap_or(0),
             frame_missing: self.frame_missing,
             created_at: self.created_at.timestamp_millis(),
+            frame_jpeg: Vec::new(),
         }
     }
 }

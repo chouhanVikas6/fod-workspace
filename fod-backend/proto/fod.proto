@@ -24,6 +24,7 @@ message FodEntity {
     int64 image_size = 12;
     bool frame_missing = 13;
     int64 created_at = 14;
+    bytes frame_jpeg = 15;
 }
 
 message GetFodsByGroupRequest {

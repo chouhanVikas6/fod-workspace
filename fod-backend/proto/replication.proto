@@ -82,6 +82,7 @@ message Change {
         Tombstone deleted = 6;
         zoid.user.UserEntity user = 7;
     }
+    bytes frame_jpeg = 8;
 }
 
 message Tombstone {

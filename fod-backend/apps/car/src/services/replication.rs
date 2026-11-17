@@ -9,21 +9,39 @@ use proto_defination::replication::{
 };
 use sha2::{Digest, Sha256};
 use std::pin::Pin;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status, Streaming};
 use uuid::Uuid;
 use zoid_db::Db;
+use zoid_storage::FrameStorage;
+
+const MAX_REPLICATION_BATCH_BYTES: usize = 1_500_000;
+
+async fn load_fod_frame(storage: &FrameStorage, f: &proto_defination::fod::FodEntity) -> Vec<u8> {
+    if f.frame_missing || f.image_sha256.is_empty() {
+        return Vec::new();
+    }
+    storage.read_frame(&f.image_sha256, false).await.unwrap_or_default()
+}
 
 pub struct ReplicationServiceImpl {
     db: Db,
+    storage: Arc<FrameStorage>,
     node_id: String,
     change_tx: broadcast::Sender<Change>,
 }
 
 impl ReplicationServiceImpl {
-    pub fn new(db: Db, node_id: String, change_tx: broadcast::Sender<Change>) -> Self {
+    pub fn new(
+        db: Db,
+        storage: Arc<FrameStorage>,
+        node_id: String,
+        change_tx: broadcast::Sender<Change>,
+    ) -> Self {
         Self {
             db,
+            storage,
             node_id,
             change_tx,
         }
@@ -39,6 +57,7 @@ impl ReplicationServiceImpl {
                         return Some(Change {
                             seq,
                             entity: Some(change::Entity::Mission(m.to_proto())),
+                            frame_jpeg: Vec::new(),
                         });
                     }
                 }
@@ -52,6 +71,7 @@ impl ReplicationServiceImpl {
                             return Some(Change {
                                 seq,
                                 entity: Some(change::Entity::Group(g.to_proto())),
+                                frame_jpeg: Vec::new(),
                             });
                         }
                     }
@@ -63,9 +83,12 @@ impl ReplicationServiceImpl {
                 let uuid_str = if parts.len() == 2 { parts[1] } else { key };
                 if let Ok(u) = Uuid::parse_str(uuid_str) {
                     if let Ok(Some(f)) = self.db.get_fod(u).await {
+                        let f_proto = f.to_proto();
+                        let frame_jpeg = load_fod_frame(&self.storage, &f_proto).await;
                         return Some(Change {
                             seq,
-                            entity: Some(change::Entity::Fod(f.to_proto())),
+                            entity: Some(change::Entity::Fod(f_proto)),
+                            frame_jpeg,
                         });
                     }
                 }
@@ -79,6 +102,7 @@ impl ReplicationServiceImpl {
                             return Some(Change {
                                 seq,
                                 entity: Some(change::Entity::Cleared(c.to_proto())),
+                                frame_jpeg: Vec::new(),
                             });
                         }
                     }
@@ -90,6 +114,7 @@ impl ReplicationServiceImpl {
                     return Some(Change {
                         seq,
                         entity: Some(change::Entity::User(u.to_proto())),
+                        frame_jpeg: Vec::new(),
                     });
                 } else {
                     return Some(Change {
@@ -98,6 +123,7 @@ impl ReplicationServiceImpl {
                             entity: 5,
                             entity_key: key.to_string(),
                         })),
+                        frame_jpeg: Vec::new(),
                     });
                 }
             }
@@ -118,6 +144,7 @@ impl ReplicationService for ReplicationServiceImpl {
     ) -> Result<Response<Self::SessionStream>, Status> {
         let mut in_stream = request.into_inner();
         let db = self.db.clone();
+        let storage = self.storage.clone();
         let primary_node_id = self.node_id.clone();
         let change_tx = self.change_tx.clone();
         let mut change_rx = change_tx.subscribe();
@@ -157,6 +184,7 @@ impl ReplicationService for ReplicationServiceImpl {
                             m_changes.push(Change {
                                 seq: replica_cursor,
                                 entity: Some(change::Entity::Mission(m.to_proto())),
+                                frame_jpeg: Vec::new(),
                             });
                         }
                         if !m_changes.is_empty() {
@@ -169,18 +197,31 @@ impl ReplicationService for ReplicationServiceImpl {
 
                         for m in missions.iter().take(6) {
                             if let Ok(fods) = db.get_biggest_fods_for_mission(m.id).await {
-                                for chunk in fods.chunks(200) {
-                                    let changes: Vec<Change> = chunk
-                                        .iter()
-                                        .map(|f| Change {
-                                            seq: replica_cursor,
-                                            entity: Some(change::Entity::Fod(f.to_proto())),
-                                        })
-                                        .collect();
+                                let mut batch_changes: Vec<Change> = Vec::new();
+                                let mut batch_bytes: usize = 0;
+                                for f in fods {
+                                    let f_proto = f.to_proto();
+                                    let frame_jpeg = load_fod_frame(&storage, &f_proto).await;
+                                    batch_bytes += frame_jpeg.len();
+                                    batch_changes.push(Change {
+                                        seq: replica_cursor,
+                                        entity: Some(change::Entity::Fod(f_proto)),
+                                        frame_jpeg,
+                                    });
+                                    if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 100 {
+                                        priority_batches.push_back(ChangeBatch {
+                                            from_seq: replica_cursor,
+                                            to_seq: replica_cursor,
+                                            changes: std::mem::take(&mut batch_changes),
+                                        });
+                                        batch_bytes = 0;
+                                    }
+                                }
+                                if !batch_changes.is_empty() {
                                     priority_batches.push_back(ChangeBatch {
                                         from_seq: replica_cursor,
                                         to_seq: replica_cursor,
-                                        changes,
+                                        changes: batch_changes,
                                     });
                                 }
                             }
@@ -191,6 +232,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                         .map(|g| Change {
                                             seq: replica_cursor,
                                             entity: Some(change::Entity::Group(g.to_proto())),
+                                            frame_jpeg: Vec::new(),
                                         })
                                         .collect();
                                     priority_batches.push_back(ChangeBatch {
@@ -264,6 +306,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 let change_item = Change {
                                                     seq: new_seq,
                                                     entity: Some(change::Entity::Group(proto_ug)),
+                                                    frame_jpeg: Vec::new(),
                                                 };
                                                 let _ = change_tx.send(change_item);
                                             }
@@ -321,6 +364,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 let change_item = Change {
                                                     seq: new_seq,
                                                     entity: Some(change::Entity::Group(final_proto)),
+                                                    frame_jpeg: Vec::new(),
                                                 };
                                                 let _ = change_tx.send(change_item);
                                             }
@@ -342,6 +386,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                             let change_item = Change {
                                                 seq: new_seq,
                                                 entity: Some(change::Entity::User(proto_user)),
+                                                frame_jpeg: Vec::new(),
                                             };
                                             let _ = change_tx.send(change_item);
                                         }
@@ -394,6 +439,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                     break;
                                 }
                                 let mut changes = Vec::with_capacity(change_rows.len());
+                                let mut batch_bytes: usize = 0;
                                 let mut last_seq = replica_cursor;
 
                                 for row in change_rows {
@@ -404,6 +450,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 db.get_mission(id).await.ok().flatten().map(|m| Change {
                                                     seq: row.seq,
                                                     entity: Some(change::Entity::Mission(m.to_proto())),
+                                                    frame_jpeg: Vec::new(),
                                                 })
                                             } else { None }
                                         }
@@ -414,6 +461,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                     db.get_fod_group(m, g).await.ok().flatten().map(|grp| Change {
                                                         seq: row.seq,
                                                         entity: Some(change::Entity::Group(grp.to_proto())),
+                                                        frame_jpeg: Vec::new(),
                                                     })
                                                 } else { None }
                                             } else { None }
@@ -422,10 +470,16 @@ impl ReplicationService for ReplicationServiceImpl {
                                             let parts: Vec<&str> = row.entity_key.split(':').collect();
                                             let u_str = if parts.len() == 2 { parts[1] } else { &row.entity_key };
                                             if let Ok(u) = Uuid::parse_str(u_str) {
-                                                db.get_fod(u).await.ok().flatten().map(|f| Change {
-                                                    seq: row.seq,
-                                                    entity: Some(change::Entity::Fod(f.to_proto())),
-                                                })
+                                                if let Some(f) = db.get_fod(u).await.ok().flatten() {
+                                                    let f_proto = f.to_proto();
+                                                    let frame_jpeg = load_fod_frame(&storage, &f_proto).await;
+                                                    batch_bytes += frame_jpeg.len();
+                                                    Some(Change {
+                                                        seq: row.seq,
+                                                        entity: Some(change::Entity::Fod(f_proto)),
+                                                        frame_jpeg,
+                                                    })
+                                                } else { None }
                                             } else { None }
                                         }
                                         4 => {
@@ -435,6 +489,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                     db.get_cleared_fod(m, g).await.ok().flatten().map(|c| Change {
                                                         seq: row.seq,
                                                         entity: Some(change::Entity::Cleared(c.to_proto())),
+                                                        frame_jpeg: Vec::new(),
                                                     })
                                                 } else { None }
                                             } else { None }
@@ -443,6 +498,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                             db.get_user_by_username(&row.entity_key).await.ok().flatten().map(|u| Change {
                                                 seq: row.seq,
                                                 entity: Some(change::Entity::User(u.to_proto())),
+                                                frame_jpeg: Vec::new(),
                                             })
                                         }
                                         _ => None,
@@ -450,6 +506,9 @@ impl ReplicationService for ReplicationServiceImpl {
 
                                     if let Some(ch) = c {
                                         changes.push(ch);
+                                    }
+                                    if batch_bytes >= MAX_REPLICATION_BATCH_BYTES {
+                                        break;
                                     }
                                 }
 
@@ -524,6 +583,7 @@ impl ReplicationService for ReplicationServiceImpl {
                 changes.push(Change {
                     seq: (idx + 1) as i64,
                     entity: Some(change::Entity::Group(g.to_proto())),
+                    frame_jpeg: Vec::new(),
                 });
             }
 

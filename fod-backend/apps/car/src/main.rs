@@ -11,7 +11,7 @@ use proto_defination::user::user_service_server::UserServiceServer;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
@@ -59,7 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             tracing::warn!(
                 "Could not connect to database ({}): {}. Running with lazy pool if available.",
-                db_url, e
+                db_url,
+                e
             );
             // Re-attempt with minimum pool or return error if fatal
             Db::connect(&db_url, 2).await?
@@ -87,8 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = db.terminate_mission(active.id).await;
         let _ = db.append_change(1, &active.id.to_string()).await;
     }
-    let fod_group_svc = FodGroupServiceImpl::new(db.clone(), group_tx.clone(), "car-primary".to_string());
-    let fod_svc = FodServiceImpl::new(db.clone());
+    let fod_group_svc =
+        FodGroupServiceImpl::new(db.clone(), group_tx.clone(), "car-primary".to_string());
+    let fod_svc = FodServiceImpl::new(db.clone(), storage.clone());
     let cleared_fod_svc = ClearedFodServiceImpl::new(db.clone());
     let mission_svc = MissionServiceImpl::new(db.clone());
     let ingest_svc = IngestServiceImpl::new(
@@ -100,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let replication_svc = ReplicationServiceImpl::new(
         db.clone(),
+        storage.clone(),
         "car-primary".to_string(),
         change_tx.clone(),
     );
@@ -138,7 +141,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_serving::<UserServiceServer<UserServiceImpl>>()
         .await;
 
-    tracing::info!("Starting gRPC server with tonic-web & permissive CORS on {}", addr);
+    tracing::info!(
+        "Starting gRPC server with tonic-web & permissive CORS on {}",
+        addr
+    );
 
     let mission_ctrl_shutdown = mission_ctrl_svc.clone();
     let db_shutdown = db.clone();
@@ -152,14 +158,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(ImageServiceServer::new(image_svc))
         .add_service(MissionControlServiceServer::new(mission_ctrl_svc))
         .add_service(FodGroupServiceServer::new(fod_group_svc))
-        .add_service(FodServiceServer::new(fod_svc))
+        .add_service(
+            FodServiceServer::new(fod_svc)
+                .max_decoding_message_size(32 * 1024 * 1024)
+                .max_encoding_message_size(32 * 1024 * 1024),
+        )
         .add_service(ClearedFodServiceServer::new(cleared_fod_svc))
         .add_service(MissionServiceServer::new(mission_svc))
         .add_service(
-            IngestServiceServer::new(ingest_svc)
-                .max_decoding_message_size(16 * 1024 * 1024), // 16MB for batches with JPEG frames
+            IngestServiceServer::new(ingest_svc).max_decoding_message_size(16 * 1024 * 1024), // 16MB for batches with JPEG frames
         )
-        .add_service(ReplicationServiceServer::new(replication_svc))
+        .add_service(
+            ReplicationServiceServer::new(replication_svc)
+                .max_decoding_message_size(16 * 1024 * 1024)
+                .max_encoding_message_size(16 * 1024 * 1024),
+        )
         .add_service(UserServiceServer::new(user_svc))
         .serve(addr);
 
@@ -178,7 +191,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(active_id) = mission_ctrl_shutdown.terminate_active_mission().await {
         tracing::info!("Terminated active mission {active_id} on Car daemon shutdown");
     } else if let Ok(Some(active)) = db_shutdown.get_active_mission().await {
-        tracing::info!("Terminated active mission {} on Car daemon shutdown", active.id);
+        tracing::info!(
+            "Terminated active mission {} on Car daemon shutdown",
+            active.id
+        );
         let _ = db_shutdown.terminate_mission(active.id).await;
         let _ = db_shutdown.append_change(1, &active.id.to_string()).await;
     }

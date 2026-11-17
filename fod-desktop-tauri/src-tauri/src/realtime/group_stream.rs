@@ -230,6 +230,16 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
                         .map(|dt| dt.naive_utc())
                         .unwrap_or(ts);
 
+                    let m_str = f.mission_id.to_string();
+                    let g_str = f.group_id.to_string();
+                    if !f.frame_jpeg.is_empty() {
+                        let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await;
+                    } else if !f.image_sha256.is_empty() {
+                        if let Some(bytes) = crate::services::fetch_image_from_car(&state_clone, &f.image_sha256, false).await {
+                            let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &bytes).await;
+                        }
+                    }
+
                     let _ = sqlx::query(
                         r#"INSERT INTO "Fod" (
                             "id", "missionId", "groupId", "sysid", "location", "confidence",

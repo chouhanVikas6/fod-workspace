@@ -73,8 +73,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (group_tx, _) = broadcast::channel(1000);
 
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx, user_rx, group_push_rx) =
-        SyncClient::new(car_url.clone(), db.clone(), node_id.clone(), group_tx.clone());
+    let (sync_client, cmd_rx, user_rx, group_push_rx) = SyncClient::new(
+        car_url.clone(),
+        db.clone(),
+        storage.clone(),
+        node_id.clone(),
+        group_tx.clone(),
+    );
     let group_push_tx = sync_client.group_push_sender();
     let user_tx = sync_client.user_sender();
     let sync_client_arc = Arc::new(sync_client);
@@ -92,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Instantiate gRPC Services
     let bite_svc = AtcBiteServiceImpl::new(bite);
     let fod_group_svc = AtcFodGroupServiceImpl::new(db.clone(), node_id, group_push_tx, group_tx);
-    let fod_svc = AtcFodServiceImpl::new(db.clone());
+    let fod_svc = AtcFodServiceImpl::new(db.clone(), storage.clone());
     let cleared_fod_svc = AtcClearedFodServiceImpl::new(db.clone());
     let mission_svc = AtcMissionServiceImpl::new(db.clone());
     let image_svc = AtcImageServiceImpl::new(storage);
@@ -131,7 +136,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(health_service)
         .add_service(BiteServiceServer::new(bite_svc))
         .add_service(FodGroupServiceServer::new(fod_group_svc))
-        .add_service(FodServiceServer::new(fod_svc))
+        .add_service(
+            FodServiceServer::new(fod_svc)
+                .max_decoding_message_size(32 * 1024 * 1024)
+                .max_encoding_message_size(32 * 1024 * 1024),
+        )
         .add_service(ClearedFodServiceServer::new(cleared_fod_svc))
         .add_service(MissionServiceServer::new(mission_svc))
         .add_service(ImageServiceServer::new(image_svc))

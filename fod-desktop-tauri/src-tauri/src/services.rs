@@ -296,7 +296,11 @@ async fn connect_fod_group_client(state: &AppState) -> Option<proto_defination::
 
 async fn connect_fod_client(state: &AppState) -> Option<proto_defination::fod::fod_service_client::FodServiceClient<tonic::transport::Channel>> {
     let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
-    Some(proto_defination::fod::fod_service_client::FodServiceClient::new(ch))
+    Some(
+        proto_defination::fod::fod_service_client::FodServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024)
+            .max_encoding_message_size(32 * 1024 * 1024),
+    )
 }
 
 #[allow(dead_code)]
@@ -733,6 +737,13 @@ pub async fn call_car_grpc(
                 excluded_ids,
             },
         )).await.ok()?.into_inner();
+        for f in &res.fods {
+            if !f.frame_jpeg.is_empty() {
+                let m_str = f.mission_id.to_string();
+                let g_str = f.group_id.to_string();
+                let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await;
+            }
+        }
         let list: Vec<Value> = res.fods.iter().map(proto_fod_entity_to_json).collect();
         return Some(Value::Array(list));
     }

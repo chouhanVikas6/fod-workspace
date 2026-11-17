@@ -2,17 +2,29 @@ use proto_defination::fod::fod_service_server::FodService;
 use proto_defination::fod::{
     FodEntity, GetBiggestFodRequest, GetFodRequest, GetFodsByGroupRequest, GetFodsResponse,
 };
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 use zoid_db::Db;
+use zoid_storage::FrameStorage;
 
 pub struct AtcFodServiceImpl {
     db: Db,
+    storage: Arc<FrameStorage>,
 }
 
 impl AtcFodServiceImpl {
-    pub fn new(db: Db) -> Self {
-        Self { db }
+    pub fn new(db: Db, storage: Arc<FrameStorage>) -> Self {
+        Self { db, storage }
+    }
+
+    async fn attach_frame(&self, mut entity: FodEntity) -> FodEntity {
+        if !entity.frame_missing && !entity.image_sha256.is_empty() {
+            if let Ok(bytes) = self.storage.read_frame(&entity.image_sha256, false).await {
+                entity.frame_jpeg = bytes;
+            }
+        }
+        entity
     }
 }
 
@@ -35,7 +47,10 @@ impl FodService for AtcFodServiceImpl {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let fods: Vec<FodEntity> = rows.into_iter().map(|f| f.to_proto()).collect();
+        let mut fods = Vec::with_capacity(rows.len());
+        for row in rows {
+            fods.push(self.attach_frame(row.to_proto()).await);
+        }
 
         Ok(Response::new(GetFodsResponse { fods }))
     }
@@ -51,7 +66,10 @@ impl FodService for AtcFodServiceImpl {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let fods: Vec<FodEntity> = rows.into_iter().map(|f| f.to_proto()).collect();
+        let mut fods = Vec::with_capacity(rows.len());
+        for row in rows {
+            fods.push(self.attach_frame(row.to_proto()).await);
+        }
 
         Ok(Response::new(GetFodsResponse { fods }))
     }
@@ -68,6 +86,6 @@ impl FodService for AtcFodServiceImpl {
             .map_err(|e| Status::internal(e.to_string()))?
             .ok_or_else(|| Status::not_found(format!("FOD {} not found", id_str)))?;
 
-        Ok(Response::new(fod.to_proto()))
+        Ok(Response::new(self.attach_frame(fod.to_proto()).await))
     }
 }

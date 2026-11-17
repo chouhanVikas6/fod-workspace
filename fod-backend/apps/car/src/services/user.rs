@@ -37,6 +37,7 @@ impl UserService for UserServiceImpl {
         let _ = self.change_tx.send(Change {
             seq,
             entity: Some(change::Entity::User(proto_user.clone())),
+            frame_jpeg: Vec::new(),
         });
 
         Ok(Response::new(UpsertUserResponse {
@@ -70,6 +71,7 @@ impl UserService for UserServiceImpl {
                     entity: 5,
                     entity_key: username.to_string(),
                 })),
+                frame_jpeg: Vec::new(),
             });
         }
 

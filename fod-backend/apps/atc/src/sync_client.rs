@@ -11,11 +11,13 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use zoid_db::Db;
+use zoid_storage::FrameStorage;
 
 #[derive(Clone)]
 pub struct SyncClient {
     car_endpoint: String,
     db: Db,
+    storage: Arc<FrameStorage>,
     node_id: String,
     cmd_tx: mpsc::Sender<Command>,
     user_tx: mpsc::Sender<proto_defination::user::UserEntity>,
@@ -27,6 +29,7 @@ impl SyncClient {
     pub fn new(
         car_endpoint: String,
         db: Db,
+        storage: Arc<FrameStorage>,
         node_id: String,
         group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
     ) -> (
@@ -41,6 +44,7 @@ impl SyncClient {
         let client = Self {
             car_endpoint,
             db,
+            storage,
             node_id,
             cmd_tx,
             user_tx,
@@ -77,7 +81,10 @@ impl SyncClient {
             );
 
             match ReplicationServiceClient::connect(self.car_endpoint.clone()).await {
-                Ok(mut client) => {
+                Ok(client) => {
+                    let mut client = client
+                        .max_decoding_message_size(16 * 1024 * 1024)
+                        .max_encoding_message_size(16 * 1024 * 1024);
                     tracing::info!("Replication connection established with Car primary");
                     backoff_secs = 1;
 
@@ -333,6 +340,11 @@ impl SyncClient {
                             }
                             change::Entity::Fod(f) => {
                                 self.ensure_mission_exists(f.mission_id).await?;
+                                if !change.frame_jpeg.is_empty() {
+                                    if let Err(e) = self.storage.save_frame(&change.frame_jpeg).await {
+                                        tracing::warn!("Failed to save replicated FOD frame {}: {}", f.id, e);
+                                    }
+                                }
                                 self.db.upsert_replicated_fod(&f).await?;
                             }
                             change::Entity::Cleared(c) => {
