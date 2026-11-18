@@ -154,7 +154,7 @@ const HomeDashboard = () => {
                 : `${secondaryText} hover:${primaryText}`
             }`}
           >
-            <span>Alerts</span>
+            <span>Notifications</span>
             <span className="h-1.5 w-1.5 rounded-full bg-[#E5A12B]" />
           </button>
         </div>

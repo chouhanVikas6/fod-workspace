@@ -11,9 +11,11 @@ import SystemStats from './systemStats';
 import MissionManagement from './missionManagement';
 import Profile from './profile';
 import UserManagement from './userManagement';
+import AiImprovement from './aiImprovement';
 import VideoComponent from '../camera-feed/video-feed';
 import CamPlay from '../commen/camera-play';
 import CamPause from '../commen/camera-pause';
+import { getCurrentUser } from '@/utils/auth';
 
 type SettingTabKey =
   | 'general'
@@ -21,7 +23,8 @@ type SettingTabKey =
   | 'missionManagement'
   | 'profile'
   | 'userManagement'
-  | 'cameras';
+  | 'cameras'
+  | 'aiImprovement';
 
 interface SettingProps {
   open: boolean;
@@ -31,6 +34,8 @@ export default function Setting({ open }: SettingProps) {
   const t = useTranslations('settings');
   const theme = useSelector((store: RootState) => store.theme.theme);
   const isDark = theme === 'dark';
+  const currentUser = getCurrentUser() as any;
+  const isCollector = String(currentUser?.role || '').toUpperCase() === 'COLLECTOR';
 
   const [selectedTab, setSelectedTab] = useState<SettingTabKey>('general');
 
@@ -331,6 +336,59 @@ export default function Setting({ open }: SettingProps) {
                 </svg>
                 <span>Cameras</span>
               </button>
+
+              {/* AI Improvement (locked for collector) */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCollector) {
+                    toast.info('AI Improvement is locked for Collector accounts');
+                  }
+                  setSelectedTab('aiImprovement');
+                }}
+                title={isCollector ? 'Locked for Collector role' : 'AI Improvement'}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  selectedTab === 'aiImprovement'
+                    ? isDark
+                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
+                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                    : isDark
+                    ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
+                    : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <span className="flex items-center gap-3 min-w-0">
+                  <svg
+                    className="w-4 h-4 shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.8}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"
+                    />
+                  </svg>
+                  <span className="truncate">AI Improvement</span>
+                </span>
+                {isCollector && (
+                  <svg
+                    className="w-3.5 h-3.5 shrink-0 text-[#E5A12B]"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+                    />
+                  </svg>
+                )}
+              </button>
             </nav>
           </div>
         </div>
@@ -343,6 +401,7 @@ export default function Setting({ open }: SettingProps) {
         {selectedTab === 'missionManagement' && <MissionManagement />}
         {selectedTab === 'profile' && <Profile />}
         {selectedTab === 'userManagement' && <UserManagement />}
+        {selectedTab === 'aiImprovement' && <AiImprovement />}
 
         {/* Cameras Management View */}
         {selectedTab === 'cameras' && (
