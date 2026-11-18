@@ -39,6 +39,20 @@ const CLASS_COLORS: Record<string, string> = {
   "Rocks/Ashpalt": "bg-[#E5A12B]",
 };
 
+const SIZE_BUCKET_COUNT = 10;
+
+function formatEdge(val: number): string {
+  const rounded = Math.round(val * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function getBucketStyle(index: number) {
+  if (index <= 2) return { color: "bg-[#4C9FE8]", hex: [76, 159, 232] as const };
+  if (index <= 5) return { color: "bg-[#00B957]", hex: [0, 185, 87] as const };
+  if (index <= 7) return { color: "bg-[#E5A12B]", hex: [229, 161, 43] as const };
+  return { color: "bg-[#D51F32]", hex: [213, 31, 50] as const };
+}
+
 const PAGE_SIZE = 60;
 
 interface MissionReportProps {
@@ -85,6 +99,7 @@ const MissionReport: React.FC<MissionReportProps> = ({
     let maxSize = -Infinity;
 
     const classCounts: Record<string, number> = {};
+    const sizes: number[] = [];
     const camSet = new Set<string>();
     const points: Array<{ lat: number; lon: number; status: string }> = [];
 
@@ -106,6 +121,7 @@ const MissionReport: React.FC<MissionReportProps> = ({
       if (isFinite(sz) && sz > 0) {
         sizeSum += sz;
         sizeCount++;
+        sizes.push(sz);
         if (sz < minSize) minSize = sz;
         if (sz > maxSize) maxSize = sz;
       }
@@ -118,6 +134,38 @@ const MissionReport: React.FC<MissionReportProps> = ({
 
     const classEntries = Object.entries(classCounts).sort((a, b) => b[1] - a[1]);
 
+    const sizeBucketCounts = new Array<number>(SIZE_BUCKET_COUNT).fill(0);
+    const lo = sizeCount > 0 ? Math.floor(minSize) : 0;
+    const rawHi = sizeCount > 0 ? Math.ceil(maxSize) : SIZE_BUCKET_COUNT;
+    const hi = rawHi > lo ? rawHi : lo + SIZE_BUCKET_COUNT;
+    const step = (hi - lo) / SIZE_BUCKET_COUNT;
+
+    if (sizeCount > 0) {
+      for (let i = 0; i < sizes.length; i++) {
+        const idx = Math.min(
+          SIZE_BUCKET_COUNT - 1,
+          Math.max(0, Math.floor((sizes[i] - lo) / step))
+        );
+        sizeBucketCounts[idx] += 1;
+      }
+    }
+
+    const sizeBuckets = sizeBucketCounts.map((count, idx) => {
+      const start = lo + idx * step;
+      const end = lo + (idx + 1) * step;
+      const rangeText = `${formatEdge(start)}–${formatEdge(end)}`;
+      const style = getBucketStyle(idx);
+      return {
+        key: `bin-${idx}`,
+        rangeText,
+        label: `${rangeText} mm`,
+        count,
+        pct: sizeCount > 0 ? Math.round((count / sizeCount) * 100) : 0,
+        ...style,
+      };
+    });
+    const maxSizeBucketCount = sizeBuckets.reduce((m, b) => Math.max(m, b.count), 0);
+
     return {
       total: fods.length,
       pending,
@@ -127,6 +175,9 @@ const MissionReport: React.FC<MissionReportProps> = ({
       avgSize: sizeCount > 0 ? sizeSum / sizeCount : 0,
       minSize: sizeCount > 0 ? minSize : 0,
       maxSize: sizeCount > 0 ? maxSize : 0,
+      sizeCount,
+      sizeBuckets,
+      maxSizeBucketCount,
       cameraCount: camSet.size,
       classEntries,
       points,
@@ -363,6 +414,41 @@ const MissionReport: React.FC<MissionReportProps> = ({
           doc.setFillColor(76, 159, 232);
           doc.rect(margin, y + 4.5, (contentW * pct) / 100, 2, "F");
           y += 8.5;
+        }
+        y += 3;
+      }
+
+      // FOD Size Distribution
+      if (summary.sizeCount > 0) {
+        ensureSpace(34);
+        doc.setTextColor(51, 65, 85);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.text("FOD Size Distribution", margin, y);
+        y += 4;
+
+        for (const bucket of summary.sizeBuckets) {
+          ensureSpace(8);
+          const relPct =
+            summary.maxSizeBucketCount > 0
+              ? (bucket.count / summary.maxSizeBucketCount) * 100
+              : 0;
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8.5);
+          doc.setTextColor(15, 23, 42);
+          doc.text(bucket.label, margin, y + 3);
+          doc.setTextColor(100, 116, 139);
+          doc.text(
+            `${bucket.count.toLocaleString()} (${bucket.pct}%)`,
+            pageW - margin,
+            y + 3,
+            { align: "right" }
+          );
+          doc.setFillColor(226, 232, 240);
+          doc.rect(margin, y + 4.5, contentW, 2, "F");
+          doc.setFillColor(bucket.hex[0], bucket.hex[1], bucket.hex[2]);
+          doc.rect(margin, y + 4.5, (contentW * relPct) / 100, 2, "F");
+          y += 8;
         }
         y += 3;
       }
@@ -693,6 +779,96 @@ const MissionReport: React.FC<MissionReportProps> = ({
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* FOD Size Range Bar Graph */}
+      <div className={`${cardClass} shrink-0 flex flex-col`}>
+        <div className={cardHeaderClass}>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className={headingClass}>FOD Size Distribution</h2>
+            <span className={`text-xs ${mutedText}`}>
+              {summary.sizeCount > 0
+                ? `${summary.sizeCount.toLocaleString()} measured · Range ${summary.minSize.toFixed(0)}–${summary.maxSize.toFixed(0)} mm`
+                : "No size measurements recorded"}
+            </span>
+          </div>
+          {summary.avgSize > 0 && (
+            <span className={`text-xs font-mono ${mutedText}`}>
+              Avg {summary.avgSize.toFixed(1)} mm
+            </span>
+          )}
+        </div>
+
+        <div className="p-3.5 xl:p-4">
+          {summary.sizeCount === 0 ? (
+            <p className={`text-xs italic py-6 text-center ${mutedText}`}>
+              No FOD size data recorded yet.
+            </p>
+          ) : (
+            <div className="relative pt-5">
+              {/* Subtle horizontal reference gridlines */}
+              <div className="pointer-events-none absolute inset-x-0 top-5 bottom-8 flex flex-col justify-between">
+                {[0, 1, 2, 3].map((line) => (
+                  <div
+                    key={line}
+                    className={`w-full border-t border-dashed ${
+                      isDark ? "border-[#383D44]" : "border-slate-200"
+                    }`}
+                  />
+                ))}
+              </div>
+
+              <div className="relative z-10 grid grid-cols-5 sm:grid-cols-10 gap-2 items-end h-44">
+                {summary.sizeBuckets.map((bucket) => {
+                  const heightPct =
+                    summary.maxSizeBucketCount > 0
+                      ? (bucket.count / summary.maxSizeBucketCount) * 100
+                      : 0;
+                  return (
+                    <div
+                      key={bucket.key}
+                      className="group h-full flex flex-col items-center justify-end"
+                      title={`${bucket.label}: ${bucket.count.toLocaleString()} FODs (${bucket.pct}%)`}
+                    >
+                      <div className="w-full flex-1 flex flex-col items-center justify-end min-h-0">
+                        <span
+                          className={`text-[11px] font-mono font-semibold mb-1 truncate max-w-full ${
+                            isDark ? "text-slate-200" : "text-slate-700"
+                          }`}
+                        >
+                          {bucket.count.toLocaleString()}
+                        </span>
+                        <div
+                          className={`w-full max-w-[44px] rounded-t-md transition-all duration-500 ease-out group-hover:opacity-85 ${
+                            bucket.count > 0 ? bucket.color : isDark ? "bg-[#353A42]" : "bg-slate-200"
+                          }`}
+                          style={{
+                            height:
+                              bucket.count > 0
+                                ? `${Math.max(4, Math.round(heightPct))}%`
+                                : "2px",
+                          }}
+                        />
+                      </div>
+                      <div className="mt-2 text-center leading-tight w-full">
+                        <div
+                          className={`text-[10px] font-semibold truncate ${
+                            isDark ? "text-slate-300" : "text-slate-700"
+                          }`}
+                        >
+                          {bucket.rangeText}
+                        </div>
+                        <div className={`text-[9px] font-mono ${mutedText}`}>
+                          mm · {bucket.pct}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

@@ -3,6 +3,9 @@ import { useDispatch, useSelector } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
 import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
+import { BsCamera } from "react-icons/bs";
+import { GiCardPickup } from "react-icons/gi";
+import { MdUndo } from "react-icons/md";
 import { FiltersCheck, sortByFilter } from "@/utils/FiltersCheck";
 import { removeDetailedViewFod } from "@/store/actions/FodDetailedView";
 import {
@@ -10,12 +13,16 @@ import {
   reset_DetailedViewFod,
 } from "@/store/slices/fodDetailesView-slice";
 import { acceptFod, rejectFod } from "@/store/actions/FodActions";
+import { setFodStatus, updateSelectedFod } from "@/store/actions/SelectedFod";
+import { open_webcam } from "@/store/slices/webCam-slice";
+import { setFodFinalReview } from "@/store/actions/WebCam";
+import axiosClient from "@/utils/axios";
 import Image from "next/image";
 import { RootState, AppDispatch } from "@/store";
 import { getAllFrames, getAllFramesFromServer } from "@/ApiCalls/FodOperations";
 import { CircleLoader } from "../commen/loader";
 import Distance from "../commen/distance";
-import { doubleAccept } from "@/store/slices/fodReducer-slice";
+import { doubleAccept, undo_fod } from "@/store/slices/fodReducer-slice";
 import { toast } from "react-toastify";
 import { config } from "@/config/clientConfig";
 
@@ -32,6 +39,8 @@ const DetailedView = () => {
   const [fade, setfade] = useState(false);
 
   const detailedViewRef = useRef<HTMLDivElement | null>(null);
+  const imageSwipeStartX = useRef<number | null>(null);
+  const panelSwipeStartX = useRef<number | null>(null);
 
   const [isAcceptDisabled, setAcceptButtonStatus] = useState(false);
   const [isRejectDisabled, setRejectButtonStatus] = useState(false);
@@ -427,6 +436,46 @@ const DetailedView = () => {
   const currentSize = Number(activeFrame?.size ?? (fod as any)?.size ?? 24);
   const risk = getRiskBadge(currentSize);
   const fodNumber = (fod as any)?.groupId ?? fod?.id ?? "";
+  const groupStatus = (fod as any)?.groupStatus;
+  const isAcceptedFod = groupStatus === "ACCEPTED";
+  const canRevertToNew = Boolean(groupStatus && groupStatus !== "NEW" && groupStatus !== "CLEARED");
+  const [isReverting, setIsReverting] = useState(false);
+
+  const handleRevertToNew = async () => {
+    const groupId = (fod as any)?.groupId;
+    if (!groupId || isReverting) return;
+    setIsReverting(true);
+    try {
+      await axiosClient({
+        method: "POST",
+        url: `/api/fod-group/update/${groupId}`,
+        data: {
+          status: "NEW",
+          missionId: missionState.missionNumber,
+        },
+      });
+      dispatch(undo_fod(groupId));
+      toast.success(`FOD #${fodNumber} reverted to Pending`);
+      getNextFod();
+    } catch (e: any) {
+      toast.error(e?.data?.message || e?.data?.error || "Failed to revert FOD status");
+    } finally {
+      setIsReverting(false);
+    }
+  };
+
+  const handleOpenCamera = () => {
+    dispatch(updateSelectedFod(fod));
+    dispatch(removeDetailedViewFod());
+    dispatch(open_webcam());
+  };
+
+  const handleClearFod = () => {
+    dispatch(updateSelectedFod(fod));
+    dispatch(setFodStatus(1));
+    dispatch(removeDetailedViewFod());
+    dispatch(setFodFinalReview(true) as any);
+  };
 
   return (
     <>
@@ -457,12 +506,17 @@ const DetailedView = () => {
 
             {/* Left: Frame Viewer */}
             <div className="w-[63%] min-w-0 h-full relative rounded-xl overflow-hidden bg-slate-200 dark:bg-[#12161B] border border-slate-300 dark:border-[#333B46] flex items-center justify-center">
-              {/* Camera Timestamp */}
-              <div className="absolute top-3.5 left-3.5 max-[1100px]:top-2 max-[1100px]:left-2 z-20 px-4 py-2 max-[1100px]:px-2.5 max-[1100px]:py-1.5 rounded-lg bg-white/90 dark:bg-[#1A1F26]/85 backdrop-blur-md border border-slate-300 dark:border-[#3B4452] text-slate-700 dark:text-slate-100 text-xs max-[1100px]:text-[10px] font-medium tracking-wide shadow-md">
-                Camera ·{" "}
-                {formatTimestamp(
-                  activeFrame?.timestamp || (fod as any)?.timestamp,
-                )}
+              {/* Top-left: Red FOD badge + CCTV-style timestamp directly without bg card */}
+              <div className="absolute top-3.5 left-3.5 max-[1100px]:top-2 max-[1100px]:left-2 z-20 flex flex-col items-start gap-1 pointer-events-none select-none">
+                <span className="px-2.5 py-0.5 rounded bg-[#DC2626] text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wide shadow-md">
+                  FOD #{fodNumber}
+                </span>
+                <span className="text-white text-xs max-[1100px]:text-[10px] font-mono font-semibold tracking-wider drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
+                  Camera ·{" "}
+                  {formatTimestamp(
+                    activeFrame?.timestamp || (fod as any)?.timestamp,
+                  )}
+                </span>
               </div>
 
               {/* Zoom Controls */}
@@ -488,8 +542,23 @@ const DetailedView = () => {
                 </button>
               </div>
 
-              {/* Main Image */}
-              <div className="w-full h-full flex items-center justify-center overflow-hidden relative">
+              {/* Main Image (supports left/right swipe to switch frames) */}
+              <div
+                onPointerDown={(e) => {
+                  imageSwipeStartX.current = e.clientX;
+                }}
+                onPointerUp={(e) => {
+                  if (imageSwipeStartX.current === null) return;
+                  const dx = e.clientX - imageSwipeStartX.current;
+                  imageSwipeStartX.current = null;
+                  if (Math.abs(dx) < 35) return;
+                  stepFrame(dx < 0 ? 1 : -1);
+                }}
+                onPointerCancel={() => {
+                  imageSwipeStartX.current = null;
+                }}
+                className="w-full h-full flex items-center justify-center overflow-hidden relative touch-pan-y cursor-grab active:cursor-grabbing"
+              >
                 {activeFrame && (
                   <div
                     className="w-full h-full flex items-center justify-center transition-transform duration-200 ease-out"
@@ -503,12 +572,6 @@ const DetailedView = () => {
                       height={600}
                       draggable={false}
                     />
-
-                    <div className="absolute top-[37%] left-1/2 -translate-x-1/2 -translate-y-full mb-1 pointer-events-none">
-                      <span className="px-3 py-0.5 rounded bg-[#DC2626] text-white text-xs font-bold tracking-wide shadow-md">
-                        FOD #{fodNumber}
-                      </span>
-                    </div>
                   </div>
                 )}
               </div>
@@ -571,25 +634,56 @@ const DetailedView = () => {
               )}
             </div>
 
-            {/* Right: Details & Decision Panel */}
-            <div className="w-[37%] min-w-0 h-full rounded-xl bg-white dark:bg-[#1D2229] border border-slate-300 dark:border-[#2E3642] p-6 max-[1100px]:p-3 flex flex-col justify-between text-slate-800 dark:text-white">
+            {/* Right: Details & Decision Panel (supports left/right swipe to switch FODs) */}
+            <div
+              onPointerDown={(e) => {
+                if ((e.target as HTMLElement)?.closest("button")) return;
+                panelSwipeStartX.current = e.clientX;
+              }}
+              onPointerUp={(e) => {
+                if (panelSwipeStartX.current === null) return;
+                const dx = e.clientX - panelSwipeStartX.current;
+                panelSwipeStartX.current = null;
+                if (Math.abs(dx) < 45) return;
+                if (dx < 0) fetchNextFodDetailedView();
+                else fetchPreviousFodDetailedView();
+              }}
+              onPointerCancel={() => {
+                panelSwipeStartX.current = null;
+              }}
+              className="w-[37%] min-w-0 h-full rounded-xl bg-white dark:bg-[#1D2229] border border-slate-300 dark:border-[#2E3642] p-6 max-[1100px]:p-3 flex flex-col justify-between text-slate-800 dark:text-white touch-pan-y"
+            >
               <div className="min-w-0">
                 {/* Header */}
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center gap-2">
                   <span
                     className={`px-4 py-1.5 max-[1100px]:px-2.5 max-[1100px]:py-1 rounded-md text-xs max-[1100px]:text-[10px] font-extrabold uppercase tracking-wider ${risk.badgeStyle}`}
                   >
                     {risk.text}
                   </span>
 
-                  <button
-                    type="button"
-                    onClick={() => dispatch(removeDetailedViewFod())}
-                    title="Close (Esc)"
-                    className="w-9 h-9 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-slate-100 dark:bg-[#14181E] hover:bg-slate-200 dark:hover:bg-[#252C37] border border-slate-300 dark:border-[#323B48] flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer"
-                  >
-                    <RxCross1 className="w-4 h-4 max-[1100px]:w-3 max-[1100px]:h-3 stroke-[1.5]" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {canRevertToNew && (
+                      <button
+                        type="button"
+                        onClick={handleRevertToNew}
+                        disabled={isReverting}
+                        title="Revert status to New"
+                        className="w-9 h-9 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-slate-100 dark:bg-[#14181E] hover:bg-amber-50 dark:hover:bg-amber-500/15 border border-slate-300 dark:border-[#323B48] hover:border-amber-400/60 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <MdUndo className="w-4 h-4 max-[1100px]:w-3.5 max-[1100px]:h-3.5" />
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => dispatch(removeDetailedViewFod())}
+                      title="Close (Esc)"
+                      className="w-9 h-9 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-slate-100 dark:bg-[#14181E] hover:bg-slate-200 dark:hover:bg-[#252C37] border border-slate-300 dark:border-[#323B48] flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer"
+                    >
+                      <RxCross1 className="w-4 h-4 max-[1100px]:w-3 max-[1100px]:h-3 stroke-[1.5]" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Title */}
@@ -654,36 +748,57 @@ const DetailedView = () => {
               </div>
 
               {/* Decision Buttons */}
+              {isAcceptedFod ? (
+                <div className="w-full min-w-0 flex flex-col gap-3 max-[900px]:gap-2 mt-4 max-[900px]:mt-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenCamera}
+                    className="w-full min-w-0 min-h-[44px] py-3 px-3 max-[900px]:min-h-[38px] max-[900px]:py-2 max-[900px]:px-2 rounded-lg bg-[#002756] hover:bg-[#001F44] active:scale-[0.99] text-white font-semibold text-sm max-[900px]:text-[11px] tracking-wide leading-tight flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+                  >
+                    <BsCamera className="w-4 h-4 shrink-0" />
+                    <span>Camera</span>
+                  </button>
 
-              <div className="w-full min-w-0 flex flex-col gap-3 max-[900px]:gap-2 mt-4 max-[900px]:mt-2">
-                <button
-                  type="button"
-                  onClick={handleAccept}
-                  disabled={isAcceptDisabled}
-                  className="w-full min-w-0 min-h-[44px] py-3 px-3 max-[900px]:min-h-[38px] max-[900px]:py-2 max-[900px]:px-2 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] text-white font-semibold text-sm max-[900px]:text-[11px] tracking-wide max-[900px]:tracking-normal leading-tight flex items-center justify-center gap-2 max-[900px]:gap-1.5 transition-all cursor-pointer shadow-md"
-                >
-                  <HiOutlineCheck className="w-5 h-5 max-[900px]:w-3.5 max-[900px]:h-3.5 shrink-0 stroke-[2.5]" />
-                  <span className="min-w-0 text-center whitespace-normal break-words">
-                    YES – Send to Crew
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleClearFod}
+                    className="w-full min-w-0 min-h-[44px] py-3 px-3 max-[900px]:min-h-[38px] max-[900px]:py-2 max-[900px]:px-2 rounded-lg bg-[#017ED7] hover:bg-[#016EC0] active:scale-[0.99] text-white font-semibold text-sm max-[900px]:text-[11px] tracking-wide leading-tight flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+                  >
+                    <GiCardPickup className="w-4 h-4 shrink-0" />
+                    <span>Clear FOD</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="w-full min-w-0 flex flex-col gap-3 max-[900px]:gap-2 mt-4 max-[900px]:mt-2">
+                  <button
+                    type="button"
+                    onClick={handleAccept}
+                    disabled={isAcceptDisabled}
+                    className="w-full min-w-0 min-h-[44px] py-3 px-3 max-[900px]:min-h-[38px] max-[900px]:py-2 max-[900px]:px-2 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] text-white font-semibold text-sm max-[900px]:text-[11px] tracking-wide max-[900px]:tracking-normal leading-tight flex items-center justify-center gap-2 max-[900px]:gap-1.5 transition-all cursor-pointer shadow-md"
+                  >
+                    <HiOutlineCheck className="w-5 h-5 max-[900px]:w-3.5 max-[900px]:h-3.5 shrink-0 stroke-[2.5]" />
+                    <span className="min-w-0 text-center whitespace-normal break-words">
+                      YES – Send to Crew
+                    </span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={handleReject}
-                  disabled={isRejectDisabled}
-                  className="w-full min-w-0 min-h-[44px] py-3 px-3 max-[900px]:min-h-[38px] max-[900px]:py-2 max-[900px]:px-2 rounded-lg  bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white active:scale-[0.99] font-semibold text-sm max-[900px]:text-[11px] tracking-wide max-[900px]:tracking-normal leading-tight flex items-center justify-center gap-2 max-[900px]:gap-1.5 transition-all cursor-pointer"
-                >
-                  <RxCross1 className="w-4 h-4 max-[900px]:w-3 max-[900px]:h-3 shrink-0 stroke-[1]" />
-                  <span className="min-w-0 text-center whitespace-normal break-words">
-                    NO – Not Debris
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleReject}
+                    disabled={isRejectDisabled}
+                    className="w-full min-w-0 min-h-[44px] py-3 px-3 max-[900px]:min-h-[38px] max-[900px]:py-2 max-[900px]:px-2 rounded-lg  bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white active:scale-[0.99] font-semibold text-sm max-[900px]:text-[11px] tracking-wide max-[900px]:tracking-normal leading-tight flex items-center justify-center gap-2 max-[900px]:gap-1.5 transition-all cursor-pointer"
+                  >
+                    <RxCross1 className="w-4 h-4 max-[900px]:w-3 max-[900px]:h-3 shrink-0 stroke-[1]" />
+                    <span className="min-w-0 text-center whitespace-normal break-words">
+                      NO – Not Debris
+                    </span>
+                  </button>
 
-                <p className="text-center text-[#7E8691] text-xs max-[900px]:text-[9px] font-medium mt-0.5 leading-tight">
-                  If unsure, press YES. The crew will check the spot.
-                </p>
-              </div>
+                  <p className="text-center text-[#7E8691] text-xs max-[900px]:text-[9px] font-medium mt-0.5 leading-tight">
+                    If unsure, press YES. The crew will check the spot.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Next FOD */}

@@ -21,18 +21,17 @@ const MissionSelector = () => {
     const [loading, setLoading] = useState(true);
     const [missions, setMissions] = useState<any[]>([]);
     const [showDateControls, setShowDateControls] = useState(false);
-    const [dateFilterMode, setDateFilterMode] = useState<"all" | "date" | "month" | "range">("all");
+    const [dateFilterMode, setDateFilterMode] = useState<"all" | "date" | "month">("all");
     const [selectedDate, setSelectedDate] = useState("");
+    const [selectedDateEnd, setSelectedDateEnd] = useState("");
     const [selectedMonth, setSelectedMonth] = useState("");
-    const [fromDate, setFromDate] = useState("");
-    const [toDate, setToDate] = useState("");
     const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
     const [visibleLimit, setVisibleLimit] = useState(25);
     const [selectedMission, setSelectedMission] = useState<any>(null);
 
     useEffect(() => {
         setVisibleLimit(25);
-    }, [dateFilterMode, selectedDate, selectedMonth, fromDate, toDate, sortOrder]);
+    }, [dateFilterMode, selectedDate, selectedDateEnd, selectedMonth, sortOrder]);
 
     const { latency, availableCommunication } = useSelector((store: RootState) => store.SystemHealth);
     const isDark = useSelector((store: RootState) => store.theme.theme === 'dark');
@@ -132,15 +131,14 @@ const MissionSelector = () => {
             const localMonthStr = `${yyyy}-${mm}`;
 
             if (dateFilterMode === "date") {
-                return !selectedDate || localDateStr === selectedDate;
+                if (!selectedDate) return true;
+                if (selectedDateEnd && selectedDateEnd !== selectedDate) {
+                    return localDateStr >= selectedDate && localDateStr <= selectedDateEnd;
+                }
+                return localDateStr === selectedDate;
             }
             if (dateFilterMode === "month") {
                 return !selectedMonth || localMonthStr === selectedMonth;
-            }
-            if (dateFilterMode === "range") {
-                if (fromDate && localDateStr < fromDate) return false;
-                if (toDate && localDateStr > toDate) return false;
-                return true;
             }
             return true;
         });
@@ -150,19 +148,17 @@ const MissionSelector = () => {
             const tb = new Date(b.createdAt || b.created_at || 0).getTime() || Number(b.mission_id ?? b.id ?? 0);
             return sortOrder === "newest" ? tb - ta : ta - tb;
         });
-    }, [missionsWithDisplayId, dateFilterMode, selectedDate, selectedMonth, fromDate, toDate, sortOrder]);
+    }, [missionsWithDisplayId, dateFilterMode, selectedDate, selectedDateEnd, selectedMonth, sortOrder]);
 
     const isDateFiltered =
         (dateFilterMode === "date" && !!selectedDate) ||
-        (dateFilterMode === "month" && !!selectedMonth) ||
-        (dateFilterMode === "range" && (!!fromDate || !!toDate));
+        (dateFilterMode === "month" && !!selectedMonth);
 
     const clearDateFilter = () => {
         setDateFilterMode("all");
         setSelectedDate("");
+        setSelectedDateEnd("");
         setSelectedMonth("");
-        setFromDate("");
-        setToDate("");
     };
 
     // Live active mission
@@ -246,7 +242,7 @@ const MissionSelector = () => {
                     >
                         <div className="flex items-center justify-between gap-1">
                             <div className="flex items-center gap-1 flex-wrap">
-                                {(["all", "date", "month", "range"] as const).map((mode) => (
+                                {(["all", "date", "month"] as const).map((mode) => (
                                     <button
                                         key={mode}
                                         type="button"
@@ -282,8 +278,13 @@ const MissionSelector = () => {
                             <DatePickerPopover
                                 mode="date"
                                 value={selectedDate}
+                                rangeEnd={selectedDateEnd}
                                 onChange={setSelectedDate}
-                                placeholder="Select date"
+                                onRangeChange={(start, end) => {
+                                    setSelectedDate(start);
+                                    setSelectedDateEnd(end);
+                                }}
+                                placeholder="Select date or range"
                                 isDark={isDark}
                             />
                         )}
@@ -296,27 +297,6 @@ const MissionSelector = () => {
                                 placeholder="Select month"
                                 isDark={isDark}
                             />
-                        )}
-
-                        {dateFilterMode === "range" && (
-                            <div className="grid grid-cols-2 gap-1.5">
-                                <DatePickerPopover
-                                    mode="date"
-                                    value={fromDate}
-                                    onChange={setFromDate}
-                                    placeholder="From"
-                                    isDark={isDark}
-                                    compact
-                                />
-                                <DatePickerPopover
-                                    mode="date"
-                                    value={toDate}
-                                    onChange={setToDate}
-                                    placeholder="To"
-                                    isDark={isDark}
-                                    compact
-                                />
-                            </div>
                         )}
 
                         {isDateFiltered && (

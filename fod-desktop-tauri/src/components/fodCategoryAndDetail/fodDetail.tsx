@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   Fod_FodId,
@@ -9,6 +9,7 @@ import { HiOutlineCheck } from "react-icons/hi";
 import { RxCross1 } from "react-icons/rx";
 import { BsCamera } from "react-icons/bs";
 import { GiCardPickup } from "react-icons/gi";
+import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
 import {
   close_SideBarFodDetail,
   selectFrame_SideBar,
@@ -92,11 +93,10 @@ const FodDetail = () => {
         )}
       </div>
 
-      {/* Frames list fills remaining space above metadata */}
-      <FodGrid />
+      {/* Scrollable top group: Image carousel + metadata directly below */}
+      <div className="w-full flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+        <FodGrid />
 
-      {/* Bottom section: FOD metadata + actions */}
-      <div className="w-full min-w-0 flex flex-col gap-2 shrink-0">
         {/* FOD information */}
         <div className="w-full min-w-0 flex flex-col gap-1.5 text-[11px] sm:text-xs shrink-0">
           <div className="w-full min-w-0 bg-slate-50 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] rounded-md flex justify-between items-center gap-2 px-2 sm:px-2.5 py-1.5">
@@ -162,39 +162,42 @@ const FodDetail = () => {
             </span>
           </div>
         </div>
+      </div>
 
-        {/* Bottom actions */}
-        {!isClearedFod && (
-          <div className="w-full min-w-0 flex flex-col gap-1.5 sm:gap-2 shrink-0">
-          {/* FOD status buttons */}
-          <div className="w-full h-[32px] sm:h-[36px] flex justify-between items-stretch gap-1 sm:gap-1.5">
-            <button
-              type="button"
-              className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(1)}`}
-              onClick={() => dispatch(setFodStatus(1) as any)}
-            >
-              <span>FOD</span>
-              <span>Found</span>
-            </button>
+      {/* Bottom actions pinned after remaining space */}
+      {!isClearedFod && (
+        <div className="w-full min-w-0 flex flex-col gap-1.5 sm:gap-2 shrink-0 mt-auto">
+          {/* FOD status buttons (shown in final review step) */}
+          {isFodFinalReviewOpen && (
+            <div className="w-full h-[32px] sm:h-[36px] flex justify-between items-stretch gap-1 sm:gap-1.5">
+              <button
+                type="button"
+                className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(1)}`}
+                onClick={() => dispatch(setFodStatus(1) as any)}
+              >
+                <span>FOD</span>
+                <span>Found</span>
+              </button>
 
-            <button
-              type="button"
-              className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(3)}`}
-              onClick={() => dispatch(setFodStatus(3) as any)}
-            >
-              <span>Not</span>
-              <span>Found</span>
-            </button>
+              <button
+                type="button"
+                className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(3)}`}
+                onClick={() => dispatch(setFodStatus(3) as any)}
+              >
+                <span>Not</span>
+                <span>Found</span>
+              </button>
 
-            <button
-              type="button"
-              className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(2)}`}
-              onClick={() => dispatch(setFodStatus(2) as any)}
-            >
-              <span>False</span>
-              <span>Found</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(2)}`}
+                onClick={() => dispatch(setFodStatus(2) as any)}
+              >
+                <span>False</span>
+                <span>Found</span>
+              </button>
+            </div>
+          )}
 
           {/* Main action buttons */}
           <div className="w-full h-[34px] sm:h-[38px] flex justify-center gap-1.5 sm:gap-2">
@@ -242,7 +245,6 @@ const FodDetail = () => {
           </div>
         </div>
       )}
-      </div>
     </div>
   );
 };
@@ -258,53 +260,184 @@ export const FodGrid = () => {
 
   const fod = useSelector(
     (state: RootState) => state.SelectedFod.fod
-  );
+  ) as any;
 
   const selectedFrame = useSelector(
     (state: RootState) => state.SelectedFod.selectedFrame
   );
 
-  const updateSelectedFrame = (frame: any) => {
-    dispatch(selectFrame_SideBar(frame));
+  const FodPointArr: any[] =
+    fod?.FodPoint && Array.isArray(fod.FodPoint) ? fod.FodPoint : [];
+
+  const [activeIdx, setActiveIdx] = useState(0);
+  const swipeStartX = useRef<number | null>(null);
+  const dotsRef = useRef<HTMLDivElement | null>(null);
+  const isScrubbingDots = useRef(false);
+
+  // Reset to first frame when switching FODs
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [fod?.groupId, fod?.id]);
+
+  // Keep activeIdx in bounds when frames array updates
+  useEffect(() => {
+    if (FodPointArr.length > 0 && activeIdx >= FodPointArr.length) {
+      setActiveIdx(0);
+    }
+  }, [FodPointArr.length, activeIdx]);
+
+  // Sync activeIdx if selectedFrame was changed externally
+  useEffect(() => {
+    if (!selectedFrame?.id || FodPointArr.length === 0) return;
+    const foundIdx = FodPointArr.findIndex((f) => f?.id === selectedFrame.id);
+    if (foundIdx >= 0 && foundIdx !== activeIdx) {
+      setActiveIdx(foundIdx);
+    }
+  }, [selectedFrame?.id, FodPointArr]);
+
+  const goToIndex = (nextIdx: number) => {
+    if (FodPointArr.length === 0) return;
+    const clamped = Math.max(0, Math.min(FodPointArr.length - 1, nextIdx));
+    setActiveIdx(clamped);
+    dispatch(selectFrame_SideBar(FodPointArr[clamped]));
   };
 
-  const FodPointArr =
-    fod?.FodPoint && Array.isArray(fod.FodPoint)
-      ? fod.FodPoint
-      : [];
+  const handleImagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    swipeStartX.current = e.clientX;
+  };
 
-  const points = FodPointArr.map((fod: any) => ({
-    type: "Feature",
-    properties: { ...fod },
-    geometry: {
-      type: "Point",
-      coordinates: [fod.location.lon, fod.location.lat],
-    },
-  }));
+  const handleImagePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (swipeStartX.current === null) return;
+    const dx = e.clientX - swipeStartX.current;
+    swipeStartX.current = null;
+    if (Math.abs(dx) < 30) return;
+    if (dx < 0) {
+      goToIndex(activeIdx + 1);
+    } else {
+      goToIndex(activeIdx - 1);
+    }
+  };
+
+  const scrubDotsAtClientX = (clientX: number) => {
+    const el = dotsRef.current;
+    if (!el || FodPointArr.length <= 1) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(0.9999, (clientX - rect.left) / rect.width));
+    const idx = Math.floor(ratio * FodPointArr.length);
+    if (idx !== activeIdx) {
+      goToIndex(idx);
+    }
+  };
+
+  const currentFrame = FodPointArr[activeIdx] ?? FodPointArr[0];
 
   return (
-    <div className="w-full flex-1 min-h-0 bg-slate-100 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] rounded-md p-1.5 overflow-y-auto space-y-2 transition-colors">
-      {FodPointArr.map((f: any, index: number) => (
-        <div
-          key={index}
-          className={`w-full aspect-video rounded overflow-hidden cursor-pointer transition-colors ${
-            index === 0
-              ? "border-2 border-slate-900 dark:border-white"
-              : selectedFrame?.id == f.id
-                ? "border-2 border-[#00B957]"
-                : "border border-slate-300 dark:border-[#454B53]"
-          }`}
-          onClick={() => updateSelectedFrame(f)}
-        >
+    <div className="w-full shrink-0 flex flex-col gap-2 select-none">
+      {/* Main Frame Viewport with Left/Right Swipe & Direction Buttons */}
+      <div
+        onPointerDown={handleImagePointerDown}
+        onPointerUp={handleImagePointerUp}
+        onPointerCancel={() => {
+          swipeStartX.current = null;
+        }}
+        className="relative w-full aspect-square rounded-md overflow-hidden bg-slate-100 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] flex items-center justify-center touch-pan-y cursor-grab active:cursor-grabbing"
+      >
+        {currentFrame ? (
           <Image
-            src={`${config.ImagesBase}/${missionState.missionNumber}/${f.groupId}/${f.id}.jpg`}
-            className="w-full h-full object-cover object-center"
-            alt="FOD frame"
+            src={`${config.ImagesBase}/${missionState.missionNumber}/${currentFrame.groupId}/${currentFrame.id}.jpg`}
+            className="w-full h-full object-cover object-center pointer-events-none"
+            alt={`FOD frame ${activeIdx + 1}`}
             width={320}
-            height={180}
+            height={240}
+            draggable={false}
           />
+        ) : (
+          <span className="text-xs text-slate-400 dark:text-slate-500">
+            No frames available
+          </span>
+        )}
+
+        {FodPointArr.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goToIndex(activeIdx - 1);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={activeIdx <= 0}
+              aria-label="Previous frame"
+              className="absolute left-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/45 hover:bg-black/65 disabled:opacity-30 text-white flex items-center justify-center transition-all cursor-pointer disabled:cursor-default backdrop-blur-[2px]"
+            >
+              <FiChevronLeft className="w-4 h-4 stroke-[2.5]" />
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goToIndex(activeIdx + 1);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={activeIdx >= FodPointArr.length - 1}
+              aria-label="Next frame"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/45 hover:bg-black/65 disabled:opacity-30 text-white flex items-center justify-center transition-all cursor-pointer disabled:cursor-default backdrop-blur-[2px]"
+            >
+              <FiChevronRight className="w-4 h-4 stroke-[2.5]" />
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Interactive Dots Indicator (click or slide across dots to scrub frames) */}
+      {FodPointArr.length > 1 && (
+        <div className="w-full flex justify-center py-0.5 shrink-0">
+          <div
+            ref={dotsRef}
+            onPointerDown={(e) => {
+              isScrubbingDots.current = true;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              scrubDotsAtClientX(e.clientX);
+            }}
+            onPointerMove={(e) => {
+              if (!isScrubbingDots.current) return;
+              scrubDotsAtClientX(e.clientX);
+            }}
+            onPointerUp={(e) => {
+              isScrubbingDots.current = false;
+              try {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              } catch {
+                // ignore
+              }
+            }}
+            onPointerCancel={() => {
+              isScrubbingDots.current = false;
+            }}
+            className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-200/75 dark:bg-[#202632] cursor-ew-resize touch-none max-w-full overflow-hidden"
+            title="Click or drag across dots to switch frame"
+          >
+            {FodPointArr.map((f: any, idx: number) => {
+              const isCurrent = idx === activeIdx;
+              return (
+                <button
+                  key={f?.id ?? idx}
+                  type="button"
+                  aria-label={`Frame ${idx + 1}`}
+                  onClick={() => goToIndex(idx)}
+                  className={`rounded-full transition-all duration-150 shrink-0 ${
+                    isCurrent
+                      ? "w-2 h-2 bg-[#017ED7] dark:bg-white scale-110"
+                      : "w-1.5 h-1.5 bg-slate-400/70 dark:bg-slate-500 hover:bg-slate-500 dark:hover:bg-slate-300"
+                  }`}
+                />
+              );
+            })}
+          </div>
         </div>
-      ))}
+      )}
     </div>
   );
 };

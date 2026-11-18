@@ -10,7 +10,9 @@ const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 interface DatePickerPopoverProps {
   mode: "date" | "month";
   value: string; // "YYYY-MM-DD" or "YYYY-MM"
+  rangeEnd?: string; // Optional second date "YYYY-MM-DD" for multi-date range
   onChange: (val: string) => void;
+  onRangeChange?: (start: string, end: string) => void;
   placeholder?: string;
   isDark?: boolean;
   compact?: boolean;
@@ -19,12 +21,15 @@ interface DatePickerPopoverProps {
 export const DatePickerPopover: React.FC<DatePickerPopoverProps> = ({
   mode,
   value,
+  rangeEnd = "",
   onChange,
+  onRangeChange,
   placeholder,
   isDark = false,
   compact = false,
 }) => {
   const [open, setOpen] = useState(false);
+  const [hoverDate, setHoverDate] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const now = new Date();
@@ -71,6 +76,9 @@ export const DatePickerPopover: React.FC<DatePickerPopoverProps> = ({
       const y = value.slice(0, 4);
       const mIdx = Number(value.slice(5, 7)) - 1;
       return `${MONTHS_SHORT[mIdx] ?? ""} ${y}`;
+    }
+    if (rangeEnd && rangeEnd !== value) {
+      return `${value} → ${rangeEnd}`;
     }
     return value;
   };
@@ -185,25 +193,60 @@ export const DatePickerPopover: React.FC<DatePickerPopoverProps> = ({
                   </span>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-0.5 text-center">
+              <div
+                className="grid grid-cols-7 gap-0.5 text-center"
+                onMouseLeave={() => setHoverDate(null)}
+              >
                 {Array.from({ length: firstDayOffset }).map((_, i) => (
                   <span key={`empty-${i}`} />
                 ))}
                 {Array.from({ length: daysInMonth }).map((_, idx) => {
                   const day = idx + 1;
                   const dVal = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                  const selected = value === dVal;
+                  const isRangePicker = Boolean(onRangeChange);
+                  const previewEnd = isRangePicker && value && !rangeEnd ? hoverDate : null;
+                  const activeStart =
+                    previewEnd && previewEnd < value ? previewEnd : value;
+                  const activeEnd =
+                    rangeEnd || (previewEnd && previewEnd > value ? previewEnd : previewEnd && previewEnd < value ? value : "");
+                  const isEndpoint = dVal === value || (Boolean(rangeEnd) && dVal === rangeEnd);
+                  const isInRange =
+                    Boolean(activeStart && activeEnd) &&
+                    dVal >= activeStart &&
+                    dVal <= activeEnd;
                   return (
                     <button
                       key={day}
                       type="button"
+                      onMouseEnter={() => {
+                        if (isRangePicker && value && !rangeEnd) setHoverDate(dVal);
+                      }}
                       onClick={() => {
-                        onChange(dVal);
-                        setOpen(false);
+                        if (onRangeChange) {
+                          if (!value || (value && rangeEnd)) {
+                            onRangeChange(dVal, "");
+                          } else if (dVal === value) {
+                            onRangeChange(dVal, "");
+                            setOpen(false);
+                          } else if (dVal < value) {
+                            onRangeChange(dVal, value);
+                            setHoverDate(null);
+                            setOpen(false);
+                          } else {
+                            onRangeChange(value, dVal);
+                            setHoverDate(null);
+                            setOpen(false);
+                          }
+                        } else {
+                          onChange(dVal);
+                          setOpen(false);
+                        }
                       }}
                       className={`h-6 rounded-md text-[11px] font-mono transition-colors cursor-pointer ${
-                        selected
+                        isEndpoint
                           ? "bg-[#4C9FE8] text-white font-bold"
+                          : isInRange
+                          ? "bg-[#4C9FE8]/20 text-[#4C9FE8] font-semibold"
                           : isDark
                           ? "hover:bg-[#2A313C] text-slate-200"
                           : "hover:bg-slate-100 text-slate-700"
@@ -214,6 +257,13 @@ export const DatePickerPopover: React.FC<DatePickerPopoverProps> = ({
                   );
                 })}
               </div>
+              {onRangeChange && (
+                <div className="mt-2 pt-1.5 border-t border-slate-200/70 dark:border-[#2E3642] text-[10px] text-center text-slate-400 dark:text-slate-500">
+                  {value && !rangeEnd
+                    ? "Click another date for range (or same to keep 1 day)"
+                    : "Click a date, or pick two dates for a range"}
+                </div>
+              )}
             </>
           )}
         </div>

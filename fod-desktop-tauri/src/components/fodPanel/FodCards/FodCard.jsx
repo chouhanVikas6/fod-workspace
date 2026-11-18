@@ -4,12 +4,16 @@ import { useDispatch, useSelector } from "react-redux";
 
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
+import { BsCamera } from "react-icons/bs";
+import { GiCardPickup } from "react-icons/gi";
 
 import MapMode from "@/assets/images/svg/MissionControl/MapMode.svg";
 
 import { Fod_Velocity, Fod_Size } from "../../../utils/FodParser";
 import { set_Map_view } from "@/store/actions/MapOperations";
-import { updateSelectedFod } from "@/store/actions/SelectedFod";
+import { setFodStatus, updateSelectedFod } from "@/store/actions/SelectedFod";
+import { open_webcam } from "@/store/slices/webCam-slice";
+import { setFodFinalReview } from "@/store/actions/WebCam";
 
 import BarLoader from "../../../utils/Helper/BarLoader.jsx";
 import { config } from "@/config/clientConfig";
@@ -121,6 +125,21 @@ const Fodcard = ({
 
     dispatch(set_Map_view);
     dispatch(updateSelectedFod(fod));
+  };
+
+  const handleOpenCamera = (e) => {
+    if (e) e.stopPropagation();
+
+    dispatch(updateSelectedFod(fod));
+    dispatch(open_webcam());
+  };
+
+  const handleClearFod = (e) => {
+    if (e) e.stopPropagation();
+
+    dispatch(updateSelectedFod(fod));
+    dispatch(setFodStatus(1));
+    dispatch(setFodFinalReview(true));
   };
 
   const acceptFod = async (fod, e) => {
@@ -318,31 +337,51 @@ const Fodcard = ({
 
       {/* Action Buttons */}
       <div className="w-full flex flex-col gap-2 mt-auto">
-        {/* Confirm FOD */}
-        <button
-          type="button"
-          disabled={imgModal}
-          onClick={(e) => acceptFod(fod, e)}
-          className={`w-full h-[34px] rounded-[5px] border font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors ${
-            isFodFound
-              ? "bg-slate-100 dark:bg-[#303640] border-slate-200 dark:border-[#414B57] text-slate-400 dark:text-white cursor-not-allowed"
-              : "bg-[#4C9FE8] hover:bg-[#398BD5] active:bg-[#2F7FC5] border-[#4C9FE8] text-white cursor-pointer"
-          }`}
-        >
-          <HiOutlineCheck className="w-4 h-4 stroke-[2.5]" />
-          <span>CONFIRM FOD</span>
-        </button>
+        {isFodFound ? (
+          <>
+            <button
+              type="button"
+              disabled={imgModal}
+              onClick={handleOpenCamera}
+              className="w-full h-[34px] rounded-[5px] border bg-[#002756] hover:bg-[#001F44] active:bg-[#001633] border-[#002756] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <BsCamera className="w-3.5 h-3.5" />
+              <span>CAMERA</span>
+            </button>
 
-        {/* Not FOD */}
-        <button
-          type="button"
-          disabled={imgModal}
-          onClick={(e) => rejectFod(fod, e)}
-          className="w-full h-[34px] rounded-[5px] bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <RxCross1 className="w-3.5 h-3.5 stroke-[1.5]" />
-          <span>NOT FOD</span>
-        </button>
+            <button
+              type="button"
+              disabled={imgModal}
+              onClick={handleClearFod}
+              className="w-full h-[34px] rounded-[5px] border bg-[#017ED7] hover:bg-[#016EC0] active:bg-[#015EA3] border-[#017ED7] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <GiCardPickup className="w-4 h-4" />
+              <span>CLEAR FOD</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={imgModal}
+              onClick={(e) => acceptFod(fod, e)}
+              className="w-full h-[34px] rounded-[5px] border bg-[#4C9FE8] hover:bg-[#398BD5] active:bg-[#2F7FC5] border-[#4C9FE8] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <HiOutlineCheck className="w-4 h-4 stroke-[2.5]" />
+              <span>CONFIRM FOD</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={imgModal}
+              onClick={(e) => rejectFod(fod, e)}
+              className="w-full h-[34px] rounded-[5px] bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RxCross1 className="w-3.5 h-3.5 stroke-[1.5]" />
+              <span>NOT FOD</span>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
