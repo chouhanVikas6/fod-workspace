@@ -1,118 +1,62 @@
 import React from "react";
 import { set_selectedQueue } from "@/store/slices/mapReducer-slice";
 import { useSelector, useDispatch } from "react-redux";
-import Selected  from "@/assets/images/svg/map/selected.svg";
+import Selected from "@/assets/images/svg/map/selected.svg";
 import { RootState } from "@/store";
 import Image from "next/image";
 
-function Tickbox({color="bg-[#FF8360]"}) {
-  return ( 
-    // change this bg color to change checkbox color
-    <div className={`w-4 h-4  ${color} flex items-center justify-center overflow-hidden rounded-[3px]`}>
-      <Image src={Selected} alt="" width={12} height={12}/>
+function Tickbox({ color = "bg-[#FF8360]" }) {
+  return (
+    <div className={`w-4 h-4 shrink-0 ${color} flex items-center justify-center overflow-hidden rounded-[4px]`}>
+      <Image src={Selected} alt="" width={11} height={11} />
     </div>
   );
 }
 
+const FILTER_OPTIONS = [
+  { key: "ACCEPTED", label: "Accepted FOD", boxColor: "bg-red-500", textColor: "text-red-500" },
+  { key: "CLEARED", label: "Cleared FOD", boxColor: "bg-green-500", textColor: "text-green-500" },
+  { key: "REJECTED", label: "Rejected FOD", boxColor: "bg-gray-500", textColor: "text-gray-500 dark:text-slate-300" },
+  { key: "NEW", label: "New FOD", boxColor: "bg-yellow-500", textColor: "text-yellow-500" },
+  { key: "MISSED", label: "Missed FOD", boxColor: "bg-orange-500", textColor: "text-orange-500" },
+];
+
 export default function FilterBox() {
   const dispatch = useDispatch();
-  const selected_queue = useSelector((state:RootState) => state.MapReducer.selectedQueue);
+  const selected_queue = useSelector((state: RootState) => state.MapReducer.selectedQueue);
 
-  function checkSelected(item) {
-    return selected_queue.includes(item);
-  }
+  const checkSelected = (item: string) => selected_queue.includes(item);
 
   return (
-    <div className="absolute bottom-[100%]  ">
-      <div className="bg-white w-[160px] rounded-[6px] flex flex-col items-start justify-between px-[7px]">
-   
-   
-        <button
-          className={`flex items-center py-2  font-semibold`}
-          onClick={() => {
-            dispatch(set_selectedQueue('ACCEPTED'));
-          }}
-        >
-          {checkSelected('ACCEPTED') ? <Tickbox color="bg-red-500" /> : <div className="w-4 h-4 border-[1px] border-[#D8D8D8] rounded-[3px]" />}
-          <span className={`ml-2 ${
-            selected_queue.includes('ACCEPTED')
-              ? "text-red-500"
-              : "text-gray-400 "
-          }`}>Accepted FOD</span>
-        </button>
-        <button
-          className={`flex items-center py-2 font-semibold${
-            checkSelected('CLEARED')
-              ? "text-blue-500 "
-              : "text-gray-600 hover:text-blue-500"
-          }`}
-          onClick={() => {
-            dispatch(set_selectedQueue('CLEARED'));
-          }}
-        >
-          {checkSelected('CLEARED') ? <Tickbox color="bg-green-500"  /> : <div className="w-4 h-4 border-[1px] border-[#D8D8D8] rounded-[3px]" />}
-          <span className={`ml-2 ${
-            selected_queue.includes('CLEARED')
-              ? "text-green-500"
-              : "text-gray-400 "
-          }`}>Cleared FOD</span>
-        </button>
-        <button
-          className={`flex items-center py-2  font-semibold`}
-          onClick={() => {
-            dispatch(set_selectedQueue('REJECTED'));
-          }}
-        >
-          {checkSelected('REJECTED') ? <Tickbox color="bg-gray-500" /> : <div className="w-4 h-4 border-[1px] border-[#D8D8D8] rounded-[3px]" />}
-          <span className={`ml-2 ${
-            selected_queue.includes('REJECTED')
-              ? "text-gray-500"
-              : "text-gray-400 "
-          }`}>Rejected FOD</span>
-        </button>
-        {/* <button
-          className={`flex items-center py-2 ${
-            checkSelected(0)
-              ? "text-blue-500 font-semibold"
-              : "text-gray-600 hover:text-blue-500"
-          }`}
-          onClick={() => {
-            dispatch(set_selectedQueue(0));
-          }}
-        >
-          {checkSelected(0) ? <Tickbox /> : <div className="w-4 h-4 border-[1px] border-[#D8D8D8] rounded-[3px]" />}
-          <span className="ml-2">Car’s Location</span>
-        </button> */}
-        <button
-          className={`flex items-center py-2  font-semibold`}
-          onClick={() => {
-            dispatch(set_selectedQueue('NEW'));
-          }}
-        >
-          {checkSelected('NEW') ? <Tickbox color="bg-yellow-500" /> : <div className="w-4 h-4 border-[1px] border-[#D8D8D8] rounded-[3px]" />}
-          <span className={`ml-2 ${
-            selected_queue.includes('NEW')
-              ? "text-yellow-500"
-              : "text-gray-400 "
-          }`}>NEW FOD</span>
-        </button>
-
-        <button
-          className={`flex items-center py-2  font-semibold`}
-          onClick={() => {
-            dispatch(set_selectedQueue('MISSED'));
-          }}
-        >
-          {checkSelected('MISSED') ? <Tickbox color="bg-orange-500" /> : <div className="w-4 h-4 border-[1px] border-[#D8D8D8] rounded-[3px]" />}
-          <span className={`ml-2 ${
-            selected_queue.includes('MISSED')
-              ? "text-orange-500"
-              : "text-gray-400 "
-          }`}>Missed FOD</span>
-        </button>
-    
+    <div className="absolute bottom-full right-0 mb-2.5 z-50">
+      <div className="w-[168px] rounded-xl bg-white/95 dark:bg-[#1E2228]/95 backdrop-blur-md border border-slate-200/90 dark:border-white/15 shadow-xl p-1.5 flex flex-col gap-0.5">
+        {FILTER_OPTIONS.map((opt) => {
+          const isSelected = checkSelected(opt.key);
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => dispatch(set_selectedQueue(opt.key))}
+              className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold tracking-normal whitespace-nowrap hover:bg-slate-100/80 dark:hover:bg-white/10 transition-colors cursor-pointer text-left"
+            >
+              {isSelected ? (
+                <Tickbox color={opt.boxColor} />
+              ) : (
+                <div className="w-4 h-4 shrink-0 border border-slate-300 dark:border-white/25 rounded-[4px]" />
+              )}
+              <span
+                className={`text-xs font-semibold leading-none ${
+                  isSelected
+                    ? opt.textColor
+                    : "text-slate-500 dark:text-slate-400"
+                }`}
+              >
+                {opt.label}
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <div className="endtip"></div>
     </div>
   );
 }

@@ -275,7 +275,7 @@ const MapControls = ({ map }: { map: any }) => {
       </div>
 
       {/* MAP ACTION DOCK - BOTTOM RIGHT (Filter -> Locate -> Heading) */}
-      <div className="absolute bottom-5 right-5 z-20 flex items-center gap-2 p-1.5 rounded-2xl bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md border border-slate-200/90 dark:border-white/15 shadow-lg transition-colors">
+      <div className={`absolute bottom-5 right-5 flex items-center gap-2 p-1.5 rounded-2xl bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md border border-slate-200/90 dark:border-white/15 shadow-lg transition-colors ${isfilterboxOpen ? "z-40" : "z-20"}`}>
         {/* 1. Filter (Leftmost) */}
         <div className="relative">
           <button

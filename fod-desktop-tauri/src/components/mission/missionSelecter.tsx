@@ -175,27 +175,39 @@ const MissionSelector = () => {
 
     const viewKey = `${currentScreen || "welcome"}-${selectedMission?.id ?? "none"}`;
 
+    const isTemplateFullscreen = currentScreen === "MissionTemplate";
+
     return (
-        <div className={`mission-selector-native-theme h-full w-full flex items-center gap-6 p-5 overflow-hidden select-none transition-colors duration-200 ${
+        <div className={`mission-selector-native-theme h-full w-full flex items-center overflow-hidden select-none transition-colors duration-200 ${
+            isTemplateFullscreen ? "p-0 gap-0" : "gap-6 p-5"
+        } ${
             isDark ? "bg-[#22262B] text-slate-100" : "bg-[#F1F5F9] text-slate-900"
         }`}>
+           
             {/* Left Column: Actions & Previous Missions */}
-            <div className={`h-full w-[286px] shrink-0 flex flex-col rounded-2xl p-3.5 border transition-colors duration-200 ${
-                isDark
-                    ? "bg-[#1A1E24] border-[#2E343D] shadow-lg"
-                    : "bg-white border-slate-200/90 shadow-sm"
-            }`}>
-                {/* Show either Live Mission (Join) OR + Start New Mission */}
-                {activeMission?.length > 0 ? (
-                    <MissionCard active={true} missionData={activeMission[0]} isCarLive={isCarLive} />
-                ) : (
-                    <button
-                        onClick={startTemplateView}
-                        className="w-full h-10 px-4 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] transition-all text-white font-bold text-sm flex items-center justify-center space-x-2 shadow cursor-pointer"
-                    >
-                        <span>{t("start-new-mission")}</span>
-                    </button>
-                )}
+            {!isTemplateFullscreen && (
+                <div className={`h-full w-[286px] shrink-0 flex flex-col rounded-2xl p-3.5 border transition-colors duration-200 ${
+                    isDark
+                        ? "bg-[#1A1E24] border-[#2E343D] shadow-lg"
+                        : "bg-white border-slate-200/90 shadow-sm"
+                }`}>
+                    {/* Show active mission OR allow starting a new mission */}
+                    {activeMission?.length > 0 ? (
+                        <MissionCard
+                            active={true}
+                            missionData={activeMission[0]}
+                            isCarLive={isCarLive}
+                        />
+                    ) : (
+                        <button
+                            onClick={startTemplateView}
+                            className="w-full h-10 px-4 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] active:scale-[0.99] transition-all text-white font-bold text-sm flex items-center justify-center space-x-2 shadow cursor-pointer"
+                        >
+                            <span>{t("start-new-mission")}</span>
+                        </button>
+                    )}
+
+
 
                 {/* Previous Missions Header */}
                 <div className="flex items-center justify-between px-1 mt-4 mb-2 shrink-0 gap-1">
@@ -329,10 +341,13 @@ const MissionSelector = () => {
                     selectedMission={selectedMission}
                 />
             </div>
+            )}
 
             {/* Right Main Area */}
             <div className={`relative h-full flex-1 overflow-hidden flex items-center justify-center transition-colors duration-200 ${
-                currentScreen
+                isTemplateFullscreen
+                    ? ""
+                    : currentScreen
                     ? isDark
                         ? "bg-[#292D33] border border-[#373C43] rounded-2xl"
                         : "bg-white border border-slate-200 shadow-sm rounded-2xl"

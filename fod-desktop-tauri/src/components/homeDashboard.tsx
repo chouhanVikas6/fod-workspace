@@ -169,7 +169,7 @@ const HomeDashboard = () => {
           } min-[1400px]:flex flex-col min-h-0 min-w-0 overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
         >
           <div
-            className={`shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
+            className={`hidden min-[1400px]:block shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
           >
             <h2 className="text-sm font-semibold">MISSION CONTROL</h2>
             <p className={`mt-0.5 text-xs ${secondaryText}`}>
@@ -292,7 +292,7 @@ const HomeDashboard = () => {
           } min-[1400px]:flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
         >
           <div
-            className={`shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
+            className={`hidden min-[1400px]:block shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
           >
             <h2 className="text-sm font-semibold">FOD OVERVIEW</h2>
           </div>
@@ -310,7 +310,7 @@ const HomeDashboard = () => {
           } min-[1400px]:flex flex-col min-h-0 min-w-0 overflow-hidden rounded-lg border ${panelBg} ${borderColor}`}
         >
           <div
-            className={`shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
+            className={`hidden min-[1400px]:block shrink-0 border-b px-4 py-3 ${headerBg} ${borderColor}`}
           >
             <h2 className="text-sm font-semibold">OPERATIONAL ALERTS</h2>
             <p className={`mt-0.5 text-xs ${secondaryText}`}>
