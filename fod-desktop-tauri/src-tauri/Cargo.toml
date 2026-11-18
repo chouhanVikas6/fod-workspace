@@ -34,7 +34,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net"] }
 tokio-stream = "0.1.19"
 tonic = { version = "0.12", features = ["gzip"] }
 tower = "0.5.3"
@@ -50,9 +50,9 @@ incremental = true
 
 [profile.release]
 panic = "abort"
-codegen-units = 256
+codegen-units = 16
 lto = false
 opt-level = 1
 debug = false
-incremental = true
+incremental = false
 strip = true
