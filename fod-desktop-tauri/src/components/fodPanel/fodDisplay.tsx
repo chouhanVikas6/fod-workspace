@@ -162,7 +162,7 @@ const FodDisplay = ({
   // Calculate columns from the available panel width.
   const columnCount = Math.max(
     1,
-    Math.floor(containerWidth / GRID_COLUMN_WIDTH)
+    Math.floor(Math.max(0, containerWidth - 16) / GRID_COLUMN_WIDTH)
   );
 
   useEffect(() => {
@@ -243,7 +243,8 @@ const FodDisplay = ({
           overscanCount={2}
           style={{
             height: "100%",
-            width: containerWidth > 0 ? Math.min(containerWidth, columnCount * GRID_COLUMN_WIDTH) : "100%",
+            width: containerWidth > 0 ? Math.min(containerWidth, columnCount * GRID_COLUMN_WIDTH + 16) : "100%",
+            overflowX: "hidden",
             margin: "0 auto",
           }}
         />

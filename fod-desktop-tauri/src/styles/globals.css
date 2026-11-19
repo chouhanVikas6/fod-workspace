@@ -844,8 +844,8 @@ button:active {
 ========================================= */
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 16px;
+  height: 16px;
   background-color: transparent;
 }
 
@@ -855,12 +855,14 @@ button:active {
 
 ::-webkit-scrollbar-thumb {
   border-radius: 9999px;
-  background-color: rgba(156, 163, 175, 0.4);
+  background-color: rgba(156, 163, 175, 0.55);
+  border: 2px solid transparent;
+  background-clip: content-box;
   transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(107, 114, 128, 0.7);
+  background-color: rgba(107, 114, 128, 0.8);
 }
 
 /* =========================================

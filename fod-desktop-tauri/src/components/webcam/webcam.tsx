@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import SideBarImgs from "./sidebarImgs";
 import { useSelector, useDispatch } from "react-redux";
-import { addImageToSideBarImgs } from "@/store/actions/WebCam";
+import { addImageToSideBarImgs, setSelectedImgList } from "@/store/actions/WebCam";
 import { RootState } from "@/store";
 import { MdRefresh, MdVideocamOff, MdFlipCameraAndroid } from "react-icons/md";
 
@@ -227,7 +227,10 @@ const WebCam = () => {
     await startCamera(nextFacing, nextDeviceId);
   };
 
-  const capture = () => {
+  const capture = (targetBeforeClear?: boolean) => {
+    if (typeof targetBeforeClear === "boolean") {
+      dispatch(setSelectedImgList(targetBeforeClear) as any);
+    }
     // If live camera is active, grab frame from video element
     if (cameraStream && videoRef.current && videoRef.current.videoWidth > 0) {
       triggerFlash();
@@ -262,7 +265,7 @@ const WebCam = () => {
   return (
     <div className="relative h-full w-full flex justify-start items-center z-[1000] bg-[#1a1a1f]">
       {/* Main viewport (3/4 width) */}
-      <div className="relative h-full w-3/4 flex items-center justify-center bg-[#18181b] overflow-hidden">
+      <div className="relative h-full flex-1 min-w-0 flex items-center justify-center bg-[#18181b] overflow-hidden">
         {/* Live video feed */}
         <video
           ref={videoRef}
@@ -329,7 +332,7 @@ const WebCam = () => {
             <div className="w-[65px] h-[65px] flex items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border-2 border-white/80 shadow-xl">
               <button
                 type="button"
-                onClick={capture}
+                onClick={() => capture()}
                 className={`w-[50px] h-[50px] rounded-full bg-white flex items-center justify-center transition-all cursor-pointer shadow-md ${
                   captureButtonActive
                     ? "scale-90 bg-gray-300"
@@ -351,7 +354,10 @@ const WebCam = () => {
       )}
 
       {/* Sidebar with Before/After review thumbnails */}
-      <SideBarImgs />
+      <SideBarImgs
+        onCaptureSection={capture}
+        hasCamera={Boolean(cameraStream)}
+      />
     </div>
   );
 };
