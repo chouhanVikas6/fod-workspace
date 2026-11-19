@@ -98,5 +98,17 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    sourcemap: false,
+    reportCompressedSize: false,
+    chunkSizeWarningLimit: 2500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom', 'react-redux', '@reduxjs/toolkit'],
+          'vendor-map': ['mapbox-gl', '@turf/turf', 'supercluster', 'geolib'],
+          'vendor-ui': ['framer-motion', 'lucide-react', 'react-icons', 'jspdf'],
+        },
+      },
+    },
   },
 }));
