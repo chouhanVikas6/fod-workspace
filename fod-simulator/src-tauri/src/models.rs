@@ -44,88 +44,247 @@ pub struct CameraConfig {
     pub lateral_offset_m: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocationConfig {
-    #[serde(default = "default_p1_lat")]
-    pub p1_lat: f64,
-    #[serde(default = "default_p1_lon")]
-    pub p1_lon: f64,
-    #[serde(default = "default_p2_lat")]
-    pub p2_lat: f64,
-    #[serde(default = "default_p2_lon")]
-    pub p2_lon: f64,
-    #[serde(default = "default_p3_lat")]
-    pub p3_lat: f64,
-    #[serde(default = "default_p3_lon")]
-    pub p3_lon: f64,
-    #[serde(default = "default_p4_lat")]
-    pub p4_lat: f64,
-    #[serde(default = "default_p4_lon")]
-    pub p4_lon: f64,
-    pub vehicle_speed_kmh: f64,
-    pub sweep_passes: u32,
-    pub lane_width_m: f64,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct GeoPoint {
+    pub lat: f64,
+    pub lon: f64,
 }
 
-fn default_p1_lat() -> f64 { 9.9400 }
-fn default_p1_lon() -> f64 { 76.2700 }
-fn default_p2_lat() -> f64 { 9.9400 }
-fn default_p2_lon() -> f64 { 76.2800 }
-fn default_p3_lat() -> f64 { 9.9500 }
-fn default_p3_lon() -> f64 { 76.2800 }
-fn default_p4_lat() -> f64 { 9.9500 }
-fn default_p4_lon() -> f64 { 76.2700 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PathKind {
+    AutoSweep,
+    Waypoint,
+    Freehand,
+}
+
+fn default_path_kind() -> PathKind {
+    PathKind::Waypoint
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pathway {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_path_kind")]
+    pub kind: PathKind,
+    pub points: Vec<GeoPoint>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub reversed: bool,
+    #[serde(default)]
+    pub speed_kmh: Option<f64>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PathMode {
+    AutoSweep,
+    CustomSequence,
+}
+
+fn default_path_mode() -> PathMode {
+    PathMode::AutoSweep
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopMode {
+    Loop,
+    PingPong,
+    Once,
+}
+
+fn default_loop_mode() -> LoopMode {
+    LoopMode::Loop
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HumanDriveConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_corner_smoothness")]
+    pub corner_smoothness: f64,
+    #[serde(default = "default_lateral_weave")]
+    pub lateral_weave_m: f64,
+    #[serde(default = "default_speed_variance")]
+    pub speed_variance_pct: f64,
+    #[serde(default = "default_true")]
+    pub smooth_curves: bool,
+}
+
+fn default_corner_smoothness() -> f64 {
+    0.7
+}
+fn default_lateral_weave() -> f64 {
+    0.35
+}
+fn default_speed_variance() -> f64 {
+    6.0
+}
+
+impl Default for HumanDriveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            corner_smoothness: default_corner_smoothness(),
+            lateral_weave_m: default_lateral_weave(),
+            speed_variance_pct: default_speed_variance(),
+            smooth_curves: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompiledSegmentPreview {
+    pub pathway_id: String,
+    pub pathway_name: String,
+    pub pathway_index: usize,
+    pub is_transit: bool,
+    pub color: Option<String>,
+    pub points: Vec<GeoPoint>,
+    pub length_m: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompiledRoutePreview {
+    pub segments: Vec<CompiledSegmentPreview>,
+    pub total_length_m: f64,
+    pub estimated_duration_secs: f64,
+    pub boundary_area_m2: f64,
+    pub boundary_perimeter_m: f64,
+    pub auto_sweep_lanes: Vec<Vec<GeoPoint>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalTilesInfo {
+    pub available: bool,
+    pub base_url: String,
+    pub min_zoom: u8,
+    pub max_zoom: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocationConfig {
+    #[serde(default = "default_boundary_points")]
+    pub boundary_points: Vec<GeoPoint>,
+    #[serde(default = "default_true")]
+    pub enforce_boundary: bool,
+    #[serde(default = "default_vehicle_speed")]
+    pub vehicle_speed_kmh: f64,
+    #[serde(default = "default_sweep_passes")]
+    pub sweep_passes: u32,
+    #[serde(default = "default_lane_width")]
+    pub lane_width_m: f64,
+    #[serde(default)]
+    pub sweep_angle_deg: Option<f64>,
+    #[serde(default)]
+    pub reverse_sweep: bool,
+    #[serde(default = "default_true")]
+    pub serpentine_sweep: bool,
+    #[serde(default = "default_path_mode")]
+    pub path_mode: PathMode,
+    #[serde(default)]
+    pub pathways: Vec<Pathway>,
+    #[serde(default = "default_true")]
+    pub connect_pathways: bool,
+    #[serde(default = "default_loop_mode")]
+    pub loop_mode: LoopMode,
+    #[serde(default)]
+    pub human_drive: HumanDriveConfig,
+}
+
+fn default_boundary_points() -> Vec<GeoPoint> {
+    vec![
+        GeoPoint { lat: 9.9400, lon: 76.2700 },
+        GeoPoint { lat: 9.9400, lon: 76.2800 },
+        GeoPoint { lat: 9.9500, lon: 76.2800 },
+        GeoPoint { lat: 9.9500, lon: 76.2700 },
+    ]
+}
+
+fn default_vehicle_speed() -> f64 {
+    25.0
+}
+fn default_sweep_passes() -> u32 {
+    3
+}
+fn default_lane_width() -> f64 {
+    10.0
+}
 
 impl Default for LocationConfig {
     fn default() -> Self {
         Self {
-            p1_lat: 9.9400,
-            p1_lon: 76.2700,
-            p2_lat: 9.9400,
-            p2_lon: 76.2800,
-            p3_lat: 9.9500,
-            p3_lon: 76.2800,
-            p4_lat: 9.9500,
-            p4_lon: 76.2700,
-            vehicle_speed_kmh: 25.0,
-            sweep_passes: 3,
-            lane_width_m: 10.0,
+            boundary_points: default_boundary_points(),
+            enforce_boundary: true,
+            vehicle_speed_kmh: default_vehicle_speed(),
+            sweep_passes: default_sweep_passes(),
+            lane_width_m: default_lane_width(),
+            sweep_angle_deg: None,
+            reverse_sweep: false,
+            serpentine_sweep: true,
+            path_mode: PathMode::AutoSweep,
+            pathways: Vec::new(),
+            connect_pathways: true,
+            loop_mode: LoopMode::Loop,
+            human_drive: HumanDriveConfig::default(),
         }
     }
 }
 
 #[allow(dead_code)]
 impl LocationConfig {
-    pub fn polygon(&self) -> [(f64, f64); 4] {
-        [
-            (self.p1_lat, self.p1_lon),
-            (self.p2_lat, self.p2_lon),
-            (self.p3_lat, self.p3_lon),
-            (self.p4_lat, self.p4_lon),
-        ]
+    pub fn polygon(&self) -> Vec<(f64, f64)> {
+        self.boundary_points
+            .iter()
+            .map(|p| (p.lat, p.lon))
+            .collect()
     }
 
     pub fn centroid(&self) -> (f64, f64) {
-        (
-            (self.p1_lat + self.p2_lat + self.p3_lat + self.p4_lat) / 4.0,
-            (self.p1_lon + self.p2_lon + self.p3_lon + self.p4_lon) / 4.0,
-        )
+        if self.boundary_points.is_empty() {
+            return (9.9450, 76.2750);
+        }
+        let n = self.boundary_points.len() as f64;
+        let sum_lat: f64 = self.boundary_points.iter().map(|p| p.lat).sum();
+        let sum_lon: f64 = self.boundary_points.iter().map(|p| p.lon).sum();
+        (sum_lat / n, sum_lon / n)
     }
 
     pub fn min_lat(&self) -> f64 {
-        self.p1_lat.min(self.p2_lat).min(self.p3_lat).min(self.p4_lat)
+        self.boundary_points
+            .iter()
+            .map(|p| p.lat)
+            .fold(f64::INFINITY, f64::min)
     }
 
     pub fn max_lat(&self) -> f64 {
-        self.p1_lat.max(self.p2_lat).max(self.p3_lat).max(self.p4_lat)
+        self.boundary_points
+            .iter()
+            .map(|p| p.lat)
+            .fold(f64::NEG_INFINITY, f64::max)
     }
 
     pub fn min_lon(&self) -> f64 {
-        self.p1_lon.min(self.p2_lon).min(self.p3_lon).min(self.p4_lon)
+        self.boundary_points
+            .iter()
+            .map(|p| p.lon)
+            .fold(f64::INFINITY, f64::min)
     }
 
     pub fn max_lon(&self) -> f64 {
-        self.p1_lon.max(self.p2_lon).max(self.p3_lon).max(self.p4_lon)
+        self.boundary_points
+            .iter()
+            .map(|p| p.lon)
+            .fold(f64::NEG_INFINITY, f64::max)
     }
 }
 
@@ -250,6 +409,18 @@ pub struct SimulatorTelemetry {
     pub connected_devices: usize,
     #[serde(default)]
     pub devices: Vec<DeviceStreamStatus>,
+    #[serde(default)]
+    pub active_path_index: Option<usize>,
+    #[serde(default)]
+    pub active_path_name: Option<String>,
+    #[serde(default)]
+    pub route_progress_pct: f64,
+    #[serde(default)]
+    pub route_distance_m: f64,
+    #[serde(default)]
+    pub total_route_length_m: f64,
+    #[serde(default)]
+    pub lap_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

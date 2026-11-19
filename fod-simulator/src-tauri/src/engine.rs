@@ -2,9 +2,9 @@ use crate::geo_engine::{GeoEngine, VehiclePosition};
 use crate::grpc_client::{CumulativeCounters, DeviceConnection, GrpcClientManager};
 use crate::image_feeder::ImageFeeder;
 use crate::models::{
-    default_cameras, device_identity, CameraConfig, CommandLogEntry, CustomPayloadConfig,
-    DeviceStreamStatus, HealthConfig, LocationConfig, RandomizationConfig, SimulatorConfig,
-    SimulatorTelemetry,
+    default_cameras, device_identity, CameraConfig, CommandLogEntry, CompiledRoutePreview,
+    CustomPayloadConfig, DeviceStreamStatus, HealthConfig, LocationConfig, LoopMode,
+    RandomizationConfig, SimulatorConfig, SimulatorTelemetry,
 };
 use futures::future::{join_all, try_join_all};
 use proto_defination::ingest::{
@@ -15,12 +15,153 @@ use proto_defination::mission_control::mission_control_service_client::MissionCo
 use proto_defination::mission_control::{MissionEvent, MissionSubscriptionRequest};
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct SimPathState {
+    pub distance_m: f64,
+    pub sim_time_secs: f64,
+    pub direction_forward: bool,
+    pub lap_count: u32,
+    pub completed: bool,
+}
+
+impl Default for SimPathState {
+    fn default() -> Self {
+        Self {
+            distance_m: 0.0,
+            sim_time_secs: 0.0,
+            direction_forward: true,
+            lap_count: 0,
+            completed: false,
+        }
+    }
+}
+
+pub fn resolve_local_tiles_dir() -> Option<PathBuf> {
+    if let Ok(env_dir) = std::env::var("FOD_TILES_DIR") {
+        let p = PathBuf::from(env_dir);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+
+    let mut candidates = vec![
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fod-desktop-tauri/public/satellite"),
+        PathBuf::from("../fod-desktop-tauri/public/satellite"),
+        PathBuf::from("../../fod-desktop-tauri/public/satellite"),
+    ];
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("satellite"));
+        }
+    }
+
+    candidates.into_iter().find(|p| p.is_dir())
+}
+
+async fn resolve_cached_geo(
+    loc_arc: &Arc<RwLock<LocationConfig>>,
+    version_arc: &Arc<AtomicU64>,
+    cached_arc: &Arc<RwLock<(u64, Arc<GeoEngine>)>>,
+) -> Arc<GeoEngine> {
+    let target_ver = version_arc.load(Ordering::SeqCst);
+    {
+        let guard = cached_arc.read().await;
+        if guard.0 == target_ver {
+            return Arc::clone(&guard.1);
+        }
+    }
+
+    let loc_cfg = loc_arc.read().await.clone();
+    let fresh = Arc::new(GeoEngine::new(&loc_cfg));
+    let mut guard = cached_arc.write().await;
+    if guard.0 != target_ver {
+        *guard = (target_ver, Arc::clone(&fresh));
+        fresh
+    } else {
+        Arc::clone(&guard.1)
+    }
+}
+
+fn advance_path_state(ps: &mut SimPathState, geo: &GeoEngine, dt: f64) -> VehiclePosition {
+    let total = geo.total_length_m();
+    if ps.completed || dt <= 0.0 || total <= 1e-3 {
+        let mut pos = geo.sample_at_distance(ps.distance_m, ps.sim_time_secs, ps.direction_forward);
+        if ps.completed {
+            pos.speed_kmh = 0.0;
+        }
+        return pos;
+    }
+
+    let cur_pos = geo.sample_at_distance(ps.distance_m, ps.sim_time_secs, ps.direction_forward);
+    let speed_ms = (cur_pos.speed_kmh * 1000.0) / 3600.0;
+    let delta = speed_ms * dt;
+    ps.sim_time_secs += dt;
+
+    match geo.loop_mode {
+        LoopMode::Loop => {
+            let next = ps.distance_m + delta;
+            if next >= total {
+                ps.lap_count = ps.lap_count.saturating_add((next / total).floor() as u32);
+                ps.distance_m = next % total;
+            } else {
+                ps.distance_m = next;
+            }
+            ps.direction_forward = true;
+        }
+        LoopMode::PingPong => {
+            let mut rem = delta;
+            while rem > 1e-6 {
+                if ps.direction_forward {
+                    let space = (total - ps.distance_m).max(0.0);
+                    if rem >= space {
+                        ps.distance_m = total;
+                        ps.direction_forward = false;
+                        rem -= space;
+                    } else {
+                        ps.distance_m += rem;
+                        rem = 0.0;
+                    }
+                } else {
+                    let space = ps.distance_m.max(0.0);
+                    if rem >= space {
+                        ps.distance_m = 0.0;
+                        ps.direction_forward = true;
+                        ps.lap_count = ps.lap_count.saturating_add(1);
+                        rem -= space;
+                    } else {
+                        ps.distance_m -= rem;
+                        rem = 0.0;
+                    }
+                }
+            }
+        }
+        LoopMode::Once => {
+            let next = ps.distance_m + delta;
+            if next >= total {
+                ps.distance_m = total;
+                ps.completed = true;
+            } else {
+                ps.distance_m = next;
+            }
+            ps.direction_forward = true;
+        }
+    }
+
+    let mut next_pos = geo.sample_at_distance(ps.distance_m, ps.sim_time_secs, ps.direction_forward);
+    if ps.completed {
+        next_pos.speed_kmh = 0.0;
+    }
+    next_pos
+}
 
 pub struct SimulatorEngine {
     app_handle: AppHandle,
@@ -32,6 +173,10 @@ pub struct SimulatorEngine {
     pub custom_config: Arc<RwLock<CustomPayloadConfig>>,
     pub image_feeder: ImageFeeder,
     pub command_logs: Arc<RwLock<Vec<CommandLogEntry>>>,
+
+    path_state: Arc<RwLock<SimPathState>>,
+    location_version: Arc<AtomicU64>,
+    cached_geo: Arc<RwLock<(u64, Arc<GeoEngine>)>>,
 
     running: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
@@ -209,16 +354,21 @@ pub fn make_camera_health_list(cams: &[CameraConfig]) -> Vec<CameraHealth> {
 
 impl SimulatorEngine {
     pub fn new(app_handle: AppHandle) -> Self {
+        let default_loc = LocationConfig::default();
+        let initial_geo = Arc::new(GeoEngine::new(&default_loc));
         Self {
             app_handle,
             config: Arc::new(RwLock::new(SimulatorConfig::default())),
             cameras: Arc::new(RwLock::new(default_cameras())),
-            location_config: Arc::new(RwLock::new(LocationConfig::default())),
+            location_config: Arc::new(RwLock::new(default_loc)),
             health_config: Arc::new(RwLock::new(HealthConfig::default())),
             random_config: Arc::new(RwLock::new(RandomizationConfig::default())),
             custom_config: Arc::new(RwLock::new(CustomPayloadConfig::default())),
             image_feeder: ImageFeeder::new(),
             command_logs: Arc::new(RwLock::new(Vec::new())),
+            path_state: Arc::new(RwLock::new(SimPathState::default())),
+            location_version: Arc::new(AtomicU64::new(0)),
+            cached_geo: Arc::new(RwLock::new((0, initial_geo))),
             running: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             total_sent: Arc::new(AtomicU64::new(0)),
@@ -230,6 +380,62 @@ impl SimulatorEngine {
             },
             grpc_connections: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub async fn get_geo_engine(&self) -> Arc<GeoEngine> {
+        resolve_cached_geo(&self.location_config, &self.location_version, &self.cached_geo).await
+    }
+
+    pub async fn notify_location_updated(&self) -> CompiledRoutePreview {
+        let new_ver = self.location_version.fetch_add(1, Ordering::SeqCst) + 1;
+        let loc_cfg = self.location_config.read().await.clone();
+        let fresh = Arc::new(GeoEngine::new(&loc_cfg));
+        {
+            let mut guard = self.cached_geo.write().await;
+            *guard = (new_ver, Arc::clone(&fresh));
+        }
+
+        let new_total = fresh.total_length_m();
+        {
+            let mut ps = self.path_state.write().await;
+            ps.distance_m = ps.distance_m.clamp(0.0, new_total);
+            if ps.distance_m < new_total || fresh.loop_mode != LoopMode::Once {
+                ps.completed = false;
+            }
+        }
+
+        fresh.compiled_preview()
+    }
+
+    pub async fn reset_vehicle_position(&self) {
+        {
+            let mut ps = self.path_state.write().await;
+            *ps = SimPathState::default();
+        }
+        self.send_immediate_telemetry().await;
+    }
+
+    pub async fn set_vehicle_progress(&self, progress_pct: f64) {
+        let geo = self.get_geo_engine().await;
+        let total = geo.total_length_m();
+        let clamped_pct = progress_pct.clamp(0.0, 100.0);
+        {
+            let mut ps = self.path_state.write().await;
+            ps.distance_m = (clamped_pct / 100.0) * total;
+            ps.direction_forward = true;
+            ps.completed = geo.loop_mode == LoopMode::Once && clamped_pct >= 99.99;
+        }
+        self.send_immediate_telemetry().await;
+    }
+
+    pub async fn current_vehicle_position(&self) -> (VehiclePosition, u32) {
+        let geo = self.get_geo_engine().await;
+        let ps = self.path_state.read().await.clone();
+        let mut pos = geo.sample_at_distance(ps.distance_m, ps.sim_time_secs, ps.direction_forward);
+        if ps.completed {
+            pos.speed_kmh = 0.0;
+        }
+        (pos, ps.lap_count)
     }
 
     pub async fn start(&self) -> Result<(), String> {
@@ -256,6 +462,9 @@ impl SimulatorEngine {
         let config_arc = self.config.clone();
         let cameras_arc = self.cameras.clone();
         let loc_arc = self.location_config.clone();
+        let path_state_arc = self.path_state.clone();
+        let loc_version_arc = self.location_version.clone();
+        let cached_geo_arc = self.cached_geo.clone();
         let health_arc = self.health_config.clone();
         let rand_arc = self.random_config.clone();
         let custom_arc = self.custom_config.clone();
@@ -268,7 +477,9 @@ impl SimulatorEngine {
 
         tauri::async_runtime::spawn(async move {
             let start_time = Instant::now();
-            let mut last_telemetry_tick = Instant::now();
+            let mut last_step_instant = Instant::now();
+            let mut last_grpc_telemetry_tick = Instant::now();
+            let mut last_ui_telemetry_tick = Instant::now();
             let mut rate_epoch = Instant::now();
             let mut epoch_dispatched: u64 = 0;
             let mut last_target_rate: f64 = -1.0;
@@ -277,8 +488,7 @@ impl SimulatorEngine {
                 let is_paused = paused_flag.load(Ordering::SeqCst);
 
                 let cfg = config_arc.read().await.clone();
-                let loc_cfg = loc_arc.read().await.clone();
-                let geo_engine = GeoEngine::new(&loc_cfg);
+                let geo_engine = resolve_cached_geo(&loc_arc, &loc_version_arc, &cached_geo_arc).await;
 
                 // Check quota limit
                 if let Some(target) = cfg.total_target_count {
@@ -299,8 +509,15 @@ impl SimulatorEngine {
                     last_target_rate = target_rate;
                 }
 
-                let elapsed_secs = start_time.elapsed().as_secs_f64();
-                let car_pos = geo_engine.get_position_at_time(elapsed_secs);
+                let raw_dt = last_step_instant.elapsed().as_secs_f64().min(0.25);
+                last_step_instant = Instant::now();
+                let dt = if is_paused { 0.0 } else { raw_dt };
+
+                let (car_pos, lap_count) = {
+                    let mut ps = path_state_arc.write().await;
+                    let pos = advance_path_state(&mut ps, &geo_engine, dt);
+                    (pos, ps.lap_count)
+                };
 
                 // Collect active cameras
                 let active_cameras: Vec<CameraConfig> = {
@@ -466,9 +683,9 @@ impl SimulatorEngine {
                     }
                 }
 
-                // 1 Hz Telemetry & GUI status broadcast
-                if last_telemetry_tick.elapsed() >= Duration::from_secs(1) {
-                    last_telemetry_tick = Instant::now();
+                // 1 Hz gRPC Telemetry broadcast to backend
+                if last_grpc_telemetry_tick.elapsed() >= Duration::from_secs(1) {
+                    last_grpc_telemetry_tick = Instant::now();
 
                     let h_cfg = health_arc.read().await.clone();
                     let cam_health_list: Vec<CameraHealth> = {
@@ -488,8 +705,12 @@ impl SimulatorEngine {
                         send_telemetry_to_devices(&connections, &h_cfg, &car_pos, cam_health_list)
                             .await;
                     }
+                }
 
-                    // Emit Telemetry to Tauri UI
+                // 5 Hz UI Telemetry broadcast for smooth map vehicle gliding
+                if last_ui_telemetry_tick.elapsed() >= Duration::from_millis(200) {
+                    last_ui_telemetry_tick = Instant::now();
+
                     let current_conns = {
                         let guard = grpc_lock.lock().await;
                         guard.clone()
@@ -522,6 +743,12 @@ impl SimulatorEngine {
                         uptime_secs: start_time.elapsed().as_secs(),
                         connected_devices,
                         devices,
+                        active_path_index: car_pos.active_path_index,
+                        active_path_name: car_pos.active_path_name.clone(),
+                        route_progress_pct: car_pos.route_progress_pct,
+                        route_distance_m: car_pos.route_distance_m,
+                        total_route_length_m: car_pos.total_route_length_m,
+                        lap_count,
                     };
 
                     let _ = app.emit("simulator-telemetry", telemetry_ui);
@@ -557,7 +784,6 @@ impl SimulatorEngine {
         let paused = self.paused.load(Ordering::SeqCst);
         let total_sent = self.total_sent.load(Ordering::Relaxed);
         let hz = self.config.read().await.throughput_hz;
-        let loc = self.location_config.read().await;
         let cams = self.cameras.read().await;
         let active_count = cams.iter().filter(|c| c.enabled && c.connected && !c.paused).count();
 
@@ -576,7 +802,7 @@ impl SimulatorEngine {
             "Streaming".to_string()
         };
 
-        let car_pos = GeoEngine::new(&loc).get_position_at_time(0.0);
+        let (car_pos, lap_count) = self.current_vehicle_position().await;
 
         let telemetry_ui = SimulatorTelemetry {
             running,
@@ -589,12 +815,18 @@ impl SimulatorEngine {
             current_lat: car_pos.lat,
             current_lon: car_pos.lon,
             current_heading: car_pos.heading_deg,
-            current_speed_kmh: loc.vehicle_speed_kmh,
+            current_speed_kmh: car_pos.speed_kmh,
             active_camera_count: active_count,
             last_status,
             uptime_secs: 0,
             connected_devices,
             devices,
+            active_path_index: car_pos.active_path_index,
+            active_path_name: car_pos.active_path_name,
+            route_progress_pct: car_pos.route_progress_pct,
+            route_distance_m: car_pos.route_distance_m,
+            total_route_length_m: car_pos.total_route_length_m,
+            lap_count,
         };
 
         let _ = self.app_handle.emit("simulator-telemetry", telemetry_ui);
@@ -612,8 +844,7 @@ impl SimulatorEngine {
         .await
         {
             let h_cfg = self.health_config.read().await.clone();
-            let loc_cfg = self.location_config.read().await.clone();
-            let car_pos = GeoEngine::new(&loc_cfg).get_position_at_time(0.0);
+            let (car_pos, _) = self.current_vehicle_position().await;
             let cam_health_list = {
                 let cams = self.cameras.read().await;
                 make_camera_health_list(&cams)
@@ -638,9 +869,7 @@ impl SimulatorEngine {
             % connections.len();
         let dev = &connections[dev_idx];
 
-        let loc_cfg = self.location_config.read().await.clone();
-        let geo_engine = GeoEngine::new(&loc_cfg);
-        let car_pos = geo_engine.get_position_at_time(0.0);
+        let (car_pos, _) = self.current_vehicle_position().await;
 
         let cams = self.cameras.read().await.clone();
         let cam = cams
@@ -689,9 +918,8 @@ impl SimulatorEngine {
         )
         .await?;
 
-        let loc_cfg = self.location_config.read().await.clone();
-        let geo_engine = GeoEngine::new(&loc_cfg);
-        let car_pos = geo_engine.get_position_at_time(0.0);
+        let geo_engine = self.get_geo_engine().await;
+        let (car_pos, _) = self.current_vehicle_position().await;
         let cams = self.cameras.read().await.clone();
         let active_cams: Vec<_> = cams
             .iter()
@@ -1034,18 +1262,97 @@ impl SimulatorEngine {
 
     pub fn spawn_local_command_server(self: &Arc<Self>, port: u16) {
         let engine = Arc::clone(self);
+        let tiles_root = Arc::new(resolve_local_tiles_dir());
         tauri::async_runtime::spawn(async move {
             let addr = format!("127.0.0.1:{}", port);
             if let Ok(listener) = tokio::net::TcpListener::bind(&addr).await {
                 eprintln!("[fod-simulator] Local command HTTP listener on {}", addr);
                 while let Ok((mut socket, _)) = listener.accept().await {
                     let engine_clone = Arc::clone(&engine);
+                    let tiles_dir = Arc::clone(&tiles_root);
                     tauri::async_runtime::spawn(async move {
                         use tokio::io::{AsyncReadExt, AsyncWriteExt};
                         let mut buf = [0u8; 4096];
                         if let Ok(n) = socket.read(&mut buf).await {
                             if n > 0 {
                                 let req = String::from_utf8_lossy(&buf[..n]);
+                                let first_line = req.lines().next().unwrap_or("");
+                                let mut line_parts = first_line.split_whitespace();
+                                let method = line_parts.next().unwrap_or("");
+                                let raw_path = line_parts.next().unwrap_or("/");
+                                let req_path = raw_path.split('?').next().unwrap_or(raw_path);
+
+                                if method == "GET" && req_path == "/tiles/status" {
+                                    let body = serde_json::json!({
+                                        "available": tiles_dir.is_some(),
+                                        "min_zoom": 0,
+                                        "max_zoom": 22
+                                    })
+                                    .to_string();
+                                    let resp = format!(
+                                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}",
+                                        body.len(),
+                                        body
+                                    );
+                                    let _ = socket.write_all(resp.as_bytes()).await;
+                                    let _ = socket.shutdown().await;
+                                    return;
+                                }
+
+                                if method == "GET" && req_path.starts_with("/tiles/") {
+                                    let rest = req_path.strip_prefix("/tiles/").unwrap_or("");
+                                    let segs: Vec<&str> = rest.split('/').collect();
+                                    let mut served = false;
+                                    if segs.len() == 3 {
+                                        let z_str = segs[0];
+                                        let x_str = segs[1];
+                                        let file_str = segs[2];
+                                        let (y_str, content_type, ext) = if let Some(s) = file_str.strip_suffix(".jpg") {
+                                            (s, "image/jpeg", "jpg")
+                                        } else if let Some(s) = file_str.strip_suffix(".png") {
+                                            (s, "image/png", "png")
+                                        } else {
+                                            ("", "", "")
+                                        };
+                                        let valid_digits = !z_str.is_empty()
+                                            && !x_str.is_empty()
+                                            && !y_str.is_empty()
+                                            && z_str.bytes().all(|b| b.is_ascii_digit())
+                                            && x_str.bytes().all(|b| b.is_ascii_digit())
+                                            && y_str.bytes().all(|b| b.is_ascii_digit())
+                                            && z_str.parse::<u32>().is_ok()
+                                            && x_str.parse::<u32>().is_ok()
+                                            && y_str.parse::<u32>().is_ok();
+
+                                        if valid_digits && !ext.is_empty() {
+                                            if let Some(root) = tiles_dir.as_ref() {
+                                                let tile_path = root
+                                                    .join(z_str)
+                                                    .join(x_str)
+                                                    .join(format!("{}.{}", y_str, ext));
+                                                if let Ok(bytes) = tokio::fs::read(&tile_path).await {
+                                                    let header = format!(
+                                                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nCache-Control: public, max-age=86400\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n",
+                                                        content_type,
+                                                        bytes.len()
+                                                    );
+                                                    let _ = socket.write_all(header.as_bytes()).await;
+                                                    let _ = socket.write_all(&bytes).await;
+                                                    let _ = socket.shutdown().await;
+                                                    served = true;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if !served {
+                                        let resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n";
+                                        let _ = socket.write_all(resp.as_bytes()).await;
+                                        let _ = socket.shutdown().await;
+                                    }
+                                    return;
+                                }
+
                                 let mut cmd = String::new();
                                 if let Some(q_idx) = req.find("?cmd=") {
                                     let sub = &req[q_idx + 5..];

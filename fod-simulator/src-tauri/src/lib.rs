@@ -4,11 +4,12 @@ mod grpc_client;
 mod image_feeder;
 mod models;
 
-use engine::SimulatorEngine;
+use engine::{resolve_local_tiles_dir, SimulatorEngine};
 use grpc_client::GrpcClientManager;
 use models::{
-    CameraConfig, CommandLogEntry, CustomPayloadConfig, FullStateResponse, HealthConfig,
-    ImageFolderItem, LocationConfig, RandomizationConfig, SimulatorConfig,
+    CameraConfig, CommandLogEntry, CompiledRoutePreview, CustomPayloadConfig, FullStateResponse,
+    HealthConfig, ImageFolderItem, LocalTilesInfo, LocationConfig, RandomizationConfig,
+    SimulatorConfig,
 };
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -73,10 +74,45 @@ async fn update_camera_config(
 async fn update_location_config(
     engine: State<'_, Arc<SimulatorEngine>>,
     location: LocationConfig,
-) -> Result<(), String> {
+) -> Result<CompiledRoutePreview, String> {
     *engine.location_config.write().await = location;
+    let preview = engine.notify_location_updated().await;
     engine.send_immediate_telemetry().await;
+    Ok(preview)
+}
+
+#[tauri::command]
+async fn get_compiled_route(
+    engine: State<'_, Arc<SimulatorEngine>>,
+) -> Result<CompiledRoutePreview, String> {
+    let geo = engine.get_geo_engine().await;
+    Ok(geo.compiled_preview())
+}
+
+#[tauri::command]
+async fn reset_vehicle_position(engine: State<'_, Arc<SimulatorEngine>>) -> Result<(), String> {
+    engine.reset_vehicle_position().await;
     Ok(())
+}
+
+#[tauri::command]
+async fn set_vehicle_progress(
+    engine: State<'_, Arc<SimulatorEngine>>,
+    progress_pct: f64,
+) -> Result<(), String> {
+    engine.set_vehicle_progress(progress_pct).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_local_tiles_info() -> Result<LocalTilesInfo, String> {
+    let available = resolve_local_tiles_dir().is_some();
+    Ok(LocalTilesInfo {
+        available,
+        base_url: "http://127.0.0.1:50055/tiles".to_string(),
+        min_zoom: 0,
+        max_zoom: 22,
+    })
 }
 
 #[tauri::command]
@@ -183,6 +219,10 @@ pub fn run() {
             update_config,
             update_camera_config,
             update_location_config,
+            get_compiled_route,
+            reset_vehicle_position,
+            set_vehicle_progress,
+            get_local_tiles_info,
             update_health_config,
             update_random_config,
             update_custom_config,

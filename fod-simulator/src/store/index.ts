@@ -24,18 +24,74 @@ export interface CameraConfig {
   lateral_offset_m: number;
 }
 
+export interface GeoPoint {
+  lat: number;
+  lon: number;
+}
+
+export type PathKind = 'auto_sweep' | 'waypoint' | 'freehand';
+export type PathMode = 'auto_sweep' | 'custom_sequence';
+export type LoopMode = 'loop' | 'ping_pong' | 'once';
+
+export interface Pathway {
+  id: string;
+  name: string;
+  kind: PathKind;
+  points: GeoPoint[];
+  enabled: boolean;
+  reversed: boolean;
+  speed_kmh: number | null;
+  color: string | null;
+}
+
+export interface HumanDriveConfig {
+  enabled: boolean;
+  corner_smoothness: number;
+  lateral_weave_m: number;
+  speed_variance_pct: number;
+  smooth_curves: boolean;
+}
+
+export interface CompiledSegmentPreview {
+  pathway_id: string;
+  pathway_name: string;
+  pathway_index: number;
+  is_transit: boolean;
+  color: string | null;
+  points: GeoPoint[];
+  length_m: number;
+}
+
+export interface CompiledRoutePreview {
+  segments: CompiledSegmentPreview[];
+  total_length_m: number;
+  estimated_duration_secs: number;
+  boundary_area_m2: number;
+  boundary_perimeter_m: number;
+  auto_sweep_lanes: GeoPoint[][];
+}
+
+export interface LocalTilesInfo {
+  available: boolean;
+  base_url: string;
+  min_zoom: number;
+  max_zoom: number;
+}
+
 export interface LocationConfig {
-  p1_lat: number;
-  p1_lon: number;
-  p2_lat: number;
-  p2_lon: number;
-  p3_lat: number;
-  p3_lon: number;
-  p4_lat: number;
-  p4_lon: number;
+  boundary_points: GeoPoint[];
+  enforce_boundary: boolean;
   vehicle_speed_kmh: number;
   sweep_passes: number;
   lane_width_m: number;
+  sweep_angle_deg: number | null;
+  reverse_sweep: boolean;
+  serpentine_sweep: boolean;
+  path_mode: PathMode;
+  pathways: Pathway[];
+  connect_pathways: boolean;
+  loop_mode: LoopMode;
+  human_drive: HumanDriveConfig;
 }
 
 export interface HealthConfig {
@@ -80,6 +136,8 @@ export interface DeviceStreamStatus {
   duplicate: number;
 }
 
+const LOCATION_STORAGE_KEY = 'fod_sim_location_v2';
+
 export interface SimulatorTelemetry {
   running: boolean;
   paused: boolean;
@@ -97,6 +155,12 @@ export interface SimulatorTelemetry {
   uptime_secs: number;
   connected_devices: number;
   devices: DeviceStreamStatus[];
+  active_path_index: number | null;
+  active_path_name: string | null;
+  route_progress_pct: number;
+  route_distance_m: number;
+  total_route_length_m: number;
+  lap_count: number;
 }
 
 export interface CommandLogEntry {
@@ -132,6 +196,8 @@ interface SimulatorStore {
   config: SimulatorConfig;
   cameras: CameraConfig[];
   location: LocationConfig;
+  compiledRoute: CompiledRoutePreview | null;
+  localTiles: LocalTilesInfo;
   health: HealthConfig;
   random: RandomizationConfig;
   custom: CustomPayloadConfig;
@@ -165,6 +231,9 @@ interface SimulatorStore {
   updateCamera: (camId: string, patch: Partial<CameraConfig>) => Promise<void>;
   setAllCamerasState: (enabled?: boolean, connected?: boolean, paused?: boolean) => Promise<void>;
   updateLocation: (loc: Partial<LocationConfig>) => Promise<void>;
+  refreshCompiledRoute: () => Promise<void>;
+  resetVehiclePosition: () => Promise<void>;
+  setVehicleProgress: (progressPct: number) => Promise<void>;
   updateHealth: (h: Partial<HealthConfig>) => Promise<void>;
   updateRandom: (r: Partial<RandomizationConfig>) => Promise<void>;
   updateCustom: (c: Partial<CustomPayloadConfig>) => Promise<void>;
@@ -186,17 +255,37 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
   cameras: [],
   location: {
-    p1_lat: 9.9400,
-    p1_lon: 76.2700,
-    p2_lat: 9.9400,
-    p2_lon: 76.2800,
-    p3_lat: 9.9500,
-    p3_lon: 76.2800,
-    p4_lat: 9.9500,
-    p4_lon: 76.2700,
+    boundary_points: [
+      { lat: 9.9400, lon: 76.2700 },
+      { lat: 9.9400, lon: 76.2800 },
+      { lat: 9.9500, lon: 76.2800 },
+      { lat: 9.9500, lon: 76.2700 },
+    ],
+    enforce_boundary: true,
     vehicle_speed_kmh: 25.0,
     sweep_passes: 3,
     lane_width_m: 10.0,
+    sweep_angle_deg: null,
+    reverse_sweep: false,
+    serpentine_sweep: true,
+    path_mode: 'auto_sweep',
+    pathways: [],
+    connect_pathways: true,
+    loop_mode: 'loop',
+    human_drive: {
+      enabled: true,
+      corner_smoothness: 0.7,
+      lateral_weave_m: 0.35,
+      speed_variance_pct: 6.0,
+      smooth_curves: true,
+    },
+  },
+  compiledRoute: null,
+  localTiles: {
+    available: false,
+    base_url: 'http://127.0.0.1:50055/tiles',
+    min_zoom: 0,
+    max_zoom: 22,
   },
   health: {
     cpu_pct: 35.0,
@@ -244,6 +333,12 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     uptime_secs: 0,
     connected_devices: 0,
     devices: [],
+    active_path_index: null,
+    active_path_name: null,
+    route_progress_pct: 0,
+    route_distance_m: 0,
+    total_route_length_m: 0,
+    lap_count: 0,
   },
   commandLogs: [],
   folderImages: [],
@@ -272,11 +367,53 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   loadInitialState: async () => {
     try {
       set({ loading: true });
-      const full = await invoke<FullStateResponse>('get_all_state');
+      const [full, tilesInfo] = await Promise.all([
+        invoke<FullStateResponse>('get_all_state'),
+        invoke<LocalTilesInfo>('get_local_tiles_info').catch(() => ({
+          available: false,
+          base_url: 'http://127.0.0.1:50055/tiles',
+          min_zoom: 0,
+          max_zoom: 22,
+        })),
+      ]);
+
+      let resolvedLocation = full.location;
+      let compiledRoute: CompiledRoutePreview | null = null;
+
+      if (typeof window !== 'undefined') {
+        try {
+          const rawSaved = localStorage.getItem(LOCATION_STORAGE_KEY);
+          if (rawSaved) {
+            const parsed = JSON.parse(rawSaved);
+            if (parsed && Array.isArray(parsed.boundary_points) && parsed.boundary_points.length >= 3) {
+              resolvedLocation = {
+                ...full.location,
+                ...parsed,
+                human_drive: {
+                  ...full.location.human_drive,
+                  ...(parsed.human_drive || {}),
+                },
+              };
+              compiledRoute = await invoke<CompiledRoutePreview>('update_location_config', {
+                location: resolvedLocation,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to restore saved location config:', e);
+        }
+      }
+
+      if (!compiledRoute) {
+        compiledRoute = await invoke<CompiledRoutePreview>('get_compiled_route').catch(() => null);
+      }
+
       set({
         config: full.config,
         cameras: full.cameras,
-        location: full.location,
+        location: resolvedLocation,
+        compiledRoute,
+        localTiles: tilesInfo,
         health: full.health,
         random: full.random,
         custom: full.custom,
@@ -419,9 +556,37 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
 
   updateLocation: async (patch) => {
-    const updated = { ...get().location, ...patch };
+    const prev = get().location;
+    const updated: LocationConfig = {
+      ...prev,
+      ...patch,
+      human_drive: patch.human_drive
+        ? { ...prev.human_drive, ...patch.human_drive }
+        : prev.human_drive,
+    };
     set({ location: updated });
-    await invoke('update_location_config', { location: updated });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(updated));
+      } catch {}
+    }
+    const preview = await invoke<CompiledRoutePreview>('update_location_config', {
+      location: updated,
+    });
+    set({ compiledRoute: preview });
+  },
+
+  refreshCompiledRoute: async () => {
+    const preview = await invoke<CompiledRoutePreview>('get_compiled_route');
+    set({ compiledRoute: preview });
+  },
+
+  resetVehiclePosition: async () => {
+    await invoke('reset_vehicle_position');
+  },
+
+  setVehicleProgress: async (progressPct: number) => {
+    await invoke('set_vehicle_progress', { progressPct });
   },
 
   updateHealth: async (patch) => {

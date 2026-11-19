@@ -106,7 +106,7 @@ export default function App() {
           }`}
         >
           <MapPin className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-          <span>Location Boundary & Radar</span>
+          <span>Location & Path Map</span>
           <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 border border-slate-200 dark:bg-[#192336] dark:text-slate-300 dark:border-[#24334f] font-mono">
             {telemetry.current_heading.toFixed(0)}°
           </span>
@@ -131,7 +131,13 @@ export default function App() {
       </div>
 
       {/* Main Tab Content View */}
-      <main className="flex-1 p-6 overflow-y-auto">
+      <main
+        className={
+          activeTab === 'location'
+            ? 'flex-1 min-h-0 relative overflow-hidden p-0'
+            : 'flex-1 p-6 overflow-y-auto'
+        }
+      >
         {activeTab === 'throughput' && <ThroughputTab />}
         {activeTab === 'cameras' && <CamerasTab />}
         {activeTab === 'health' && <HealthTab />}

@@ -41,3 +41,33 @@ body {
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* Leaflet + Tailwind v4 compatibility & crisp map styling */
+.leaflet-container {
+  background: #0b1120;
+  font-family: inherit;
+}
+
+.leaflet-container img.leaflet-tile,
+.leaflet-container .leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.map-cursor-crosshair .leaflet-grab,
+.map-cursor-crosshair {
+  cursor: crosshair !important;
+}
+
+.map-cursor-grab .leaflet-grab {
+  cursor: grab !important;
+}
+
+.map-cursor-grab .leaflet-dragging .leaflet-grab {
+  cursor: grabbing !important;
+}
