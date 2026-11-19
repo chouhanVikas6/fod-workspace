@@ -174,7 +174,7 @@ const ClearedFodDetailView = () => {
           </div>
 
           {/* Before / After Images */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div className="w-full sm:w-[70%] mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             {/* Before Clearing */}
             <div
               className="
@@ -252,10 +252,19 @@ const FodGrid = () => {
   const getFrames = (fodData: any) => {
     const { FodPoints } = fodData || {};
 
+    const missionId = fodData?.missionId ?? missionNumber;
     const pointFrames = Array.isArray(FodPoints)
-      ? FodPoints.map((point: any) => point?.frame).filter(
-          (frame: any) => typeof frame === "string" && frame.length > 0
-        )
+      ? FodPoints.map((point: any) => {
+          if (typeof point?.frame === "string" && point.frame.length > 0) {
+            return point.frame;
+          }
+          const gid = point?.groupId ?? fodData?.groupId;
+          const pid = point?.id ?? fodData?.id;
+          if (missionId != null && gid != null && pid != null) {
+            return `${config.ImagesBase}/${missionId}/${gid}/${pid}.jpg`;
+          }
+          return null;
+        }).filter((frame: any): frame is string => typeof frame === "string" && frame.length > 0)
       : [];
 
     if (pointFrames.length > 0) return pointFrames;
@@ -264,7 +273,6 @@ const FodGrid = () => {
       return [fodData.frame];
     }
 
-    const missionId = fodData?.missionId ?? missionNumber;
     if (missionId != null && fodData?.groupId != null && fodData?.id != null) {
       return ["${config.ImagesBase}/${missionId}/${fodData.groupId}/${fodData.id}.jpg"];
     }
@@ -306,10 +314,8 @@ const FodGrid = () => {
           >
             <Image
               src={frame}
-              fill
-              sizes="(max-width: 480px) 90vw, (max-width: 1024px) 45vw, 30vw"
               alt={`FOD frame ${index + 1}`}
-              className="rounded-md object-contain"
+              className="w-full h-full rounded-md object-contain"
             />
           </div>
         ))
@@ -368,18 +374,16 @@ const ImgSlider = ({
               <div
                 className="
                   relative w-full
-                  h-[120px] sm:h-[145px] lg:h-[165px]
+                  aspect-[4/3] max-h-[240px]
                   rounded-md overflow-hidden
                   bg-slate-200 dark:bg-[#292D33]
                 "
               >
                 <Image
                   src={item}
-                  fill
-                  sizes="(max-width: 640px) 90vw, 45vw"
                   alt={`${beforeImg ? "Before" : "After"} clearing image ${index + 1}`}
                   draggable={false}
-                  className="object-contain"
+                  className="w-full h-full object-contain block"
                 />
               </div>
             </div>
@@ -389,7 +393,7 @@ const ImgSlider = ({
         <div
           className="
             w-full
-            h-[120px] sm:h-[145px] lg:h-[165px]
+            aspect-[4/3] max-h-[240px]
             flex items-center justify-center
             rounded-md
             bg-slate-100 dark:bg-[#292D33]

@@ -43,7 +43,7 @@ const FodDetail = () => {
 
     return isActive
       ? "bg-[#017ED7] text-white border-[#017ED7]"
-      : "bg-slate-100 dark:bg-[#202632] text-slate-700 dark:text-[#D9DDE2] border-slate-200 dark:border-[#2B3542] hover:bg-slate-200 dark:hover:bg-[#29313D]";
+      : "bg-slate-50 dark:bg-[#202632] text-slate-700 dark:text-[#D9DDE2] border-slate-200 dark:border-[#2B3542] hover:bg-slate-100 dark:hover:bg-[#29313D]";
   };
 
   const supercluster = useRef<any>(null);
@@ -166,41 +166,29 @@ const FodDetail = () => {
 
       {/* Bottom actions pinned after remaining space */}
       {!isClearedFod && (
-        <div className="w-full min-w-0 flex flex-col gap-1.5 sm:gap-2 shrink-0 mt-auto">
+        <div className="w-full min-w-0 pt-2.5 mt-1 border-t border-slate-200 dark:border-[#2B3542] flex flex-col gap-2.5 shrink-0">
           {/* FOD status buttons (shown in final review step) */}
           {isFodFinalReviewOpen && (
-            <div className="w-full h-[32px] sm:h-[36px] flex justify-between items-stretch gap-1 sm:gap-1.5">
-              <button
-                type="button"
-                className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(1)}`}
-                onClick={() => dispatch(setFodStatus(1) as any)}
-              >
-                <span>FOD</span>
-                <span>Found</span>
-              </button>
-
-              <button
-                type="button"
-                className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(3)}`}
-                onClick={() => dispatch(setFodStatus(3) as any)}
-              >
-                <span>Not</span>
-                <span>Found</span>
-              </button>
-
-              <button
-                type="button"
-                className={`min-w-0 flex-1 flex flex-col justify-center items-center rounded border text-[10px] sm:text-xs leading-tight transition-colors ${fodStatusStyle(2)}`}
-                onClick={() => dispatch(setFodStatus(2) as any)}
-              >
-                <span>False</span>
-                <span>Found</span>
-              </button>
+            <div className="w-full grid grid-cols-3 gap-1.5">
+              {[
+                { label: "FOD Found", value: 1 },
+                { label: "Not Found", value: 3 },
+                { label: "False Found", value: 2 },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`h-9 px-1.5 flex justify-center items-center rounded-md border text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${fodStatusStyle(opt.value)}`}
+                  onClick={() => dispatch(setFodStatus(opt.value) as any)}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           )}
 
           {/* Main action buttons */}
-          <div className="w-full h-[34px] sm:h-[38px] flex justify-center gap-1.5 sm:gap-2">
+          <div className="w-full h-9 sm:h-10 flex justify-center gap-2">
             {isFodFinalReviewOpen ? (
               <>
                 <button

@@ -79,7 +79,7 @@ const SideBarImgs: React.FC<SideBarImgsProps> = ({
       </div>
 
       {/* Before / After capture sections */}
-      <div className="flex-1 min-h-0 flex flex-col justify-center gap-3 sm:gap-4">
+      <div className="flex-1 min-h-0 flex flex-col justify-center lg:justify-start gap-3 sm:gap-4">
         {sections.map((section) => (
           <div key={section.key} className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">

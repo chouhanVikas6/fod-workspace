@@ -490,22 +490,25 @@ const DetailedView = () => {
           <div
             ref={detailedViewRef}
             onClick={handleButtonClick}
-            className={`w-[86%] max-w-[1140px] h-[88%] max-h-[680px] min-w-0 rounded-2xl p-3.5 max-[1100px]:p-2.5 bg-slate-100 dark:bg-[#262B33] border border-slate-300 dark:border-[#353D49] shadow-2xl flex gap-3.5 max-[1100px]:gap-2 relative transition-all duration-200 ${
-              fade ? "opacity-50 scale-[0.99]" : "opacity-100 scale-100"
-            }`}
+            className="w-[96%] max-w-[1240px] h-[88%] max-h-[680px] min-w-0 flex items-center justify-center gap-2 sm:gap-3.5 relative"
           >
             {/* Previous FOD */}
             <button
               type="button"
               onClick={fetchPreviousFodDetailedView}
               title="Previous FOD (A)"
-              className="absolute -left-14 max-[1100px]:left-1 top-1/2 -translate-y-1/2 z-30 w-11 h-11 max-[1100px]:w-8 max-[1100px]:h-8 rounded-full bg-white dark:bg-[#161A21] hover:bg-slate-100 dark:hover:bg-[#222832] border border-slate-300 dark:border-[#343C48] flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
+              className="shrink-0 z-30 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-white dark:bg-[#161A21] hover:bg-slate-100 dark:hover:bg-[#222832] border border-slate-300 dark:border-[#343C48] flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
             >
-              <FiChevronLeft className="w-6 h-6 max-[1100px]:w-4 max-[1100px]:h-4 stroke-[2]" />
+              <FiChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
             </button>
 
+            <div
+              className={`flex-1 h-full min-w-0 rounded-xl p-3.5 max-[1100px]:p-2.5 bg-slate-100 dark:bg-[#262B33] border border-slate-300 dark:border-[#353D49] shadow-2xl flex gap-3.5 max-[1100px]:gap-2 relative transition-all duration-200 ${
+                fade ? "opacity-50 scale-[0.99]" : "opacity-100 scale-100"
+              }`}
+            >
             {/* Left: Frame Viewer */}
-            <div className="w-[63%] min-w-0 h-full relative rounded-xl overflow-hidden bg-slate-200 dark:bg-[#12161B] border border-slate-300 dark:border-[#333B46] flex items-center justify-center">
+            <div className="w-[63%] min-w-0 h-full relative rounded-lg overflow-hidden bg-slate-200 dark:bg-[#12161B] border border-slate-300 dark:border-[#333B46] flex items-center justify-center">
               {/* Top-left: Red FOD badge + CCTV-style timestamp directly without bg card */}
               <div className="absolute top-3.5 left-3.5 max-[1100px]:top-2 max-[1100px]:left-2 z-20 flex flex-col items-start gap-1 pointer-events-none select-none">
                 <span className="px-2.5 py-0.5 rounded bg-[#DC2626] text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wide shadow-md">
@@ -801,14 +804,16 @@ const DetailedView = () => {
               )}
             </div>
 
+            </div>
+
             {/* Next FOD */}
             <button
               type="button"
               onClick={fetchNextFodDetailedView}
               title="Next FOD (D)"
-              className="absolute -right-14 max-[1100px]:right-1 top-1/2 -translate-y-1/2 z-30 w-11 h-11 max-[1100px]:w-8 max-[1100px]:h-8 rounded-full bg-white dark:bg-[#161A21] hover:bg-slate-100 dark:hover:bg-[#222832] border border-slate-300 dark:border-[#343C48] flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
+              className="shrink-0 z-30 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-white dark:bg-[#161A21] hover:bg-slate-100 dark:hover:bg-[#222832] border border-slate-300 dark:border-[#343C48] flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
             >
-              <FiChevronRight className="w-6 h-6 max-[1100px]:w-4 max-[1100px]:h-4 stroke-[2]" />
+              <FiChevronRight className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
             </button>
           </div>
         </div>
