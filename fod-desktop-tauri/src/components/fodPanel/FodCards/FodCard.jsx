@@ -229,7 +229,7 @@ const Fodcard = ({
     <div
       id={fod.id}
       key={fod.id}
-      className={`w-[225px] h-[350px] relative rounded-xl p-3.5 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${
+      className={`w-full h-full relative rounded-xl p-3 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${
         fade ? "fade-out opacity-40" : ""
       }`}
     >

@@ -36,8 +36,7 @@ interface FodCellData {
   onDetailView: (fod: FodType) => void;
 }
 
-const GRID_COLUMN_WIDTH = 241;
-const ITEM_WIDTH = 225;
+const TARGET_MIN_COLUMN_WIDTH = 195;
 const ITEM_HEIGHT = 350;
 
 const FodGridCell = ({
@@ -63,7 +62,7 @@ const FodGridCell = ({
     <div
       style={{
         ...style,
-        padding: 8,
+        padding: 6,
         boxSizing: "border-box",
       }}
       className="flex items-center justify-center"
@@ -159,16 +158,21 @@ const FodDisplay = ({
     currentLocation,
   ]);
 
-  // Calculate columns from the available panel width.
+  // Calculate columns from the available panel width (reserving space for the 16px vertical scrollbar).
+  const availableGridWidth = Math.max(0, containerWidth - 16);
   const columnCount = Math.max(
     1,
-    Math.floor(Math.max(0, containerWidth - 16) / GRID_COLUMN_WIDTH)
+    Math.floor(availableGridWidth / TARGET_MIN_COLUMN_WIDTH)
   );
+  const columnWidth =
+    availableGridWidth > 0
+      ? Math.floor(availableGridWidth / columnCount)
+      : 225;
 
   useEffect(() => {
     if (!onGridWidthChange || containerWidth <= 0) return;
-    onGridWidthChange(columnCount * GRID_COLUMN_WIDTH - 16);
-  }, [columnCount, containerWidth, onGridWidthChange]);
+    onGridWidthChange(columnCount * columnWidth);
+  }, [columnCount, columnWidth, containerWidth, onGridWidthChange]);
 
   const rowCount = Math.ceil(
     filteredFods.length / columnCount
@@ -238,12 +242,12 @@ const FodDisplay = ({
           cellProps={cellProps}
           columnCount={columnCount}
           rowCount={rowCount}
-          columnWidth={GRID_COLUMN_WIDTH}
-          rowHeight={ITEM_HEIGHT + 16}
+          columnWidth={columnWidth}
+          rowHeight={ITEM_HEIGHT + 12}
           overscanCount={2}
           style={{
             height: "100%",
-            width: containerWidth > 0 ? Math.min(containerWidth, columnCount * GRID_COLUMN_WIDTH + 16) : "100%",
+            width: containerWidth > 0 ? Math.min(containerWidth, columnCount * columnWidth + 16) : "100%",
             overflowX: "hidden",
             margin: "0 auto",
           }}

@@ -152,15 +152,8 @@ const FodPanel = ({ open }) => {
 
   return (
     <div className={`relative h-full w-full flex flex-col overflow-hidden ${isMapOpen || !open ? "hidden" : ""}`}>
-      <div className="h-full w-full flex flex-col px-5 pt-3 pb-2 relative overflow-hidden">
-        <div
-          className="shrink-0 mb-3 mx-auto flex items-center justify-between gap-2"
-          style={
-            gridWidth
-              ? { width: gridWidth, maxWidth: "calc(100% - 16px)" }
-              : { width: "calc(100% - 16px)" }
-          }
-        >
+      <div className="h-full w-full flex flex-col pl-4 pr-[68px] sm:pl-5 sm:pr-[72px] pt-3 pb-2 relative overflow-hidden">
+        <div className="shrink-0 mb-2 w-full flex items-center justify-between gap-2 relative z-20">
           <div className="flex-1 min-w-0">
             <FilterBar />
           </div>

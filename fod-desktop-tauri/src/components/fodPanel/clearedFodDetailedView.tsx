@@ -23,6 +23,7 @@ import {
 } from "@/utils/MapUtils";
 
 import { RxCross1 } from "react-icons/rx";
+import { config } from "@/config/clientConfig";
 
 /* ======================================================
    MAIN CLEARED FOD DETAIL VIEW
@@ -244,18 +245,31 @@ const FodGrid = () => {
   const { fod } = useSelector(
     (state: RootState) => state.ClearedFodDetailView
   );
+  const missionNumber = useSelector(
+    (state: RootState) => state.MissionState?.missionNumber
+  );
 
   const getFrames = (fodData: any) => {
     const { FodPoints } = fodData || {};
 
-    if (!Array.isArray(FodPoints)) return [];
+    const pointFrames = Array.isArray(FodPoints)
+      ? FodPoints.map((point: any) => point?.frame).filter(
+          (frame: any) => typeof frame === "string" && frame.length > 0
+        )
+      : [];
 
-    return FodPoints
-      .map((point: any) => point?.frame)
-      .filter(
-        (frame: any) =>
-          typeof frame === "string" && frame.length > 0
-      );
+    if (pointFrames.length > 0) return pointFrames;
+
+    if (typeof fodData?.frame === "string" && fodData.frame.length > 0) {
+      return [fodData.frame];
+    }
+
+    const missionId = fodData?.missionId ?? missionNumber;
+    if (missionId != null && fodData?.groupId != null && fodData?.id != null) {
+      return ["${config.ImagesBase}/${missionId}/${fodData.groupId}/${fodData.id}.jpg"];
+    }
+
+    return [];
   };
 
   const frames = getFrames(fod);

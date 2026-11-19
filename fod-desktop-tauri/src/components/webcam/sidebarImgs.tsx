@@ -61,17 +61,19 @@ const SideBarImgs: React.FC<SideBarImgsProps> = ({
   return (
     <aside className="w-[260px] sm:w-[300px] lg:w-[340px] xl:w-[360px] shrink-0 h-full bg-white dark:bg-[#181C23] border-l border-slate-200 dark:border-[#2B3542] flex flex-col justify-between p-3 sm:p-4 lg:p-5 gap-3 overflow-y-auto select-none transition-colors">
       {/* Top navigation */}
-      <div className="flex items-center justify-between shrink-0">
+      <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-[#2B3542] shrink-0">
         <button
           type="button"
           onClick={() => dispatch(close_webcam())}
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-slate-600 dark:text-[#A8B0BA] hover:bg-slate-100 dark:hover:bg-[#202632] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+          className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-700 dark:text-[#D9DDE2] hover:text-[#017ED7] dark:hover:text-[#38BDF8] transition-colors cursor-pointer group"
         >
-          <MdOutlineKeyboardArrowLeft className="text-lg sm:text-xl" />
+          <span className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] group-hover:border-[#017ED7]/40 flex items-center justify-center transition-colors">
+            <MdOutlineKeyboardArrowLeft className="text-lg" />
+          </span>
           <span>Back</span>
         </button>
 
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        <span className="text-xs font-semibold tracking-wide text-slate-500 dark:text-[#A8B0BA]">
           FOD Capture
         </span>
       </div>
