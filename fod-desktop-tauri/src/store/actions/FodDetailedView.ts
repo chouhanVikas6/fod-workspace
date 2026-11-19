@@ -27,7 +27,7 @@ export const updateDetailViewFod = (Fod: any, isFilteredFod: boolean = false) =>
         const listFod = await getAllFrames(fodWithMission);
         if (listFod?.data && Array.isArray(listFod.data) && listFod.data.length > 0) {
             const fod = { ...fodWithMission, FodPoints: listFod.data };
-            dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: listFod.origin }));
+            dispatch(update_DetailViewFod({ fod, isFilteredFod, origin: listFod.origin, onlyIfOpen: true }));
         }
     } catch (err) {
         console.error("Error fetching frames for detail view:", err);
@@ -38,7 +38,7 @@ export const updateDetailViewFod = (Fod: any, isFilteredFod: boolean = false) =>
         .then((res: any) => {
             if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
                 const updatedFod = { ...fodWithMission, FodPoints: res.data };
-                dispatch(update_DetailViewFod({ fod: updatedFod, isFilteredFod, origin: res.origin }));
+                dispatch(update_DetailViewFod({ fod: updatedFod, isFilteredFod, origin: res.origin, onlyIfOpen: true }));
             }
         })
         .catch(() => {});

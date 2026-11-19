@@ -178,6 +178,7 @@ const DetailedView = () => {
           fod: updatedFod,
           isFilteredFod,
           origin: listFod.origin,
+          onlyIfOpen: true,
         }),
       );
 
@@ -190,6 +191,7 @@ const DetailedView = () => {
               fod: serverFod,
               isFilteredFod,
               origin: res.origin,
+              onlyIfOpen: true,
             }),
           );
         },
@@ -242,6 +244,7 @@ const DetailedView = () => {
           fod: updatedFod,
           isFilteredFod,
           origin: listFod.origin,
+          onlyIfOpen: true,
         }),
       );
 
@@ -254,6 +257,7 @@ const DetailedView = () => {
               fod: serverFod,
               isFilteredFod,
               origin: res.origin,
+              onlyIfOpen: true,
             }),
           );
         },
