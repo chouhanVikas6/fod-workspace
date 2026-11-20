@@ -16,6 +16,7 @@ use crate::magnetometer_reader::{
 use crate::state::AppState;
 use serde_json::json;
 use serialport::{SerialPortInfo, SerialPortType};
+use std::collections::HashMap;
 use std::io::Read;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
@@ -273,7 +274,7 @@ pub fn select_preferred_serial_port_excluding(
         return Some((*first).to_string());
     }
 
-    // 3a. Non-excluded USB serial port that is NOT a known ESP32 UART bridge
+    // 3. Non-excluded USB serial port that is NOT a known ESP32 UART bridge
     let mut non_esp_usb_ports: Vec<&str> = ports
         .iter()
         .filter(|p| {
@@ -288,25 +289,14 @@ pub fn select_preferred_serial_port_excluding(
         return Some((*first).to_string());
     }
 
-    // 3b. Any remaining non-excluded USB serial port (for GNSS behind FTDI/CP2102 when unclaimed)
-    let mut usb_ports: Vec<&str> = ports
-        .iter()
-        .filter(|p| !is_excluded(&p.port_name) && matches!(p.port_type, SerialPortType::UsbPort(_)))
-        .map(|p| p.port_name.as_str())
-        .collect();
-    usb_ports.sort_by_key(|name| fallback_port_sort_key(name));
-    if let Some(first) = usb_ports.first() {
-        return Some((*first).to_string());
-    }
-
-    // 4. Fallback OS serial devices (POSIX ttyACM/ttyUSB or Windows non-Bluetooth COMx)
+    // 4. Fallback OS serial devices (POSIX ttyACM or Windows non-Bluetooth Unknown COMx; never grab /dev/ttyUSB* ESP32 bridges)
     let mut fallback_ports: Vec<&str> = ports
         .iter()
         .filter(|p| {
             let name = p.port_name.as_str();
             !is_excluded(name)
+                && !is_esp32_usb_bridge(p)
                 && (name.starts_with("/dev/ttyACM")
-                    || name.starts_with("/dev/ttyUSB")
                     || (is_windows_com_port(name)
                         && !matches!(p.port_type, SerialPortType::BluetoothPort)))
         })
@@ -321,14 +311,17 @@ fn select_preferred_serial_port(ports: &[SerialPortInfo]) -> Option<String> {
     select_preferred_serial_port_excluding(ports, &[])
 }
 
-async fn find_serial_port(state: &AppState) -> Option<String> {
+async fn find_serial_port(
+    state: &AppState,
+    ignored: &HashMap<String, Instant>,
+) -> Option<(String, bool)> {
     if let Ok(port) = std::env::var("RTK_SERIAL_PORT") {
         let trimmed = normalize_port_name(&port);
         if !trimmed.is_empty() {
-            return Some(trimmed);
+            return Some((trimmed, false));
         }
     }
-    let mut excluded = Vec::new();
+    let mut excluded: Vec<String> = ignored.keys().cloned().collect();
     if let Ok(mag_env) = std::env::var("MAG_SERIAL_PORT") {
         let trimmed = normalize_port_name(&mag_env);
         if !trimmed.is_empty() {
@@ -342,7 +335,7 @@ async fn find_serial_port(state: &AppState) -> Option<String> {
         excluded.push(preferred);
     }
     let ports = serialport::available_ports().ok()?;
-    select_preferred_serial_port_excluding(&ports, &excluded)
+    select_preferred_serial_port_excluding(&ports, &excluded).map(|p| (p, true))
 }
 
 fn apply_ubx_packet(pkt: UbxPacket<'_>, state: &mut RtkFixState) -> bool {
@@ -485,16 +478,22 @@ async fn read_nmea_stream<R: tokio::io::AsyncRead + Unpin>(
     }
 }
 
+enum SerialReadExit {
+    Disconnected(Option<String>),
+    NonGnssStream,
+}
+
 async fn read_serial_blocking(
     port: String,
     baud: u32,
+    auto_detected: bool,
     app_state: AppState,
-) -> Result<(), String> {
+) -> SerialReadExit {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<RtkFixState>(64);
     let port_for_thread = port.clone();
 
-    let reader_handle = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let mut serial = serialport::new(&port_for_thread, baud)
+    let reader_handle = tokio::task::spawn_blocking(move || -> SerialReadExit {
+        let mut serial = match serialport::new(&port_for_thread, baud)
             .data_bits(serialport::DataBits::Eight)
             .parity(serialport::Parity::None)
             .stop_bits(serialport::StopBits::One)
@@ -502,41 +501,54 @@ async fn read_serial_blocking(
             .dtr_on_open(false)
             .timeout(Duration::from_millis(200))
             .open()
-            .map_err(|e| {
-                format_serial_open_error(
+        {
+            Ok(s) => s,
+            Err(e) => {
+                return SerialReadExit::Disconnected(Some(format_serial_open_error(
                     &port_for_thread,
                     e.kind(),
                     &e.description,
                     cfg!(target_os = "windows"),
                     cfg!(target_os = "linux"),
-                )
-            })?;
+                )));
+            }
+        };
 
         let mut decoder = GnssStreamDecoder::new();
         let mut buf = [0u8; 1024];
+        let opened_at = Instant::now();
+        let mut seen_valid_gnss = false;
         let mut last_emit = Instant::now() - Duration::from_secs(1);
 
         loop {
             match serial.read(&mut buf) {
                 Ok(0) => {
                     std::thread::sleep(Duration::from_millis(5));
-                    continue;
                 }
                 Ok(n) => {
-                    if decoder.feed(&buf[..n])
-                        && last_emit.elapsed() >= Duration::from_millis(100)
-                    {
-                        last_emit = Instant::now();
-                        if tx.blocking_send(decoder.fix_state.clone()).is_err() {
-                            break;
+                    if decoder.feed(&buf[..n]) {
+                        seen_valid_gnss = true;
+                        if last_emit.elapsed() >= Duration::from_millis(100) {
+                            last_emit = Instant::now();
+                            if tx.blocking_send(decoder.fix_state.clone()).is_err() {
+                                break;
+                            }
                         }
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                Err(e) => return Err(format!("Serial read error on {port_for_thread}: {e}")),
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) => {
+                    return SerialReadExit::Disconnected(Some(format!(
+                        "Serial read error on {port_for_thread}: {e}"
+                    )));
+                }
+            }
+
+            if auto_detected && !seen_valid_gnss && opened_at.elapsed() > Duration::from_secs(5) {
+                return SerialReadExit::NonGnssStream;
             }
         }
-        Ok(())
+        SerialReadExit::Disconnected(None)
     });
 
     while let Some(fix_state) = rx.recv().await {
@@ -545,7 +557,7 @@ async fn read_serial_blocking(
 
     match reader_handle.await {
         Ok(res) => res,
-        Err(e) => Err(format!("Serial reader task panicked: {e}")),
+        Err(e) => SerialReadExit::Disconnected(Some(format!("Serial reader task panicked: {e}"))),
     }
 }
 
@@ -565,7 +577,11 @@ pub fn spawn(app_state: AppState) {
             tokio::time::sleep(Duration::from_millis(600)).await;
         }
 
+        let mut ignored_ports: HashMap<String, Instant> = HashMap::new();
+
         loop {
+            ignored_ports.retain(|_, until| *until > Instant::now());
+
             if let Ok(addr) = std::env::var("RTK_TCP_ADDR") {
                 let addr = addr.trim().to_string();
                 if !addr.is_empty() {
@@ -587,14 +603,25 @@ pub fn spawn(app_state: AppState) {
                 }
             }
 
-            if let Some(port) = find_serial_port(&app_state).await {
+            if let Some((port, auto_detected)) = find_serial_port(&app_state, &ignored_ports).await {
                 tracing::info!(port = %port, baud, "Connected to RTK serial receiver");
-                match read_serial_blocking(port.clone(), baud, app_state.clone()).await {
-                    Ok(()) => {
+                match read_serial_blocking(port.clone(), baud, auto_detected, app_state.clone()).await {
+                    SerialReadExit::NonGnssStream => {
+                        tracing::info!(
+                            port = %port,
+                            "No NMEA/UBX GNSS stream detected on auto-probed port — yielding port"
+                        );
+                        ignored_ports.insert(
+                            normalize_port_name(&port),
+                            Instant::now() + Duration::from_secs(30),
+                        );
+                        continue;
+                    }
+                    SerialReadExit::Disconnected(None) => {
                         tracing::warn!(port = %port, "RTK serial receiver disconnected");
                         mark_rtk_error(&app_state, &port, "Serial receiver disconnected").await;
                     }
-                    Err(msg) => {
+                    SerialReadExit::Disconnected(Some(msg)) => {
                         tracing::warn!(port = %port, error = %msg, "RTK serial error");
                         mark_rtk_error(&app_state, &port, &msg).await;
                     }
@@ -703,6 +730,11 @@ mod tests {
         let only_esp32 = vec![ports[0].clone()];
         assert_eq!(
             select_preferred_serial_port_excluding(&only_esp32, &["com4".to_string()]),
+            None
+        );
+        // Even without explicit exclusion, RTK auto-detection must not hijack an ESP32 CP2102 bridge
+        assert_eq!(
+            select_preferred_serial_port_excluding(&only_esp32, &[]),
             None
         );
 

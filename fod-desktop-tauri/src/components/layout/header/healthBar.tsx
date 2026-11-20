@@ -2,21 +2,11 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { invoke } from "@tauri-apps/api/core";
-import { toast } from "react-toastify";
 import { RootState } from "@/store";
 import { useSSE } from "@/hooks/subscribeHealth";
 import { update_SystemHealth } from "@/store/slices/system-health-slice";
 import { config } from "@/config/clientConfig";
 import axiosClient from "@/utils/axios";
-
-interface SerialPortOption {
-  portName: string;
-  description: string;
-  vid: string | null;
-  pid: string | null;
-  isEsp32Bridge: boolean;
-  isUblox: boolean;
-}
 
 const CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
 const toCardinal = (deg: number) => {
@@ -34,11 +24,6 @@ const HealthBar = () => {
     index: number;
     data: any;
   } | null>(null);
-  const [serialPorts, setSerialPorts] = useState<SerialPortOption[]>([]);
-  const [selectedPort, setSelectedPort] = useState<string>("auto");
-  const [offsetDraft, setOffsetDraft] = useState<string>("0");
-  const [declDraft, setDeclDraft] = useState<string>("0");
-  const [magBusy, setMagBusy] = useState<boolean>(false);
 
   const { latency, availableCommunication, RtkData, magnetometer, carData, AiHealth } =
     useSelector((state: RootState) => state.SystemHealth);
@@ -53,14 +38,6 @@ const HealthBar = () => {
       })
       .catch(() => {});
   }, [dispatch]);
-
-  const refreshSerialPorts = useCallback(() => {
-    invoke<SerialPortOption[]>("list_serial_ports")
-      .then((ports) => {
-        if (Array.isArray(ports)) setSerialPorts(ports);
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     refreshMagState();
@@ -185,35 +162,6 @@ const HealthBar = () => {
     unwrappedHeadingRef.current += delta;
     return unwrappedHeadingRef.current;
   }, [headingDeg]);
-
-  useEffect(() => {
-    if (activeTooltip === "compass") {
-      refreshSerialPorts();
-      if (typeof magData?.headingOffsetDeg === "number") {
-        setOffsetDraft(String(magData.headingOffsetDeg));
-      }
-      if (typeof magData?.declinationDeg === "number") {
-        setDeclDraft(String(magData.declinationDeg));
-      }
-    }
-  }, [activeTooltip, refreshSerialPorts]);
-
-  const runMagAction = async (
-    cmd: string,
-    args?: Record<string, any>,
-    successMsg?: string,
-  ) => {
-    setMagBusy(true);
-    try {
-      await invoke(cmd, args);
-      refreshMagState();
-      if (successMsg) toast.success(successMsg);
-    } catch (err: any) {
-      toast.error(typeof err === "string" ? err : err?.message || `Failed: ${cmd}`);
-    } finally {
-      setMagBusy(false);
-    }
-  };
 
   // Car status
   const carStatus = useMemo(() => {
@@ -376,32 +324,7 @@ const HealthBar = () => {
       <div className={dividerClass} />
 
       {/* COMPASS / MAGNETOMETER HEADING */}
-      <button
-        type="button"
-        onClick={() => toggleTooltip("compass")}
-        className={statusButtonClass}
-        title={
-          isMagLive
-            ? `ESP32 Magnetometer (${magData.port || "USB"}): ${headingDeg?.toFixed(1)}° ${headingCardinal}`
-            : "Compass & ESP32 Magnetometer Heading"
-        }
-      >
-        <svg
-          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-150 ${getStatusColor(compassStatus)}`}
-          style={{ transform: `rotate(${needleRotationDeg.toFixed(1)}deg)` }}
-          viewBox="0 0 24 24"
-          fill="none"
-        >
-          <circle cx="12" cy="12" r="9.5" stroke="currentColor" strokeWidth="1.8" strokeOpacity="0.45" />
-          <polygon points="12,3.5 15.2,12 12,10.2 8.8,12" fill="currentColor" />
-          <polygon points="12,20.5 14.5,12.5 12,13.8 9.5,12.5" fill="currentColor" fillOpacity="0.32" />
-        </svg>
-        <span className="font-mono text-[10px] lg:text-[11px] font-bold tracking-wide">
-          {headingDeg !== null
-            ? `${Math.round(headingDeg)}° ${headingCardinal}`
-            : "NO MAG"}
-        </span>
-      </button>
+      
 
       <div className={dividerClass} />
 
@@ -609,309 +532,6 @@ const HealthBar = () => {
                 {(RtkData.data as any).error}
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* COMPASS & MAGNETOMETER TOOLTIP */}
-      {activeTooltip === "compass" && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className={`${tooltipClass} !w-80 cursor-default`}
-        >
-          <div className={tooltipTitleClass}>
-            <span>Compass & Magnetometer</span>
-            <span
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                isCalibrating
-                  ? "bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60"
-                  : isMagLive
-                    ? "bg-emerald-50 dark:bg-[#01B656]/20 text-emerald-700 dark:text-[#01B656] border border-emerald-200 dark:border-[#01B656]/50"
-                    : headingDeg !== null
-                      ? "bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60"
-                      : "bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60"
-              }`}
-            >
-              {isCalibrating
-                ? "CALIBRATING"
-                : isMagLive
-                  ? "LIVE MAG"
-                  : headingDeg !== null
-                    ? "GNSS"
-                    : "OFFLINE"}
-            </span>
-          </div>
-
-          {/* 72x72 SVG Compass Rose + Primary Heading Readout */}
-          <div className="flex items-center gap-3.5 pb-3 mb-3 border-b border-slate-200 dark:border-[#373C43]">
-            <svg width="72" height="72" viewBox="0 0 72 72" className="shrink-0">
-              <circle
-                cx="36"
-                cy="36"
-                r="31"
-                fill="none"
-                stroke="currentColor"
-                strokeOpacity="0.18"
-                strokeWidth="1.5"
-              />
-              <circle
-                cx="36"
-                cy="36"
-                r="23"
-                fill="none"
-                stroke="currentColor"
-                strokeOpacity="0.1"
-                strokeDasharray="2 3"
-                strokeWidth="1"
-              />
-              <text x="36" y="12" textAnchor="middle" fontSize="8" fontWeight="700" fill="#EF4444">
-                N
-              </text>
-              <text x="63" y="39" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" fillOpacity="0.6">
-                E
-              </text>
-              <text x="36" y="67" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" fillOpacity="0.6">
-                S
-              </text>
-              <text x="9" y="39" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" fillOpacity="0.6">
-                W
-              </text>
-              <g
-                style={{
-                  transform: `rotate(${needleRotationDeg.toFixed(1)}deg)`,
-                  transformOrigin: "36px 36px",
-                  transition: "transform 120ms linear",
-                }}
-              >
-                <polygon points="36,14 40.5,36 36,33 31.5,36" fill="#EF4444" />
-                <polygon points="36,58 40,36 36,39 32,36" fill="#64748B" fillOpacity="0.65" />
-                <circle cx="36" cy="36" r="2.6" fill="#E2E8F0" stroke="#0F172A" strokeWidth="1" />
-              </g>
-            </svg>
-
-            <div className="min-w-0 flex-1">
-              <div className="font-mono text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
-                {headingDeg !== null
-                  ? `${headingDeg.toFixed(1)}° ${headingCardinal}`
-                  : "—°"}
-              </div>
-              <div className="mt-1.5 text-[11px] text-slate-500 dark:text-[#8C939C] truncate">
-                {isMagLive
-                  ? `ESP32 HMC5883L · ${magData.port || "USB Serial"}`
-                  : headingDeg !== null
-                    ? "Fallback: GNSS Course"
-                    : "Waiting for ESP32 USB stream"}
-              </div>
-              <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono">
-                <span
-                  className={`px-1.5 py-0.5 rounded border ${
-                    magData?.calibrated
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                      : "bg-slate-100 dark:bg-[#22262B] text-slate-500 dark:text-slate-400 border-slate-200 dark:border-[#373C43]"
-                  }`}
-                >
-                  {magData?.calibrated ? "Calibrated" : "Uncalibrated"}
-                </span>
-                {typeof magData?.sampleRateHz === "number" && isMagLive && (
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {magData.sampleRateHz.toFixed(1)} Hz
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Live Raw Vector Telemetry */}
-          <div className="space-y-1.5 mb-3">
-            <div className="flex justify-between gap-2">
-              <span className="text-slate-500 dark:text-[#8C939C]">Raw X / Y / Z:</span>
-              <span className="font-mono font-semibold text-slate-800 dark:text-slate-100">
-                {typeof magData?.mx === "number"
-                  ? `${magData.mx}, ${magData.my}, ${magData.mz}`
-                  : "—"}
-              </span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-slate-500 dark:text-[#8C939C]">Field |B|:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">
-                {typeof magData?.fieldStrength === "number" ? magData.fieldStrength.toFixed(1) : "—"}
-              </span>
-            </div>
-            <div className="flex justify-between gap-2 items-center">
-              <span className="text-slate-500 dark:text-[#8C939C]">Serial Port:</span>
-              <div className="flex items-center gap-1">
-                <select
-                  value={selectedPort}
-                  disabled={magBusy}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setSelectedPort(next);
-                    runMagAction(
-                      "mag_set_port",
-                      { port: next === "auto" ? null : next },
-                      `Magnetometer port set to ${next === "auto" ? "Auto" : next}`,
-                    );
-                  }}
-                  className="bg-slate-100 dark:bg-[#22262B] border border-slate-300 dark:border-[#373C43] rounded px-1.5 py-0.5 text-[11px] font-mono text-slate-800 dark:text-slate-100 outline-none max-w-[165px]"
-                >
-                  <option value="auto">Auto (ESP32 USB)</option>
-                  {serialPorts.map((p) => (
-                    <option key={p.portName} value={p.portName} title={p.description}>
-                      {p.portName}
-                      {p.isEsp32Bridge ? " [ESP32]" : p.isUblox ? " [GNSS]" : ""}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={refreshSerialPorts}
-                  title="Rescan serial ports"
-                  className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-[#22262B] dark:hover:bg-[#373C43] border border-slate-300 dark:border-[#373C43] text-[10px] font-mono cursor-pointer"
-                >
-                  ↻
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {magData?.error && (
-            <div className="mb-3 p-2 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/60 text-[11px] text-rose-600 dark:text-rose-300 break-words">
-              {magData.error}
-            </div>
-          )}
-
-          {/* Calibration & Alignment Controls */}
-          <div className="pt-2.5 border-t border-slate-200 dark:border-[#373C43] space-y-2">
-            {isCalibrating ? (
-              <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700/50 space-y-2">
-                <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium">
-                  Rotate device 360° smoothly ({magData?.calSamples ?? 0} samples · span{" "}
-                  {magData?.calSpanX ?? 0}×{magData?.calSpanY ?? 0})
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    type="button"
-                    disabled={magBusy}
-                    onClick={() =>
-                      runMagAction("mag_finish_calibration", undefined, "360° calibration applied")
-                    }
-                    className="py-1 px-2 rounded-lg bg-[#01B656] hover:bg-[#009E48] text-white font-semibold text-[11px] cursor-pointer disabled:opacity-50"
-                  >
-                    Apply
-                  </button>
-                  <button
-                    type="button"
-                    disabled={magBusy}
-                    onClick={() => runMagAction("mag_cancel_calibration")}
-                    className="py-1 px-2 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-[#353A42] dark:hover:bg-[#41464E] text-slate-800 dark:text-slate-200 font-semibold text-[11px] cursor-pointer disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  disabled={magBusy || !isMagLive}
-                  onClick={() => runMagAction("mag_start_calibration")}
-                  className="py-1.5 px-2 rounded-lg bg-[#4C9FE8] hover:bg-[#3a8fd9] text-white font-semibold text-[11px] cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-                >
-                  360° Calibrate
-                </button>
-                <button
-                  type="button"
-                  disabled={magBusy || !isMagLive}
-                  onClick={() =>
-                    runMagAction("mag_set_zero_north", undefined, "Aligned current direction to 0° North")
-                  }
-                  className="py-1.5 px-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#353A42] dark:hover:bg-[#41464E] border border-slate-200 dark:border-[#454B53] text-slate-800 dark:text-slate-100 font-semibold text-[11px] cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-                >
-                  Zero North
-                </button>
-              </div>
-            )}
-
-            <div className="grid grid-cols-3 gap-1.5 items-end text-[10px]">
-              <label className="flex flex-col gap-0.5">
-                <span className="text-slate-500 dark:text-[#8C939C]">Offset (°)</span>
-                <input
-                  type="number"
-                  step="1"
-                  value={offsetDraft}
-                  onChange={(e) => setOffsetDraft(e.target.value)}
-                  onBlur={() => {
-                    const v = parseFloat(offsetDraft);
-                    if (Number.isFinite(v)) {
-                      runMagAction("mag_update_settings", { headingOffsetDeg: v });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      const v = parseFloat(offsetDraft);
-                      if (Number.isFinite(v)) {
-                        runMagAction("mag_update_settings", { headingOffsetDeg: v });
-                      }
-                    }
-                  }}
-                  className="w-full bg-slate-100 dark:bg-[#22262B] border border-slate-300 dark:border-[#373C43] rounded px-1.5 py-1 font-mono text-[11px] text-slate-800 dark:text-white outline-none"
-                />
-              </label>
-
-              <label className="flex flex-col gap-0.5">
-                <span className="text-slate-500 dark:text-[#8C939C]">Decl (°)</span>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={declDraft}
-                  onChange={(e) => setDeclDraft(e.target.value)}
-                  onBlur={() => {
-                    const v = parseFloat(declDraft);
-                    if (Number.isFinite(v)) {
-                      runMagAction("mag_update_settings", { declinationDeg: v });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      const v = parseFloat(declDraft);
-                      if (Number.isFinite(v)) {
-                        runMagAction("mag_update_settings", { declinationDeg: v });
-                      }
-                    }
-                  }}
-                  className="w-full bg-slate-100 dark:bg-[#22262B] border border-slate-300 dark:border-[#373C43] rounded px-1.5 py-1 font-mono text-[11px] text-slate-800 dark:text-white outline-none"
-                />
-              </label>
-
-              <div className="flex flex-col gap-1">
-                <label className="flex items-center justify-between gap-1 cursor-pointer bg-slate-100 dark:bg-[#22262B] border border-slate-300 dark:border-[#373C43] rounded px-1.5 py-1">
-                  <span className="text-slate-700 dark:text-slate-200 font-medium">Invert</span>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(magData?.invertDirection)}
-                    onChange={(e) =>
-                      runMagAction("mag_update_settings", { invertDirection: e.target.checked })
-                    }
-                    className="accent-[#4C9FE8] cursor-pointer"
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                disabled={magBusy}
-                onClick={() => {
-                  setOffsetDraft("0");
-                  setDeclDraft("0");
-                  runMagAction("mag_reset_calibration", undefined, "Calibration reset");
-                }}
-                className="text-[10px] text-slate-500 hover:text-rose-500 dark:text-slate-400 dark:hover:text-rose-400 underline cursor-pointer"
-              >
-                Reset Calibration
-              </button>
-            </div>
           </div>
         </div>
       )}
