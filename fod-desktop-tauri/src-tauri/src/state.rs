@@ -22,6 +22,8 @@ pub struct AppState {
     pub app_handle: Arc<OnceLock<AppHandle>>,
     /// Active `retrive-data` IPC subscriptions keyed by subscription ID.
     pub retrive_subs: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    /// Shared ESP32 magnetometer calibration, port ownership & smoothing control.
+    pub mag_control: Arc<crate::magnetometer_reader::MagnetometerControl>,
     /// Random boot token exposed via /healthz.
     pub started_by: Arc<String>,
 }
@@ -35,6 +37,7 @@ impl AppState {
             health: Arc::new(RwLock::new(SystemHealthStat::default())),
             app_handle: Arc::new(OnceLock::new()),
             retrive_subs: Arc::new(Mutex::new(HashMap::new())),
+            mag_control: Arc::new(crate::magnetometer_reader::MagnetometerControl::new()),
             started_by: Arc::new(uuid::Uuid::new_v4().simple().to_string()),
         }
     }
@@ -95,6 +98,8 @@ pub struct SystemHealthStat {
     pub car_data: StatusBlock,
     #[serde(rename = "RtkData")]
     pub rtk_data: StatusBlock,
+    #[serde(rename = "magnetometer")]
+    pub magnetometer: StatusBlock,
     #[serde(rename = "AiHealth")]
     pub ai_health: AiHealth,
     pub latency: Latency,
@@ -115,6 +120,11 @@ impl Default for SystemHealthStat {
             },
             rtk_data: StatusBlock {
                 data: json!({}),
+                event_status: false,
+                data_status: false,
+            },
+            magnetometer: StatusBlock {
+                data: json!({ "connected": false }),
                 event_status: false,
                 data_status: false,
             },

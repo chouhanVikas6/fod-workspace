@@ -42,7 +42,7 @@ body {
   background: #475569;
 }
 
-/* Leaflet + Tailwind v4 compatibility & crisp map styling */
+/* Leaflet + Tailwind v4 + WebKitGTK compatibility & crisp map styling */
 .leaflet-container {
   background: #0b1120;
   font-family: inherit;
@@ -52,6 +52,17 @@ body {
 .leaflet-container .leaflet-tile {
   max-width: none !important;
   max-height: none !important;
+  mix-blend-mode: normal !important;
+  image-rendering: auto !important;
+}
+
+.leaflet-container .leaflet-tile-loaded {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+svg.leaflet-zoom-animated {
+  will-change: auto !important;
 }
 
 .leaflet-div-icon {

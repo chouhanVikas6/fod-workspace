@@ -30,6 +30,7 @@ interface MapCanvasProps {
   onCursorMove: (pt: GeoPoint | null) => void;
   onDraftStatusChange: (status: DraftStatus) => void;
   onToolModeChange: (mode: ToolMode) => void;
+  onTileErrorStateChange?: (hasError: boolean) => void;
 }
 
 function makeBoundaryVertexIcon(index: number, isHighlighted = false): L.DivIcon {
@@ -139,6 +140,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     onSelectPathway,
     onCursorMove,
     onDraftStatusChange,
+    onTileErrorStateChange,
   },
   ref
 ) {
@@ -170,6 +172,8 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
   onCursorMoveRef.current = onCursorMove;
   const onDraftStatusChangeRef = useRef(onDraftStatusChange);
   onDraftStatusChangeRef.current = onDraftStatusChange;
+  const onTileErrorStateChangeRef = useRef(onTileErrorStateChange);
+  onTileErrorStateChangeRef.current = onTileErrorStateChange;
 
   // Freehand & Waypoint active draft refs
   const isDrawingRef = useRef(false);
@@ -179,6 +183,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
   const waypointDraftRef = useRef<GeoPoint[]>([]);
   const waypointCursorRef = useRef<GeoPoint | null>(null);
   const isDraggingItemRef = useRef(false);
+  const lastInteractionEndRef = useRef<number>(0);
 
   const updateDraftHud = () => {
     if (isDrawingRef.current) {
@@ -344,6 +349,18 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
       cancelDraft: () => {
         cancelDraftInternal();
       },
+      redrawTiles: () => {
+        const m = mapRef.current;
+        const tg = tileGroupRef.current;
+        if (!m || !tg) return;
+        onTileErrorStateChangeRef.current?.(false);
+        tg.eachLayer((layer) => {
+          if (layer instanceof L.TileLayer) {
+            layer.redraw();
+          }
+        });
+        m.invalidateSize({ animate: false });
+      },
     }),
     []
   );
@@ -360,6 +377,9 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
       maxZoom: 22,
       zoomControl: false,
       attributionControl: false,
+      zoomAnimation: false,
+      fadeAnimation: false,
+      markerZoomAnimation: false,
     });
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -411,6 +431,9 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     };
 
     const handleMapClick = (e: L.LeafletMouseEvent) => {
+      if (isDraggingItemRef.current || Date.now() - lastInteractionEndRef.current < 250) {
+        return;
+      }
       const mode = toolModeRef.current;
       const pt: GeoPoint = { lat: e.latlng.lat, lon: e.latlng.lng };
 
@@ -549,6 +572,12 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
       window.removeEventListener('keyup', handleKeyUp);
       map.remove();
       mapRef.current = null;
+      tileGroupRef.current = null;
+      boundaryLayerRef.current = null;
+      routeLayerRef.current = null;
+      drawLayerRef.current = null;
+      trailPolylineRef.current = null;
+      vehicleMarkerRef.current = null;
     };
   }, []);
 
@@ -574,7 +603,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
         map.dragging.disable();
       }
       map.doubleClickZoom.disable();
-    } else if (toolMode === 'waypoint') {
+    } else if (toolMode === 'waypoint' || toolMode === 'boundary') {
       map.dragging.enable();
       map.doubleClickZoom.disable();
     } else {
@@ -588,43 +617,78 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     const group = tileGroupRef.current;
     if (!group) return;
     group.clearLayers();
+    onTileErrorStateChangeRef.current?.(false);
+
+    let consecutiveErrors = 0;
+    const attachTileHealth = (layer: L.TileLayer) => {
+      layer.on('tileload', () => {
+        if (consecutiveErrors > 0) {
+          consecutiveErrors = 0;
+          onTileErrorStateChangeRef.current?.(false);
+        }
+      });
+      layer.on('tileerror', () => {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= 4) {
+          onTileErrorStateChangeRef.current?.(true);
+        }
+      });
+      return layer;
+    };
+
+    const sharedOpts: L.TileLayerOptions = {
+      maxZoom: 22,
+      keepBuffer: 4,
+      updateWhenZooming: false,
+      updateWhenIdle: false,
+    };
 
     if (layerStyle === 'satellite' || layerStyle === 'hybrid') {
-      L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        {
-          maxNativeZoom: 19,
-          maxZoom: 22,
-        }
+      attachTileHealth(
+        L.tileLayer(
+          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          {
+            ...sharedOpts,
+            maxNativeZoom: 19,
+            zIndex: 1,
+          }
+        )
       ).addTo(group);
 
       if (layerStyle === 'hybrid') {
         L.tileLayer(
           'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
           {
+            ...sharedOpts,
             maxNativeZoom: 19,
-            maxZoom: 22,
-            opacity: 0.9,
+            zIndex: 2,
+            opacity: 1,
           }
         ).addTo(group);
       }
     } else if (layerStyle === 'offline') {
-      L.tileLayer(`${localTiles.base_url}/{z}/{x}/{y}.jpg`, {
-        minZoom: localTiles.min_zoom,
-        maxNativeZoom: localTiles.max_zoom,
-        maxZoom: 22,
-      }).addTo(group);
+      attachTileHealth(
+        L.tileLayer(`${localTiles.base_url}/{z}/{x}/{y}.jpg`, {
+          ...sharedOpts,
+          minZoom: localTiles.min_zoom,
+          maxNativeZoom: localTiles.max_zoom,
+        })
+      ).addTo(group);
     } else if (layerStyle === 'street') {
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxNativeZoom: 19,
-        maxZoom: 22,
-      }).addTo(group);
+      attachTileHealth(
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          ...sharedOpts,
+          maxNativeZoom: 19,
+        })
+      ).addTo(group);
     } else {
       const styleSlug = theme === 'dark' ? 'dark_all' : 'light_all';
-      L.tileLayer(`https://{s}.basemaps.cartocdn.com/${styleSlug}/{z}/{x}/{y}{r}.png`, {
-        maxNativeZoom: 19,
-        maxZoom: 22,
-      }).addTo(group);
+      attachTileHealth(
+        L.tileLayer(`https://{s}.basemaps.cartocdn.com/${styleSlug}/{z}/{x}/{y}{r}.png`, {
+          ...sharedOpts,
+          maxNativeZoom: 19,
+        })
+      ).addTo(group);
     }
   }, [layerStyle, theme, localTiles.base_url, localTiles.min_zoom, localTiles.max_zoom]);
 
@@ -694,6 +758,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
 
       marker.on('dragstart', () => {
         isDraggingItemRef.current = true;
+        lastInteractionEndRef.current = Date.now();
       });
       marker.on('drag', () => {
         const ll = marker.getLatLng();
@@ -702,12 +767,18 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
       });
       marker.on('dragend', () => {
         isDraggingItemRef.current = false;
+        lastInteractionEndRef.current = Date.now();
         const ll = marker.getLatLng();
         const next = workingPts.map((p, i) => (i === idx ? { lat: ll.lat, lon: ll.lng } : p));
         onUpdateLocationRef.current({ boundary_points: next });
       });
+      marker.on('click', (ev) => {
+        L.DomEvent.stopPropagation(ev);
+        lastInteractionEndRef.current = Date.now();
+      });
       marker.on('contextmenu', (ev) => {
         L.DomEvent.stopPropagation(ev);
+        lastInteractionEndRef.current = Date.now();
         if (workingPts.length > 3) {
           const next = workingPts.filter((_, i) => i !== idx);
           onUpdateLocationRef.current({ boundary_points: next });
@@ -736,6 +807,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
         midMarker.on('dragstart', () => {
           wasDragged = true;
           isDraggingItemRef.current = true;
+          lastInteractionEndRef.current = Date.now();
         });
         midMarker.on('drag', () => {
           const ll = midMarker.getLatLng();
@@ -747,6 +819,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
         });
         midMarker.on('dragend', () => {
           isDraggingItemRef.current = false;
+          lastInteractionEndRef.current = Date.now();
           const ll = midMarker.getLatLng();
           const next = [...workingPts];
           next.splice(i + 1, 0, { lat: ll.lat, lon: ll.lng });
@@ -754,6 +827,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
         });
         midMarker.on('click', (ev) => {
           L.DomEvent.stopPropagation(ev);
+          lastInteractionEndRef.current = Date.now();
           if (wasDragged) return;
           const next = [...workingPts];
           next.splice(i + 1, 0, { lat: midLat, lon: midLon });
@@ -778,6 +852,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
 
       centroidMarker.on('dragstart', () => {
         isDraggingItemRef.current = true;
+        lastInteractionEndRef.current = Date.now();
         const ll = centroidMarker!.getLatLng();
         startCenter = { lat: ll.lat, lon: ll.lng };
         startSnapshot = workingPts.map((p) => ({ ...p }));
@@ -806,6 +881,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
       });
       centroidMarker.on('dragend', () => {
         isDraggingItemRef.current = false;
+        lastInteractionEndRef.current = Date.now();
         const ll = centroidMarker!.getLatLng();
         const dLat = ll.lat - startCenter.lat;
         const dLon = ll.lng - startCenter.lon;
@@ -814,6 +890,10 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
           lon: p.lon + dLon,
         }));
         onUpdateLocationRef.current({ boundary_points: moved });
+      });
+      centroidMarker.on('click', (ev) => {
+        L.DomEvent.stopPropagation(ev);
+        lastInteractionEndRef.current = Date.now();
       });
     }
   }, [location.boundary_points, location.enforce_boundary, toolMode]);
@@ -953,6 +1033,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
 
           wMarker.on('dragstart', () => {
             isDraggingItemRef.current = true;
+            lastInteractionEndRef.current = Date.now();
           });
           wMarker.on('drag', () => {
             const ll = wMarker.getLatLng();
@@ -961,6 +1042,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
           });
           wMarker.on('dragend', () => {
             isDraggingItemRef.current = false;
+            lastInteractionEndRef.current = Date.now();
             const ll = wMarker.getLatLng();
             const nextPts = workingPts.map((p, i) => (i === idx ? { lat: ll.lat, lon: ll.lng } : p));
             const nextPathways = locationRef.current.pathways.map((pw) =>
@@ -968,8 +1050,13 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
             );
             onUpdateLocationRef.current({ pathways: nextPathways });
           });
+          wMarker.on('click', (ev) => {
+            L.DomEvent.stopPropagation(ev);
+            lastInteractionEndRef.current = Date.now();
+          });
           wMarker.on('contextmenu', (ev) => {
             L.DomEvent.stopPropagation(ev);
+            lastInteractionEndRef.current = Date.now();
             if (workingPts.length > 2) {
               const nextPts = workingPts.filter((_, i) => i !== idx);
               const nextPathways = locationRef.current.pathways.map((pw) =>

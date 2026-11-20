@@ -8,6 +8,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod imagewriter;
+pub mod magnetometer_reader;
 pub mod models;
 pub mod realtime;
 pub mod routes;
@@ -255,6 +256,72 @@ async fn get_tablet_battery() -> Result<Value, String> {
     Ok(read_tablet_battery())
 }
 
+#[tauri::command]
+async fn get_magnetometer_state(state: tauri::State<'_, AppState>) -> Result<Value, String> {
+    let mag = state.health.read().await.magnetometer.clone();
+    Ok(serde_json::to_value(mag).unwrap_or_else(|_| json!({})))
+}
+
+#[tauri::command]
+async fn list_serial_ports() -> Result<Vec<Value>, String> {
+    Ok(magnetometer_reader::list_available_serial_ports())
+}
+
+#[tauri::command]
+async fn mag_set_port(
+    state: tauri::State<'_, AppState>,
+    port: Option<String>,
+) -> Result<(), String> {
+    state.mag_control.set_preferred_port(port).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn mag_start_calibration(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.mag_control.start_calibration().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn mag_finish_calibration(
+    state: tauri::State<'_, AppState>,
+) -> Result<magnetometer_reader::MagnetometerCalibration, String> {
+    state.mag_control.finish_calibration().await
+}
+
+#[tauri::command]
+async fn mag_cancel_calibration(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.mag_control.cancel_calibration().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn mag_set_zero_north(
+    state: tauri::State<'_, AppState>,
+) -> Result<magnetometer_reader::MagnetometerCalibration, String> {
+    state.mag_control.set_zero_north().await
+}
+
+#[tauri::command]
+async fn mag_update_settings(
+    state: tauri::State<'_, AppState>,
+    heading_offset_deg: Option<f64>,
+    declination_deg: Option<f64>,
+    invert_direction: Option<bool>,
+) -> Result<magnetometer_reader::MagnetometerCalibration, String> {
+    Ok(state
+        .mag_control
+        .update_settings(heading_offset_deg, declination_deg, invert_direction)
+        .await)
+}
+
+#[tauri::command]
+async fn mag_reset_calibration(
+    state: tauri::State<'_, AppState>,
+) -> Result<magnetometer_reader::MagnetometerCalibration, String> {
+    Ok(state.mag_control.reset_calibration().await)
+}
+
 #[cfg(target_os = "linux")]
 fn read_tablet_battery() -> Value {
     let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") else {
@@ -469,12 +536,26 @@ pub fn run() {
             start_retrive_stream,
             stop_retrive_stream,
             get_tablet_battery,
+            get_magnetometer_state,
+            list_serial_ports,
+            mag_set_port,
+            mag_start_calibration,
+            mag_finish_calibration,
+            mag_cancel_calibration,
+            mag_set_zero_north,
+            mag_update_settings,
+            mag_reset_calibration,
         ])
         .setup(move |app| {
             app_state.set_app_handle(app.handle().clone());
+            let app_data_dir = app.path().app_data_dir().ok();
 
             let st = app_state.clone();
             tauri::async_runtime::spawn(async move {
+                if let Some(dir) = app_data_dir {
+                    st.mag_control.init_storage_dir(dir).await;
+                }
+
                 // Ensure no dangling active mission on startup when car is not verified live yet
                 let _ = sqlx::query(r#"UPDATE "Mission" SET "status" = 'INACTIVE', "scanStatus" = 'PAUSE', "updatedAt" = $1 WHERE "status" = 'ACTIVE'"#)
                     .bind(crate::services::now_naive())
@@ -487,6 +568,7 @@ pub fn run() {
                 realtime::car_telemetry::spawn(st.clone());
                 realtime::group_stream::spawn(st.clone());
                 realtime::mission_stream::spawn(st.clone());
+                magnetometer_reader::spawn(st.clone());
                 rtk_reader::spawn(st.clone());
                 scheduler::spawn_primary_schedular(st.clone());
                 scheduler::spawn_sync_service(st.clone());

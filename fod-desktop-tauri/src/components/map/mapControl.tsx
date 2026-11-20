@@ -31,6 +31,9 @@ const MapControls = ({ map }: { map: any }) => {
   const selfLocation = useSelector(
     (state: RootState) => state.SystemHealth.RtkData.data
   );
+  const magnetometer = useSelector(
+    (state: RootState) => state.SystemHealth.magnetometer
+  );
 
   const [zoom, setZoom] = useState(19);
   const [showPath, setShowPath] = useState(true);
@@ -188,25 +191,39 @@ const MapControls = ({ map }: { map: any }) => {
     }
   }, [isFodTrackON, selectedFod, selfLocation, map]);
 
-  // Update heading on toggle
+  // Update heading on toggle (uses live magnetometer when connected, otherwise GNSS heading)
   useEffect(() => {
-    if (!map || !map.current) return;
+    if (!map || !map.current || !isHeadingTrackON) return;
+
+    const magData = magnetometer?.data as any;
+    const magHeading =
+      magData?.connected && typeof magData?.heading === "number"
+        ? magData.heading
+        : null;
+    const rtkHeading =
+      typeof (selfLocation as any)?.heading === "number"
+        ? (selfLocation as { heading: number }).heading
+        : null;
+    const liveHeading = magHeading ?? rtkHeading;
+    if (liveHeading === null || !Number.isFinite(liveHeading)) return;
 
     const validatedSelfLocation = validateSelfLocation(
       selfLocation as { heading: number }
     );
 
-    if (!validatedSelfLocation) return;
-
-    if (isHeadingTrackON) {
-      const target = {
+    if (validatedSelfLocation) {
+      jump_target({
         center: validatedSelfLocation.coord,
-        bearing: (selfLocation as { heading: number }).heading,
-      };
-
-      jump_target(target);
+        bearing: liveHeading,
+      });
+    } else if (map.current.dragPan.isActive()) {
+      map.current.easeTo({
+        bearing: liveHeading,
+        duration: 250,
+        essential: true,
+      });
     }
-  }, [isHeadingTrackON, selfLocation, map]);
+  }, [isHeadingTrackON, selfLocation, magnetometer, map]);
 
   // Sync zoom state with map
   useEffect(() => {

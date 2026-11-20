@@ -39,6 +39,7 @@ export default function LocationTab() {
   const [showTrail, setShowTrail] = useState<boolean>(true);
   const [trailPoints, setTrailPoints] = useState<GeoPoint[]>([]);
   const [cursorPt, setCursorPt] = useState<GeoPoint | null>(null);
+  const [tileError, setTileError] = useState<boolean>(false);
   const [draftStatus, setDraftStatus] = useState<DraftStatus>({
     kind: null,
     pointCount: 0,
@@ -301,6 +302,7 @@ export default function LocationTab() {
         onCursorMove={setCursorPt}
         onDraftStatusChange={setDraftStatus}
         onToolModeChange={setToolMode}
+        onTileErrorStateChange={setTileError}
       />
 
       {/* Top Tool Studio Bar + Map Layer / Jump / Fullscreen Controls */}
@@ -312,6 +314,7 @@ export default function LocationTab() {
         isFullscreen={isFullscreen}
         draftStatus={draftStatus}
         boundaryCount={location.boundary_points.length}
+        tileError={tileError}
         onChangeToolMode={(mode) => {
           setToolMode(mode);
           if (mode === 'boundary') setInspectorTab('boundary');
@@ -325,6 +328,7 @@ export default function LocationTab() {
         onFinishDraft={() => mapHandleRef.current?.finishDraft()}
         onUndoDraft={() => mapHandleRef.current?.undoDraft()}
         onCancelDraft={() => mapHandleRef.current?.cancelDraft()}
+        onRedrawTiles={() => mapHandleRef.current?.redrawTiles()}
       />
 
       {/* Left Collapsible Inspector Drawer (Boundary / Pathways Sequence / Human Drive) */}

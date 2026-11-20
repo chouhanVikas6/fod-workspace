@@ -27,6 +27,7 @@ export interface MapCanvasHandle {
   finishDraft: () => void;
   undoDraft: () => void;
   cancelDraft: () => void;
+  redrawTiles: () => void;
 }
 
 export interface DraftStatus {

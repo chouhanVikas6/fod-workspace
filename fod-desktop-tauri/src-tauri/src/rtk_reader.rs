@@ -9,6 +9,10 @@
 //! Parsed coordinates are written into `AppState.health.rtk_data`, which is
 //! automatically streamed to the frontend via `/api/sse/health-data` and `/gui`.
 
+use crate::magnetometer_reader::{
+    fallback_port_sort_key, format_serial_open_error, is_esp32_usb_bridge, is_ublox_port,
+    is_windows_com_port, normalize_port_name, port_sort_key, ports_match,
+};
 use crate::state::AppState;
 use serde_json::json;
 use serialport::{SerialPortInfo, SerialPortType};
@@ -180,59 +184,165 @@ pub fn parse_nmea_sentence(line: &str, state: &mut RtkFixState) -> bool {
 }
 
 async fn publish_rtk_state(state: &AppState, fix_state: &RtkFixState, source: &str) {
+    let mut rtk_json = fix_state.to_json(source);
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut h = state.health.write().await;
-    h.rtk_data.data = fix_state.to_json(source);
+
+    let mag_fresh = h.magnetometer.data_status
+        && h.magnetometer
+            .data
+            .get("updatedAtMs")
+            .and_then(|v| v.as_i64())
+            .is_some_and(|ts| (now_ms - ts) <= 3000);
+    if mag_fresh {
+        if let Some(mag_hdg) = h.magnetometer.data.get("heading").and_then(|v| v.as_f64()) {
+            if let Some(obj) = rtk_json.as_object_mut() {
+                obj.insert("heading".to_string(), json!(mag_hdg));
+                obj.insert("headingSource".to_string(), json!("magnetometer"));
+            }
+        }
+    }
+
+    h.rtk_data.data = rtk_json;
     h.rtk_data.event_status = true;
     h.rtk_data.data_status = fix_state.lat.is_some() && fix_state.lon.is_some();
 }
 
 async fn mark_rtk_error(state: &AppState, source: &str, err_msg: &str) {
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut h = state.health.write().await;
-    h.rtk_data.data = json!({
+    let mag_fresh = h.magnetometer.data_status
+        && h.magnetometer
+            .data
+            .get("updatedAtMs")
+            .and_then(|v| v.as_i64())
+            .is_some_and(|ts| (now_ms - ts) <= 3000);
+    let mag_heading = if mag_fresh {
+        h.magnetometer.data.get("heading").and_then(|v| v.as_f64())
+    } else {
+        None
+    };
+
+    let mut payload = json!({
         "fix": "NO_GPS",
         "source": source,
         "error": err_msg,
-        "updated_at_ms": chrono::Utc::now().timestamp_millis(),
+        "updated_at_ms": now_ms,
     });
+    if let Some(hdg) = mag_heading {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("heading".to_string(), json!(hdg));
+            obj.insert("headingSource".to_string(), json!("magnetometer"));
+        }
+    }
+
+    h.rtk_data.data = payload;
     h.rtk_data.event_status = true;
     h.rtk_data.data_status = false;
 }
 
-fn select_preferred_serial_port(ports: &[SerialPortInfo]) -> Option<String> {
-    let mut usb_ports: Vec<&str> = ports
+pub fn select_preferred_serial_port_excluding(
+    ports: &[SerialPortInfo],
+    excluded: &[String],
+) -> Option<String> {
+    let is_excluded = |name: &str| excluded.iter().any(|e| ports_match(e, name));
+
+    // 1. Prefer u-blox GNSS receivers (VID 0x1546 or Windows u-blox FriendlyName)
+    let mut ublox_ports: Vec<&str> = ports
         .iter()
-        .filter(|p| matches!(p.port_type, SerialPortType::UsbPort(_)))
+        .filter(|p| !is_excluded(&p.port_name) && is_ublox_port(p))
         .map(|p| p.port_name.as_str())
         .collect();
-    usb_ports.sort_unstable();
+    ublox_ports.sort_by_key(|name| port_sort_key(name));
+    if let Some(first) = ublox_ports.first() {
+        return Some((*first).to_string());
+    }
+
+    // 2. Prefer /dev/ttyACM* USB CDC devices (typical GNSS receivers)
+    let mut acm_ports: Vec<&str> = ports
+        .iter()
+        .filter(|p| {
+            !is_excluded(&p.port_name)
+                && matches!(p.port_type, SerialPortType::UsbPort(_))
+                && p.port_name.starts_with("/dev/ttyACM")
+        })
+        .map(|p| p.port_name.as_str())
+        .collect();
+    acm_ports.sort_by_key(|name| port_sort_key(name));
+    if let Some(first) = acm_ports.first() {
+        return Some((*first).to_string());
+    }
+
+    // 3a. Non-excluded USB serial port that is NOT a known ESP32 UART bridge
+    let mut non_esp_usb_ports: Vec<&str> = ports
+        .iter()
+        .filter(|p| {
+            !is_excluded(&p.port_name)
+                && matches!(p.port_type, SerialPortType::UsbPort(_))
+                && !is_esp32_usb_bridge(p)
+        })
+        .map(|p| p.port_name.as_str())
+        .collect();
+    non_esp_usb_ports.sort_by_key(|name| fallback_port_sort_key(name));
+    if let Some(first) = non_esp_usb_ports.first() {
+        return Some((*first).to_string());
+    }
+
+    // 3b. Any remaining non-excluded USB serial port (for GNSS behind FTDI/CP2102 when unclaimed)
+    let mut usb_ports: Vec<&str> = ports
+        .iter()
+        .filter(|p| !is_excluded(&p.port_name) && matches!(p.port_type, SerialPortType::UsbPort(_)))
+        .map(|p| p.port_name.as_str())
+        .collect();
+    usb_ports.sort_by_key(|name| fallback_port_sort_key(name));
     if let Some(first) = usb_ports.first() {
         return Some((*first).to_string());
     }
 
+    // 4. Fallback OS serial devices (POSIX ttyACM/ttyUSB or Windows non-Bluetooth COMx)
     let mut fallback_ports: Vec<&str> = ports
         .iter()
         .filter(|p| {
             let name = p.port_name.as_str();
-            name.starts_with("/dev/ttyACM")
-                || name.starts_with("/dev/ttyUSB")
-                || (cfg!(target_os = "windows")
-                    && !matches!(p.port_type, SerialPortType::BluetoothPort))
+            !is_excluded(name)
+                && (name.starts_with("/dev/ttyACM")
+                    || name.starts_with("/dev/ttyUSB")
+                    || (is_windows_com_port(name)
+                        && !matches!(p.port_type, SerialPortType::BluetoothPort)))
         })
         .map(|p| p.port_name.as_str())
         .collect();
-    fallback_ports.sort_unstable();
+    fallback_ports.sort_by_key(|name| fallback_port_sort_key(name));
     fallback_ports.first().map(|p| (*p).to_string())
 }
 
-fn find_serial_port() -> Option<String> {
+#[allow(dead_code)]
+fn select_preferred_serial_port(ports: &[SerialPortInfo]) -> Option<String> {
+    select_preferred_serial_port_excluding(ports, &[])
+}
+
+async fn find_serial_port(state: &AppState) -> Option<String> {
     if let Ok(port) = std::env::var("RTK_SERIAL_PORT") {
-        let trimmed = port.trim();
+        let trimmed = normalize_port_name(&port);
         if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
+            return Some(trimmed);
         }
     }
+    let mut excluded = Vec::new();
+    if let Ok(mag_env) = std::env::var("MAG_SERIAL_PORT") {
+        let trimmed = normalize_port_name(&mag_env);
+        if !trimmed.is_empty() {
+            excluded.push(trimmed);
+        }
+    }
+    if let Some(claimed) = state.mag_control.claimed_port().await {
+        excluded.push(claimed);
+    }
+    if let Some(preferred) = state.mag_control.preferred_port().await {
+        excluded.push(preferred);
+    }
     let ports = serialport::available_ports().ok()?;
-    select_preferred_serial_port(&ports)
+    select_preferred_serial_port_excluding(&ports, &excluded)
 }
 
 fn apply_ubx_packet(pkt: UbxPacket<'_>, state: &mut RtkFixState) -> bool {
@@ -385,23 +495,21 @@ async fn read_serial_blocking(
 
     let reader_handle = tokio::task::spawn_blocking(move || -> Result<(), String> {
         let mut serial = serialport::new(&port_for_thread, baud)
+            .data_bits(serialport::DataBits::Eight)
+            .parity(serialport::Parity::None)
+            .stop_bits(serialport::StopBits::One)
+            .flow_control(serialport::FlowControl::None)
+            .dtr_on_open(false)
             .timeout(Duration::from_millis(200))
             .open()
             .map_err(|e| {
-                if e.kind() == serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied) {
-                    #[cfg(target_os = "linux")]
-                    {
-                        format!("Permission denied on {port_for_thread} (add user to dialout group)")
-                    }
-                    #[cfg(not(target_os = "linux"))]
-                    {
-                        format!(
-                            "Permission denied on {port_for_thread} (port may be in use by another app)"
-                        )
-                    }
-                } else {
-                    format!("Failed to open {port_for_thread}: {e}")
-                }
+                format_serial_open_error(
+                    &port_for_thread,
+                    e.kind(),
+                    &e.description,
+                    cfg!(target_os = "windows"),
+                    cfg!(target_os = "linux"),
+                )
             })?;
 
         let mut decoder = GnssStreamDecoder::new();
@@ -410,7 +518,10 @@ async fn read_serial_blocking(
 
         loop {
             match serial.read(&mut buf) {
-                Ok(0) => continue,
+                Ok(0) => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
                 Ok(n) => {
                     if decoder.feed(&buf[..n])
                         && last_emit.elapsed() >= Duration::from_millis(100)
@@ -446,6 +557,14 @@ pub fn spawn(app_state: AppState) {
             .and_then(|v| v.parse().ok())
             .unwrap_or(115_200);
 
+        // Give magnetometer_reader a brief head-start to claim ESP32 CP2102 serial ports when RTK_SERIAL_PORT is unset
+        if std::env::var("RTK_SERIAL_PORT")
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+        {
+            tokio::time::sleep(Duration::from_millis(600)).await;
+        }
+
         loop {
             if let Ok(addr) = std::env::var("RTK_TCP_ADDR") {
                 let addr = addr.trim().to_string();
@@ -468,7 +587,7 @@ pub fn spawn(app_state: AppState) {
                 }
             }
 
-            if let Some(port) = find_serial_port() {
+            if let Some(port) = find_serial_port(&app_state).await {
                 tracing::info!(port = %port, baud, "Connected to RTK serial receiver");
                 match read_serial_blocking(port.clone(), baud, app_state.clone()).await {
                     Ok(()) => {
@@ -548,6 +667,71 @@ mod tests {
         assert_eq!(
             select_preferred_serial_port(&ports).as_deref(),
             Some("COM5")
+        );
+    }
+
+    #[test]
+    fn test_windows_coexistence_with_esp32_and_case_insensitive_exclusion() {
+        let ports = vec![
+            SerialPortInfo {
+                port_name: "COM4".to_string(),
+                port_type: SerialPortType::UsbPort(serialport::UsbPortInfo {
+                    vid: 0x10c4,
+                    pid: 0xea60,
+                    serial_number: None,
+                    manufacturer: Some("Silicon Labs".to_string()),
+                    product: Some("Silicon Labs CP210x USB to UART Bridge (COM4)".to_string()),
+                }),
+            },
+            SerialPortInfo {
+                port_name: "COM10".to_string(),
+                port_type: SerialPortType::UsbPort(serialport::UsbPortInfo {
+                    vid: 0x1546,
+                    pid: 0x01a8,
+                    serial_number: None,
+                    manufacturer: Some("u-blox AG".to_string()),
+                    product: Some("u-blox GNSS receiver (COM10)".to_string()),
+                }),
+            },
+        ];
+
+        assert_eq!(
+            select_preferred_serial_port_excluding(&ports, &[]).as_deref(),
+            Some("COM10")
+        );
+
+        let only_esp32 = vec![ports[0].clone()];
+        assert_eq!(
+            select_preferred_serial_port_excluding(&only_esp32, &["com4".to_string()]),
+            None
+        );
+
+        // Generic non-ESP32 USB receiver beats CP2102 bridge on Windows
+        let mixed_usb = vec![
+            SerialPortInfo {
+                port_name: "COM3".to_string(),
+                port_type: SerialPortType::UsbPort(serialport::UsbPortInfo {
+                    vid: 0x10c4,
+                    pid: 0xea60,
+                    serial_number: None,
+                    manufacturer: Some("Silicon Labs".to_string()),
+                    product: Some("CP2102 USB to UART Bridge Controller (COM3)".to_string()),
+                }),
+            },
+            SerialPortInfo {
+                port_name: "COM12".to_string(),
+                port_type: SerialPortType::UsbPort(serialport::UsbPortInfo {
+                    vid: 0x0e8d,
+                    pid: 0x3329,
+                    serial_number: None,
+                    manufacturer: Some("GNSS Vendor".to_string()),
+                    product: Some("USB GNSS Receiver (COM12)".to_string()),
+                }),
+            },
+        ];
+        assert_eq!(
+            select_preferred_serial_port_excluding(&mixed_usb, &[]).as_deref(),
+            Some("COM12")
         );
     }
 }
