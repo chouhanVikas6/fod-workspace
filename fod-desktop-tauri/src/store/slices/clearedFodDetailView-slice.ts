@@ -8,12 +8,11 @@ export interface ClearedFodDetailedViewType {
     FodPoints: string[] | null;
     status: string | null;
     collectorResponse: string | null;
-    origin?:string;
+    origin?: string;
   };
-  
 }
 
-const initialState: ClearedFodDetailedViewType= {
+const initialState: ClearedFodDetailedViewType = {
   isOpen: false,
   fod: {
     FodId: null,
@@ -21,9 +20,8 @@ const initialState: ClearedFodDetailedViewType= {
     FodPoints: null,
     status: null,
     collectorResponse: null,
-      origin:''
+    origin: '',
   },
-
 };
 
 const ClearedFodDetailedViewReducer = createSlice({
@@ -31,7 +29,14 @@ const ClearedFodDetailedViewReducer = createSlice({
   initialState,
   reducers: {
     update_ClearedDetailViewFod(state, action) {
-      const { fod } = action.payload;
+      const { fod, onlyIfOpen } = action.payload;
+      if (onlyIfOpen) {
+        if (!state.isOpen) return;
+        const currentGroupId = (state.fod as any)?.groupId;
+        if (currentGroupId != null && fod?.groupId != null && currentGroupId !== fod.groupId) {
+          return;
+        }
+      }
       state.isOpen = true;
       state.fod = { ...fod };
     },

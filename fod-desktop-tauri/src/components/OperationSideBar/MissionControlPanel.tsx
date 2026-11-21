@@ -296,11 +296,19 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
             </div>
           )}
 
-          {isPause ? (
-            <RxPlay className="w-5 h-5" />
-          ) : (
-            <RxPause className="w-5 h-5" />
-          )}
+          <span className="relative inline-flex items-center justify-center">
+            {isPause ? (
+              <RxPlay className="w-5 h-5" />
+            ) : (
+              <RxPause className="w-5 h-5" />
+            )}
+            {isPlayPauseDisabled && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute w-6 h-[2px] -rotate-45 bg-current rounded-full"
+              />
+            )}
+          </span>
 
           <span className="text-[9px] sm:text-[10px] lg:text-[11px] font-bold uppercase tracking-wide mt-0.5">
             {isPause ? "PLAY" : "PAUSE"}

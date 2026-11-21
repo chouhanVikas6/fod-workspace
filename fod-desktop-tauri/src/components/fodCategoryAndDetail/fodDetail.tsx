@@ -9,6 +9,7 @@ import { HiOutlineCheck } from "react-icons/hi";
 import { RxCross1 } from "react-icons/rx";
 import { BsCamera } from "react-icons/bs";
 import { GiCardPickup } from "react-icons/gi";
+import { acceptFod } from "@/store/actions/FodActions";
 import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
 import {
   close_SideBarFodDetail,
@@ -33,6 +34,7 @@ const FodDetail = () => {
   const safeFod = fod as any;
   const groupStatus = safeFod?.groupStatus ?? "";
   const isClearedFod = groupStatus === "CLEARED";
+  const isRejectedFod = groupStatus === "REJECTED";
 
   const { isFodFinalReviewOpen } = useSelector(
     (state: RootState) => state.WebCam
@@ -220,14 +222,33 @@ const FodDetail = () => {
                   <span className="truncate">Camera</span>
                 </button>
 
-                <button
-                  type="button"
-                  className="h-full min-w-0 flex-1 flex justify-center items-center bg-[#017ED7] text-white rounded-md gap-1 px-1 text-[11px] sm:text-sm font-medium hover:bg-[#016ec0] transition-colors"
-                  onClick={() => dispatch(setFodFinalReview(true))}
-                >
-                  <GiCardPickup className="h-3.5 sm:h-4 w-auto shrink-0" />
-                  <span className="truncate">Clear FOD</span>
-                </button>
+                {isRejectedFod ? (
+                  <button
+                    type="button"
+                    className="h-full min-w-0 flex-1 flex justify-center items-center bg-[#017ED7] text-white rounded-md gap-1 px-1 text-[11px] sm:text-sm font-medium hover:bg-[#016ec0] transition-colors cursor-pointer"
+                    onClick={() => {
+                      dispatch(
+                        acceptFod({
+                          ...safeFod,
+                          missionId: missionState.missionNumber,
+                        }) as any
+                      );
+                      dispatch(close_SideBarFodDetail());
+                    }}
+                  >
+                    <HiOutlineCheck className="h-4 w-4 shrink-0" />
+                    <span className="truncate">Confirm FOD</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="h-full min-w-0 flex-1 flex justify-center items-center bg-[#017ED7] text-white rounded-md gap-1 px-1 text-[11px] sm:text-sm font-medium hover:bg-[#016ec0] transition-colors cursor-pointer"
+                    onClick={() => dispatch(setFodFinalReview(true))}
+                  >
+                    <GiCardPickup className="h-3.5 sm:h-4 w-auto shrink-0" />
+                    <span className="truncate">Clear FOD</span>
+                  </button>
+                )}
               </>
             )}
           </div>

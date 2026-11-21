@@ -145,17 +145,16 @@ const Fodcard = ({
   const acceptFod = async (fod, e) => {
     if (e) e.stopPropagation();
 
+    if (fod.groupStatus === "ACCEPTED") {
+      dispatch(doubleAccept(fod.groupId));
+      return;
+    }
+
+    const { groupId: FodId } = fod;
+    dispatch(accept_Fod(FodId));
+
     try {
-      if (fod.groupStatus === "ACCEPTED") {
-        dispatch(doubleAccept(fod.groupId));
-        return;
-      }
-
-      setImageModal(true);
-
-      const { groupId: FodId } = fod;
-
-      const response = await axiosClient({
+      await axiosClient({
         method: "POST",
         url: "/api/fod-group/update/" + FodId,
         data: {
@@ -163,22 +162,10 @@ const Fodcard = ({
           missionId: missionNumber,
         },
       });
-
-      if (response) {
-        setFade(true);
-
-        setTimeout(() => {
-          dispatch(accept_Fod(FodId));
-          setFade(false);
-          setImageModal(false);
-        }, 50);
-      }
-    } catch (e) {
-      console.error(e);
-      setImageModal(false);
-
+    } catch (err) {
+      console.error(err);
       toast.error(
-        e?.data?.message || e?.data?.error || "Failed to accept FOD"
+        err?.data?.message || err?.data?.error || "Failed to accept FOD"
       );
     }
   };

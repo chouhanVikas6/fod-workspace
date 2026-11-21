@@ -6,34 +6,69 @@ export const updateClearedDetailViewFod = (Fod: any) => async (dispatch: any, ge
     const { missionNumber } = getState().MissionState;
     const fodWithMission = { ...Fod, missionId: Fod?.missionId ?? missionNumber };
 
-    let { data, origin } = await getAllFrames(fodWithMission);
-    if (!Array.isArray(data) || data.length === 0) {
-        try {
-            const serverRes: any = await getAllFramesFromServer(fodWithMission, missionNumber);
-            if (Array.isArray(serverRes?.data) && serverRes.data.length > 0) {
-                data = serverRes.data;
-                origin = serverRes.origin;
-            }
-        } catch {
-            // Fall back to existing FOD point / card preview
-        }
-    }
+    const initialFodPoints =
+        Array.isArray(Fod?.FodPoints) && Fod.FodPoints.length > 0
+            ? Fod.FodPoints
+            : [fodWithMission];
 
-    let collectorResponse = await axiosClient({
+    // 1. Open modal immediately with existing FOD data
+    dispatch(
+        update_ClearedDetailViewFod({
+            fod: {
+                ...fodWithMission,
+                FodPoints: initialFodPoints,
+                collectorResponse: Fod?.collectorResponse || {},
+            },
+            origin: 'initial',
+        })
+    );
+
+    // 2. Fetch frames and collector response in parallel without blocking modal open
+    const framesPromise = (async () => {
+        let { data, origin } = await getAllFrames(fodWithMission);
+        if (!Array.isArray(data) || data.length === 0) {
+            try {
+                const serverRes: any = await getAllFramesFromServer(fodWithMission, missionNumber);
+                if (Array.isArray(serverRes?.data) && serverRes.data.length > 0) {
+                    data = serverRes.data;
+                    origin = serverRes.origin;
+                }
+            } catch {
+                // Fall back to existing FOD point / card preview
+            }
+        }
+        return { data, origin };
+    })();
+
+    const responsePromise = axiosClient({
         url: `/api/cleared-fod/response?groupId=${Fod.groupId}&missionId=${missionNumber}`,
-        method: "get"
-    });
-    collectorResponse = collectorResponse ? collectorResponse.data : {};
+        method: "get",
+    }).catch(() => null);
+
+    const [framesResult, responseResult] = await Promise.allSettled([framesPromise, responsePromise]);
+
+    const framesValue = framesResult.status === "fulfilled" ? framesResult.value : null;
+    const collectorRes =
+        responseResult.status === "fulfilled" && responseResult.value
+            ? responseResult.value.data
+            : Fod?.collectorResponse || {};
 
     const decodedFodPoints =
-        Array.isArray(data) && data.length > 0
-            ? data
-            : Array.isArray(Fod?.FodPoints) && Fod.FodPoints.length > 0
-                ? Fod.FodPoints
-                : [fodWithMission];
+        Array.isArray(framesValue?.data) && framesValue.data.length > 0
+            ? framesValue.data
+            : initialFodPoints;
 
-    const fod = { ...fodWithMission, FodPoints: decodedFodPoints, collectorResponse };
-    dispatch(update_ClearedDetailViewFod({ fod, origin }));
+    dispatch(
+        update_ClearedDetailViewFod({
+            fod: {
+                ...fodWithMission,
+                FodPoints: decodedFodPoints,
+                collectorResponse: collectorRes || {},
+            },
+            origin: framesValue?.origin || 'initial',
+            onlyIfOpen: true,
+        })
+    );
 };
 
 export const removeClearedDetailedViewFod = () => (dispatch: any) => {

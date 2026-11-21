@@ -284,30 +284,42 @@ const DetailedView = () => {
       );
     }
 
-    setTimeout(async () => {
-      try {
-        const nextFod = getNextFod(0);
+    try {
+      const nextFod = getNextFod(0);
+      if (nextFod) {
+        const initialPoints =
+          Array.isArray(nextFod.FodPoints) && nextFod.FodPoints.length > 0
+            ? nextFod.FodPoints
+            : [nextFod];
+        dispatch(
+          update_DetailViewFod({
+            fod: { ...nextFod, FodPoints: initialPoints },
+            isFilteredFod,
+            origin: "initial",
+            onlyIfOpen: true,
+          }),
+        );
+        setfade(false);
+
         const listFod = await getAllFrames(nextFod);
-
-        if (nextFod) {
-          const updatedFod = { ...nextFod, FodPoints: listFod.data };
-
+        if (Array.isArray(listFod?.data) && listFod.data.length > 0) {
           dispatch(
             update_DetailViewFod({
-              fod: updatedFod,
+              fod: { ...nextFod, FodPoints: listFod.data },
               isFilteredFod,
               origin: listFod.origin,
+              onlyIfOpen: true,
             }),
           );
-        } else {
-          dispatch(reset_DetailedViewFod());
         }
-      } catch (e) {
-        toast.error("Failed to load next FOD frames");
-      } finally {
+      } else {
+        dispatch(reset_DetailedViewFod());
         setfade(false);
       }
-    }, 200);
+    } catch (e) {
+      setfade(false);
+      toast.error("Failed to load next FOD frames");
+    }
   };
 
   const handleReject = async () => {

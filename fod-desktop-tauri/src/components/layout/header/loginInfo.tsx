@@ -108,9 +108,14 @@ const LoginInfo: React.FC = () => {
         <RxPerson className="w-4 h-4" />
       </div>
 
-      <span className="text-sm font-semibold text-slate-900 dark:text-white mt-0.5">
-        {displayName || "User1"}
-      </span>
+      <div className="flex flex-col items-start text-left leading-tight">
+        <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">
+          {userLoginName || displayName || "User1"}
+        </span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[#8C939C]">
+          {userRole}
+        </span>
+      </div>
     </button>
  
           {/* Dropdown Menu */}

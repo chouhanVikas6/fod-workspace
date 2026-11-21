@@ -25,25 +25,18 @@ export const addFod = (payload,audioRef) => async (dispatch, getState) => {
 
 
 export const acceptFod = (fod)=>async (dispatch, getState) =>{
+  const {groupId:FodId,missionId} = fod;
+  dispatch(accept_Fod(FodId));
+
   try{
-    const {groupId:FodId,missionId} = fod;
-    console.log(fod)
-    const response = await axiosClient({
+    await axiosClient({
       method:"POST",
       url:"/api/fod-group/update/"+FodId,
       data:{
         status:"ACCEPTED",
         missionId
       }
-    })
-    
-    dispatch(set_ImageModal({FodId,flag:true}))
-  
-    if(response){
-      dispatch(accept_Fod(FodId))
-    }
-    dispatch(set_ImageModal({FodId,flag:false}))
-
+    });
   }
   catch(e){
     console.error(e)

@@ -281,18 +281,28 @@ const FodGrid = () => {
   };
 
   const frames = getFrames(fod);
+  const [failedFrames, setFailedFrames] = React.useState<Record<number, boolean>>({});
+
+  React.useEffect(() => {
+    setFailedFrames({});
+  }, [fod]);
+
+  const gridColsClass =
+    frames.length === 1
+      ? "grid-cols-1"
+      : frames.length === 2
+        ? "grid-cols-1 min-[480px]:grid-cols-2"
+        : "grid-cols-1 min-[480px]:grid-cols-2 xl:grid-cols-3";
 
   return (
     <div
-      className="
+      className={`
         w-full h-full
-        grid grid-cols-1
-        min-[480px]:grid-cols-2
-        xl:grid-cols-3
+        grid ${gridColsClass}
         gap-2 p-2
         overflow-y-auto
         content-start
-      "
+      `}
     >
       {frames.length > 0 ? (
         frames.map((frame: string, index: number) => (
@@ -300,10 +310,10 @@ const FodGrid = () => {
             key={index}
             className={`
               relative
-              w-full aspect-[4/3]
-              min-h-[100px]
+              w-full ${frames.length === 1 ? "h-full min-h-[180px]" : "aspect-[4/3] min-h-[100px]"}
               rounded-md overflow-hidden
               bg-slate-200 dark:bg-[#292D33]
+              flex items-center justify-center
               border
               ${
                 index === 0
@@ -312,11 +322,21 @@ const FodGrid = () => {
               }
             `}
           >
-            <Image
-              src={frame}
-              alt={`FOD frame ${index + 1}`}
-              className="w-full h-full rounded-md object-contain"
-            />
+            {failedFrames[index] ? (
+              <div className="flex flex-col items-center justify-center text-slate-500 dark:text-[#A8B0BA] text-xs gap-1">
+                <span className="font-mono font-semibold">{Fod_FodId(fod)}</span>
+                <span>No frame preview</span>
+              </div>
+            ) : (
+              <Image
+                src={frame}
+                alt={`FOD frame ${index + 1}`}
+                className="w-full h-full rounded-md object-contain"
+                onError={() =>
+                  setFailedFrames((prev) => ({ ...prev, [index]: true }))
+                }
+              />
+            )}
           </div>
         ))
       ) : (
@@ -479,7 +499,10 @@ const ClearedFodData = () => {
     },
     {
       label: "Size",
-      value: (fod as any)?.size ?? "—",
+      value:
+        (fod as any)?.size !== undefined && (fod as any)?.size !== null && Number.isFinite(Number((fod as any).size))
+          ? `${Math.round(Number((fod as any).size))} mm`
+          : "—",
     },
     {
       label: "Clearance Time",
@@ -487,7 +510,10 @@ const ClearedFodData = () => {
     },
     {
       label: "Velocity",
-      value: (fod as any)?.velocity ?? "—",
+      value:
+        (fod as any)?.velocity !== undefined && (fod as any)?.velocity !== null && Number.isFinite(Number((fod as any).velocity))
+          ? `${Math.round(Number((fod as any).velocity))} Km/h`
+          : "—",
     },
     {
       label: "Distance",
