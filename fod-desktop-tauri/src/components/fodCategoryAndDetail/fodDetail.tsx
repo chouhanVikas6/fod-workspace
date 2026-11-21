@@ -430,7 +430,7 @@ export const FodGrid = () => {
             onPointerCancel={() => {
               isScrubbingDots.current = false;
             }}
-            className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full bg-black/35 backdrop-blur-md border border-white/15 cursor-ew-resize touch-none max-w-[90%] overflow-hidden shadow-sm"
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 inline-flex items-center justify-center gap-1.5 px-2 py-1 cursor-ew-resize touch-none max-w-[90%] overflow-hidden"
             title="Click or drag across dots to switch frame"
           >
             {FodPointArr.map((f: any, idx: number) => {
@@ -444,7 +444,7 @@ export const FodGrid = () => {
                     e.stopPropagation();
                     goToIndex(idx);
                   }}
-                  className={`rounded-full transition-all duration-150 shrink-0 ${
+                  className={`rounded-full transition-all duration-150 shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)] ${
                     isCurrent
                       ? "w-2 h-2 bg-white scale-110"
                       : "w-1.5 h-1.5 bg-white/45 hover:bg-white/75"
