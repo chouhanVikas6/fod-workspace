@@ -178,7 +178,6 @@ const DetailedView = () => {
           fod: updatedFod,
           isFilteredFod,
           origin: listFod.origin,
-          onlyIfOpen: true,
         }),
       );
 
@@ -244,7 +243,6 @@ const DetailedView = () => {
           fod: updatedFod,
           isFilteredFod,
           origin: listFod.origin,
-          onlyIfOpen: true,
         }),
       );
 
@@ -285,7 +283,7 @@ const DetailedView = () => {
       );
     }
 
-    const nextFod = getNextFod(0);
+    const nextFod = getNextFod();
     if (nextFod) {
       const nextFodWithMission = {
         ...nextFod,
@@ -300,7 +298,6 @@ const DetailedView = () => {
           fod: { ...nextFodWithMission, FodPoints: initialPoints },
           isFilteredFod,
           origin: "initial",
-          onlyIfOpen: true,
         }),
       );
       setfade(false);

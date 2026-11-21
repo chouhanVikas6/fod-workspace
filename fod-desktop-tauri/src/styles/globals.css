@@ -854,8 +854,9 @@ button:active {
 }
 
 ::-webkit-scrollbar-thumb {
+  min-height: 56px;
   border-radius: 9999px;
-  background-color: rgba(156, 163, 175, 0.55);
+  background-color: rgba(156, 163, 175, 0.6);
   border: 2px solid transparent;
   background-clip: content-box;
   transition: background-color 0.2s ease;

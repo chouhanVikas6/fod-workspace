@@ -71,7 +71,7 @@ const ClearedFodDetailView = () => {
     <div className="fixed inset-y-0 right-0 left-0 sm:left-[78px] top-[48px] z-[9999] flex items-center justify-center bg-slate-900/35 dark:bg-black/60 backdrop-blur-sm p-3 sm:p-5 select-none">
       <div
         ref={detailedViewRef}
-        className="relative w-[90%] max-w-[1140px] h-[88%] max-h-[680px] rounded-xl bg-white dark:bg-[#181C23] border border-slate-200 dark:border-[#2B3542] shadow-2xl text-slate-700 dark:text-[#D9DDE2] flex flex-col overflow-hidden"
+        className="relative w-[90%] max-w-[1140px] h-[92%] max-h-[740px] rounded-xl bg-white dark:bg-[#181C23] border border-slate-200 dark:border-[#2B3542] shadow-2xl text-slate-700 dark:text-[#D9DDE2] flex flex-col overflow-hidden"
       >
         {/* Modal Header */}
         <div className="h-11 sm:h-12 px-4 sm:px-5 flex items-center justify-between bg-white dark:bg-[#181C23] border-b border-slate-200 dark:border-[#2B3542] shrink-0">
@@ -99,7 +99,7 @@ const ClearedFodDetailView = () => {
         <div className="flex-1 min-h-0 p-3 sm:p-4 flex flex-col md:flex-row gap-3 sm:gap-4 overflow-y-auto md:overflow-hidden">
           {/* Left: Frame Gallery + Before/After */}
           <div className="w-full md:w-[58%] md:h-full min-h-0 flex flex-col gap-3">
-            <div className="flex-1 min-h-[200px] md:min-h-0 flex flex-col">
+            <div className="flex-1 min-h-[180px] md:min-h-0 overflow-hidden flex flex-col">
               <FodGrid />
             </div>
 
@@ -195,9 +195,9 @@ const FodGrid = () => {
   const activeFrame = frames[safeIdx];
 
   return (
-    <div className="w-full h-full flex flex-col gap-2 min-h-0">
+    <div className="w-full h-full flex flex-row gap-2 min-h-0">
       {/* Main Frame Preview */}
-      <div className="relative flex-1 min-h-[160px] rounded-lg overflow-hidden bg-slate-100 dark:bg-[#12161B] border border-slate-200 dark:border-[#2B3542] flex items-center justify-center">
+      <div className="relative flex-1 min-w-0 h-full rounded-lg overflow-hidden bg-slate-100 dark:bg-[#12161B] border border-slate-200 dark:border-[#2B3542] flex items-center justify-center">
         {frames.length === 0 || failedFrames[safeIdx] ? (
           <div className="flex flex-col items-center justify-center text-slate-400 dark:text-[#A8B0BA] text-xs gap-1">
             <span className="font-mono font-semibold">{Fod_FodId(fod)}</span>
@@ -222,15 +222,15 @@ const FodGrid = () => {
         )}
       </div>
 
-      {/* Thumbnail Strip */}
+      {/* Vertical Thumbnail Strip */}
       {frames.length > 1 && (
-        <div className="h-[54px] sm:h-[60px] shrink-0 flex items-center gap-2 overflow-x-auto pb-0.5">
+        <div className="w-[72px] sm:w-[84px] h-full shrink-0 flex flex-col gap-2 overflow-y-auto pr-0.5">
           {frames.map((frame: string, index: number) => (
             <button
               key={index}
               type="button"
               onClick={() => setActiveIdx(index)}
-              className={`relative h-full aspect-[4/3] shrink-0 rounded-md overflow-hidden bg-slate-200 dark:bg-[#202632] cursor-pointer transition-all ${
+              className={`relative w-full aspect-[4/3] shrink-0 rounded-md overflow-hidden bg-slate-200 dark:bg-[#202632] cursor-pointer transition-all ${
                 index === safeIdx
                   ? "border-2 border-[#017ED7] ring-1 ring-[#017ED7]/30 opacity-100"
                   : "border border-slate-200 dark:border-[#2B3542] opacity-70 hover:opacity-100"
@@ -291,7 +291,7 @@ const ImgSlider = ({
         <Slider {...settings} className="cleared-slider-container">
           {imageList.map((item: string, index: number) => (
             <div key={index}>
-              <div className="relative w-full h-[96px] sm:h-[116px] rounded-md overflow-hidden bg-slate-200 dark:bg-[#12161B]">
+              <div className="relative w-full h-[90px] sm:h-[112px] rounded-md overflow-hidden bg-slate-200 dark:bg-[#12161B]">
                 <Image
                   src={item}
                   alt={`${beforeImg ? "Before" : "After"} clearing image ${index + 1}`}
@@ -303,7 +303,7 @@ const ImgSlider = ({
           ))}
         </Slider>
       ) : (
-        <div className="w-full h-[96px] sm:h-[116px] flex items-center justify-center rounded-md bg-slate-100 dark:bg-[#181C23] border border-dashed border-slate-200 dark:border-[#323B48] text-[11px] text-slate-400 dark:text-slate-500">
+        <div className="w-full h-[90px] sm:h-[112px] flex items-center justify-center rounded-md bg-slate-100 dark:bg-[#181C23] border border-dashed border-slate-200 dark:border-[#323B48] text-[11px] text-slate-400 dark:text-slate-500">
           No images available
         </div>
       )}

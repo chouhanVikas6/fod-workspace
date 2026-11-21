@@ -188,7 +188,7 @@ const SideBarImgs: React.FC<SideBarImgsProps> = ({
       </div>
 
       {/* Bottom primary Next button */}
-      <div className="pt-2 border-t border-slate-200 dark:border-[#2B3542] shrink-0">
+      <div className="pt-1 shrink-0">
         <button
           type="button"
           onClick={() => dispatch(setFodFinalReview(true) as any)}

@@ -75,12 +75,16 @@ const FodDetail = () => {
     <div className="h-full w-full min-w-0 px-2 sm:px-3 py-2 sm:py-3 flex flex-col gap-2 bg-white dark:bg-[#181C23] text-slate-700 dark:text-[#D9DDE2] font-semibold overflow-hidden transition-colors">
       {/* Header */}
       <div className="w-full flex justify-between items-center text-base sm:text-xl shrink-0 text-slate-900 dark:text-white">
-        <div className="flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           {!isFodFinalReviewOpen && (
-            <MdKeyboardArrowLeft
-              className="text-2xl shrink-0 cursor-pointer text-slate-600 dark:text-slate-300 hover:text-blue-500 transition-colors"
+            <button
+              type="button"
               onClick={() => dispatch(close_SideBarFodDetail())}
-            />
+              aria-label="Back to list"
+              className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#202632] border border-slate-200 dark:border-[#2B3542] hover:border-[#017ED7]/40 text-slate-700 dark:text-[#D9DDE2] hover:text-[#017ED7] dark:hover:text-[#38BDF8] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+            >
+              <MdKeyboardArrowLeft className="text-lg" />
+            </button>
           )}
 
           <div className="font-bold truncate">
@@ -168,7 +172,7 @@ const FodDetail = () => {
 
       {/* Bottom actions pinned after remaining space */}
       {!isClearedFod && (
-        <div className="w-full min-w-0 pt-2.5 mt-1 border-t border-slate-200 dark:border-[#2B3542] flex flex-col gap-2.5 shrink-0">
+        <div className="w-full min-w-0 pt-1 flex flex-col gap-2.5 shrink-0">
           {/* FOD status buttons (shown in final review step) */}
           {isFodFinalReviewOpen && (
             <div className="w-full grid grid-cols-3 gap-1.5">
@@ -398,23 +402,24 @@ export const FodGrid = () => {
             </button>
           </>
         )}
-      </div>
 
-      {/* Interactive Dots Indicator (click or slide across dots to scrub frames) */}
-      {FodPointArr.length > 1 && (
-        <div className="w-full flex justify-center py-0.5 shrink-0">
+        {/* Interactive Dots Indicator overlaid cleanly at bottom of image */}
+        {FodPointArr.length > 1 && (
           <div
             ref={dotsRef}
             onPointerDown={(e) => {
+              e.stopPropagation();
               isScrubbingDots.current = true;
               e.currentTarget.setPointerCapture(e.pointerId);
               scrubDotsAtClientX(e.clientX);
             }}
             onPointerMove={(e) => {
               if (!isScrubbingDots.current) return;
+              e.stopPropagation();
               scrubDotsAtClientX(e.clientX);
             }}
             onPointerUp={(e) => {
+              e.stopPropagation();
               isScrubbingDots.current = false;
               try {
                 e.currentTarget.releasePointerCapture(e.pointerId);
@@ -425,7 +430,7 @@ export const FodGrid = () => {
             onPointerCancel={() => {
               isScrubbingDots.current = false;
             }}
-            className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-200/75 dark:bg-[#202632] cursor-ew-resize touch-none max-w-full overflow-hidden"
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full bg-black/35 backdrop-blur-md border border-white/15 cursor-ew-resize touch-none max-w-[90%] overflow-hidden shadow-sm"
             title="Click or drag across dots to switch frame"
           >
             {FodPointArr.map((f: any, idx: number) => {
@@ -435,18 +440,21 @@ export const FodGrid = () => {
                   key={f?.id ?? idx}
                   type="button"
                   aria-label={`Frame ${idx + 1}`}
-                  onClick={() => goToIndex(idx)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    goToIndex(idx);
+                  }}
                   className={`rounded-full transition-all duration-150 shrink-0 ${
                     isCurrent
-                      ? "w-2 h-2 bg-[#017ED7] dark:bg-white scale-110"
-                      : "w-1.5 h-1.5 bg-slate-400/70 dark:bg-slate-500 hover:bg-slate-500 dark:hover:bg-slate-300"
+                      ? "w-2 h-2 bg-white scale-110"
+                      : "w-1.5 h-1.5 bg-white/45 hover:bg-white/75"
                   }`}
                 />
               );
             })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
