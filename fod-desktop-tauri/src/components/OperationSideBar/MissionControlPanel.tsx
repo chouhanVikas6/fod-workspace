@@ -284,10 +284,10 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
                   : "Pause scan"
           }
           aria-label={isPause ? "Resume scan" : "Pause scan"}
-          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-[10px] flex flex-col items-center justify-center transition-all duration-150 relative text-[#B87912] dark:text-[#E5A12B] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E5A12B] ${
+          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-[10px] flex flex-col items-center justify-center transition-all duration-150 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E5A12B] ${
             isPlayPauseDisabled
-              ? "opacity-40 cursor-not-allowed"
-              : "hover:bg-amber-50 dark:hover:bg-[#E5A12B]/10 active:scale-95 cursor-pointer"
+              ? "text-slate-400 dark:text-slate-500 bg-slate-100/80 dark:bg-white/[0.04] border border-slate-200/80 dark:border-white/10 opacity-70 cursor-not-allowed"
+              : "text-[#B87912] dark:text-[#E5A12B] hover:bg-amber-50 dark:hover:bg-[#E5A12B]/10 active:scale-95 cursor-pointer"
           }`}
         >
           {isPauseLoading && isMissionActive && (
@@ -296,23 +296,34 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
             </div>
           )}
 
-          <span className="relative inline-flex items-center justify-center">
-            {isPause ? (
-              <RxPlay className="w-5 h-5" />
-            ) : (
-              <RxPause className="w-5 h-5" />
-            )}
-            {isPlayPauseDisabled && (
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute w-6 h-[2px] -rotate-45 bg-current rounded-full"
-              />
-            )}
-          </span>
+          {isPause ? (
+            <RxPlay className="w-5 h-5" />
+          ) : (
+            <RxPause className="w-5 h-5" />
+          )}
 
           <span className="text-[9px] sm:text-[10px] lg:text-[11px] font-bold uppercase tracking-wide mt-0.5">
             {isPause ? "PLAY" : "PAUSE"}
           </span>
+
+          {isPlayPauseDisabled && (
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 48 48"
+              preserveAspectRatio="none"
+              className="pointer-events-none absolute inset-0 w-full h-full text-slate-400/85 dark:text-slate-500/85"
+            >
+              <line
+                x1="9"
+                y1="39"
+                x2="39"
+                y2="9"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
         </button>
 
         {/* 7. STOP */}
@@ -332,16 +343,35 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
               dispatch(terminateMission);
             }
           }}
-          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-[10px] flex flex-col items-center justify-center transition-all duration-150 text-[#D51F32] dark:text-[#D51F32] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D51F32] ${
+          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-[10px] flex flex-col items-center justify-center transition-all duration-150 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D51F32] ${
             isStopDisabled
-              ? "opacity-40 cursor-not-allowed"
-              : "hover:bg-red-50 dark:hover:bg-[#D51F32]/10 active:scale-95 cursor-pointer"
+              ? "text-slate-400 dark:text-slate-500 bg-slate-100/80 dark:bg-white/[0.04] border border-slate-200/80 dark:border-white/10 opacity-70 cursor-not-allowed"
+              : "text-[#D51F32] dark:text-[#D51F32] hover:bg-red-50 dark:hover:bg-[#D51F32]/10 active:scale-95 cursor-pointer"
           }`}
         >
           <RxStop className="w-5 h-5" />
           <span className="text-[9px] sm:text-[10px] lg:text-[11px] font-semibold tracking-wide mt-0.5">
             STOP
           </span>
+
+          {isStopDisabled && (
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 48 48"
+              preserveAspectRatio="none"
+              className="pointer-events-none absolute inset-0 w-full h-full text-slate-400/85 dark:text-slate-500/85"
+            >
+              <line
+                x1="9"
+                y1="39"
+                x2="39"
+                y2="9"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
         </button>
 
         {/* 8. EXIT */}

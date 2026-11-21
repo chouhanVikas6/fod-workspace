@@ -25,7 +25,9 @@ export const addFod = (payload,audioRef) => async (dispatch, getState) => {
 
 
 export const acceptFod = (fod)=>async (dispatch, getState) =>{
-  const {groupId:FodId,missionId} = fod;
+  const FodId = fod?.groupId ?? fod?.id;
+  const missionId = fod?.missionId ?? getState().MissionState?.missionNumber;
+  if (FodId == null) return;
   dispatch(accept_Fod(FodId));
 
   try{

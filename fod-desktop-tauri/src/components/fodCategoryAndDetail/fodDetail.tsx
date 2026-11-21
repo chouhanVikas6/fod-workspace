@@ -173,7 +173,7 @@ const FodDetail = () => {
           {isFodFinalReviewOpen && (
             <div className="w-full grid grid-cols-3 gap-1.5">
               {[
-                { label: "FOD Found", value: 1 },
+                { label: "FOD Accepted", value: 1 },
                 { label: "Not Found", value: 3 },
                 { label: "False Found", value: 2 },
               ].map((opt) => (

@@ -199,7 +199,7 @@ const HomeDashboard = () => {
                 color="text-[#4C9FE8]"
               />
               <Stat
-                label="FOD Found"
+                label="FOD Accepted"
                 value={fodFound}
                 color="text-[#00B957]"
               />

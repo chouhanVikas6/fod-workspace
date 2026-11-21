@@ -272,53 +272,57 @@ const DetailedView = () => {
   };
 
   const handleAccept = async () => {
-    setAcceptButtonStatus(true);
-    setAcceptButtonStatus(false);
-    setfade(true);
-
-    if ((fod as any).groupStatus == "ACCEPTED") {
-      dispatch(doubleAccept((fod as any).groupId));
+    const targetGroupId = (fod as any)?.groupId ?? fod?.id;
+    if ((fod as any)?.groupStatus == "ACCEPTED") {
+      dispatch(doubleAccept(targetGroupId));
     } else {
       dispatch(
-        acceptFod({ ...(fod as any), missionId: missionState.missionNumber }),
+        acceptFod({
+          ...(fod as any),
+          groupId: targetGroupId,
+          missionId: missionState.missionNumber,
+        }) as any,
       );
     }
 
-    try {
-      const nextFod = getNextFod(0);
-      if (nextFod) {
-        const initialPoints =
-          Array.isArray(nextFod.FodPoints) && nextFod.FodPoints.length > 0
-            ? nextFod.FodPoints
-            : [nextFod];
-        dispatch(
-          update_DetailViewFod({
-            fod: { ...nextFod, FodPoints: initialPoints },
-            isFilteredFod,
-            origin: "initial",
-            onlyIfOpen: true,
-          }),
-        );
-        setfade(false);
+    const nextFod = getNextFod(0);
+    if (nextFod) {
+      const nextFodWithMission = {
+        ...nextFod,
+        missionId: nextFod.missionId ?? missionState.missionNumber,
+      };
+      const initialPoints =
+        Array.isArray(nextFodWithMission.FodPoints) && nextFodWithMission.FodPoints.length > 0
+          ? nextFodWithMission.FodPoints
+          : [nextFodWithMission];
+      dispatch(
+        update_DetailViewFod({
+          fod: { ...nextFodWithMission, FodPoints: initialPoints },
+          isFilteredFod,
+          origin: "initial",
+          onlyIfOpen: true,
+        }),
+      );
+      setfade(false);
 
-        const listFod = await getAllFrames(nextFod);
+      try {
+        const listFod = await getAllFrames(nextFodWithMission);
         if (Array.isArray(listFod?.data) && listFod.data.length > 0) {
           dispatch(
             update_DetailViewFod({
-              fod: { ...nextFod, FodPoints: listFod.data },
+              fod: { ...nextFodWithMission, FodPoints: listFod.data },
               isFilteredFod,
               origin: listFod.origin,
               onlyIfOpen: true,
             }),
           );
         }
-      } else {
-        dispatch(reset_DetailedViewFod());
-        setfade(false);
+      } catch (e) {
+        console.error("Failed to load next FOD frames:", e);
       }
-    } catch (e) {
+    } else {
+      dispatch(reset_DetailedViewFod());
       setfade(false);
-      toast.error("Failed to load next FOD frames");
     }
   };
 
@@ -496,7 +500,10 @@ const DetailedView = () => {
   return (
     <>
       {isOpen && (
-        <div className="fixed top-[8%] left-[78px] right-0 bottom-0 bg-slate-900/25 dark:bg-[#181C23]/95 backdrop-blur-xs flex justify-center items-center z-40 select-none animate-fadeIn">
+        <div
+          onClick={() => dispatch(removeDetailedViewFod())}
+          className="fixed top-[8%] left-[78px] right-0 bottom-0 bg-slate-900/25 dark:bg-[#181C23]/95 backdrop-blur-xs flex justify-center items-center z-40 select-none animate-fadeIn"
+        >
           {fade && (
             <div className="absolute inset-0 flex items-center justify-center z-[999]">
               <CircleLoader />
@@ -505,13 +512,22 @@ const DetailedView = () => {
 
           <div
             ref={detailedViewRef}
-            onClick={handleButtonClick}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                dispatch(removeDetailedViewFod());
+              } else {
+                e.stopPropagation();
+              }
+            }}
             className="w-[96%] max-w-[1240px] h-[88%] max-h-[680px] min-w-0 flex items-center justify-center gap-2 sm:gap-3.5 relative"
           >
             {/* Previous FOD */}
             <button
               type="button"
-              onClick={fetchPreviousFodDetailedView}
+              onClick={(e) => {
+                e.stopPropagation();
+                fetchPreviousFodDetailedView();
+              }}
               title="Previous FOD (A)"
               className="shrink-0 z-30 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-white dark:bg-[#161A21] hover:bg-slate-100 dark:hover:bg-[#222832] border border-slate-300 dark:border-[#343C48] flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white shadow-xl transition-all active:scale-90 cursor-pointer"
             >
@@ -519,6 +535,7 @@ const DetailedView = () => {
             </button>
 
             <div
+              onClick={handleButtonClick}
               className={`flex-1 h-full min-w-0 rounded-xl p-3.5 max-[1100px]:p-2.5 bg-slate-100 dark:bg-[#262B33] border border-slate-300 dark:border-[#353D49] shadow-2xl flex gap-3.5 max-[1100px]:gap-2 relative transition-all duration-200 ${
                 fade ? "opacity-50 scale-[0.99]" : "opacity-100 scale-100"
               }`}
@@ -813,9 +830,6 @@ const DetailedView = () => {
                     </span>
                   </button>
 
-                  <p className="text-center text-[#7E8691] text-xs max-[900px]:text-[9px] font-medium mt-0.5 leading-tight">
-                    If unsure, press YES. The crew will check the spot.
-                  </p>
                 </div>
               )}
             </div>
