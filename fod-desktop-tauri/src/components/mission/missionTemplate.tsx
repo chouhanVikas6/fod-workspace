@@ -240,7 +240,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
       areaFormatted:
         areaM2 > 10000
           ? `${(areaM2 / 10000).toFixed(2)} ha`
-          : `${areaM2.toLocaleString()} m²`,
+          : `${areaM2.toLocaleString()} m\u00B2`,
       totalDistM,
       distFormatted:
         totalDistM > 1000
@@ -741,7 +741,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                       </div>
                       <div>
                         <span className="block text-[9px] text-slate-400 dark:text-[#8C939C]">Pass</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">{tmpl.pass}Ã—</span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">{tmpl.pass}x</span>
                       </div>
                       <div>
                         <span className="block text-[9px] text-slate-400 dark:text-[#8C939C]">Overlap</span>
@@ -785,10 +785,10 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                     type="button"
                     onClick={() => setDirection((prev) => (prev === "LENGTHWISE" ? "CROSSWISE" : "LENGTHWISE"))}
                     className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-[#4C9FE8]/10 text-[#4C9FE8] font-bold text-xs px-3 py-1.5 rounded-xl border border-[#4C9FE8]/40 shadow-sm active:scale-95 transition-all flex items-center space-x-1.5 cursor-pointer"
-                    title="Rotate sweep path direction 90 deg"
+                    title={"Rotate sweep path direction 90\u00B0"}
                   >
                     <RxReload className="w-3.5 h-3.5" />
-                    <span>Rotate 90</span>
+                    <span>Rotate 90&deg;</span>
                   </button>
 
                   <button
@@ -855,7 +855,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                     type="button"
                     onClick={() => setDirection((prev) => (prev === "LENGTHWISE" ? "CROSSWISE" : "LENGTHWISE"))}
                     className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-[#4C9FE8]/10 text-[#4C9FE8] font-bold text-xs px-2.5 py-1.5 rounded-xl border border-[#4C9FE8]/40 shadow-sm active:scale-95 transition-all cursor-pointer"
-                    title="Rotate sweep path direction 90 deg"
+                    title={"Rotate sweep path direction 90\u00B0"}
                   >
                     Rotate 90
                   </button>
@@ -1020,7 +1020,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                   }`}
                   title="Crosswise (Transverse, sweeps across width)"
                 >
-                  <span>â†”</span>
+                  
                   <span>Crosswise</span>
                 </button>
               </div>
@@ -1194,7 +1194,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                         : "bg-slate-50 dark:bg-[#22262B] text-slate-700 dark:text-slate-200 border-slate-200 dark:border-[#373C43] hover:bg-slate-100 dark:hover:bg-[#353A42]"
                     }`}
                   >
-                    <span>â†• Lengthwise</span>
+                    <span>Lengthwise</span>
                     <span className={`text-[9px] font-normal ${direction === "LENGTHWISE" ? "text-white/85" : "text-slate-400 dark:text-[#8C939C]"}`}>
                       Fewest turns
                     </span>
@@ -1208,7 +1208,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                         : "bg-slate-50 dark:bg-[#22262B] text-slate-700 dark:text-slate-200 border-slate-200 dark:border-[#373C43] hover:bg-slate-100 dark:hover:bg-[#353A42]"
                     }`}
                   >
-                    <span>â†” Crosswise</span>
+                    <span>Crosswise</span>
                     <span className={`text-[9px] font-normal ${direction === "CROSSWISE" ? "text-white/85" : "text-slate-400 dark:text-[#8C939C]"}`}>
                       Transverse
                     </span>
