@@ -17,25 +17,16 @@ import CamPlay from '../commen/camera-play';
 import CamPause from '../commen/camera-pause';
 import { getCurrentUser } from '@/utils/auth';
 
-type SettingTabKey =
-  | 'general'
-  | 'systemStats'
-  | 'missionManagement'
-  | 'profile'
-  | 'userManagement'
-  | 'cameras'
-  | 'aiImprovement';
 
-interface SettingProps {
-  open: boolean;
-}
 
 export default function Setting({ open }: SettingProps) {
   const t = useTranslations('settings');
   const theme = useSelector((store: RootState) => store.theme.theme);
   const isDark = theme === 'dark';
   const currentUser = getCurrentUser() as any;
-  const isCollector = String(currentUser?.role || '').toUpperCase() === 'COLLECTOR';
+  const userRole = String(currentUser?.role || '').toUpperCase();
+  const isCollector = userRole === 'COLLECTOR';
+  const isAdminAreaDisabled = userRole === 'COLLECTOR' || userRole === 'OPERATOR';
 
   const [selectedTab, setSelectedTab] = useState<SettingTabKey>('general');
 
@@ -80,12 +71,12 @@ export default function Setting({ open }: SettingProps) {
         camList: selectedAll
           ? Object.keys(config.cameraMap).map((cam) => cam.split('_').join(''))
           : Array.from(selectedCams).map((id: number) => {
-              let name = giveMeCameraName(id);
-              if (name) {
-                name = name.split('_').join('');
-              }
-              return name;
-            }),
+            let name = giveMeCameraName(id);
+            if (name) {
+              name = name.split('_').join('');
+            }
+            return name;
+          }),
       };
       await axiosClient({
         method: 'POST',
@@ -106,23 +97,20 @@ export default function Setting({ open }: SettingProps) {
 
   return (
     <div
-      className={`settings-native-theme relative h-full w-full flex gap-5 p-4 overflow-hidden transition-colors duration-200 ${
-        isDark ? 'bg-[#22262B] text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
-      }`}
+      className={`settings-native-theme relative h-full w-full flex gap-5 p-4 overflow-hidden transition-colors duration-200 ${isDark ? 'bg-[#22262B] text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
+        }`}
     >
       {/* Settings Left Internal Sidebar */}
       <aside
-        className={`w-56 shrink-0 h-full rounded-xl flex flex-col justify-between border select-none transition-colors duration-200 ${
-          isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
-        }`}
+        className={`w-56 shrink-0 h-full rounded-xl flex flex-col justify-between border select-none transition-colors duration-200 ${isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+          }`}
       >
         <div className="p-3.5 space-y-4 overflow-y-auto">
           {/* Section Title */}
           <div className="px-2 pt-1">
             <h2
-              className={`text-lg font-bold tracking-tight ${
-                isDark ? 'text-white' : 'text-slate-900'
-              }`}
+              className={`text-lg font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'
+                }`}
             >
               {t('settings')}
             </h2>
@@ -134,15 +122,14 @@ export default function Setting({ open }: SettingProps) {
             <button
               type="button"
               onClick={() => setSelectedTab('general')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                selectedTab === 'general'
-                  ? isDark
-                    ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                    : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
-                  : isDark
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${selectedTab === 'general'
+                ? isDark
+                  ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
+                  : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                : isDark
                   ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
                   : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
+                }`}
             >
               <svg
                 className="w-4 h-4 shrink-0"
@@ -164,15 +151,14 @@ export default function Setting({ open }: SettingProps) {
             <button
               type="button"
               onClick={() => setSelectedTab('systemStats')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                selectedTab === 'systemStats'
-                  ? isDark
-                    ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                    : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
-                  : isDark
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${selectedTab === 'systemStats'
+                ? isDark
+                  ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
+                  : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                : isDark
                   ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
                   : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
+                }`}
             >
               <svg
                 className="w-4 h-4 shrink-0"
@@ -194,15 +180,14 @@ export default function Setting({ open }: SettingProps) {
             <button
               type="button"
               onClick={() => setSelectedTab('missionManagement')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                selectedTab === 'missionManagement'
-                  ? isDark
-                    ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                    : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
-                  : isDark
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${selectedTab === 'missionManagement'
+                ? isDark
+                  ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
+                  : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                : isDark
                   ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
                   : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
+                }`}
             >
               <svg
                 className="w-4 h-4 shrink-0"
@@ -224,15 +209,14 @@ export default function Setting({ open }: SettingProps) {
             <button
               type="button"
               onClick={() => setSelectedTab('profile')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                selectedTab === 'profile'
-                  ? isDark
-                    ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                    : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
-                  : isDark
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${selectedTab === 'profile'
+                ? isDark
+                  ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
+                  : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                : isDark
                   ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
                   : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
+                }`}
             >
               <svg
                 className="w-4 h-4 shrink-0"
@@ -255,9 +239,8 @@ export default function Setting({ open }: SettingProps) {
           <div className={`pt-3 border-t ${isDark ? 'border-[#383D44]' : 'border-slate-200'}`}>
             <div className="flex items-center justify-between px-3 pb-2">
               <span
-                className={`text-[10px] font-bold tracking-wider uppercase ${
-                  isDark ? 'text-[#8E95A2]' : 'text-slate-500'
-                }`}
+                className={`text-[10px] font-bold tracking-wider uppercase ${isDark ? 'text-[#8E95A2]' : 'text-slate-500'
+                  }`}
               >
                 {t('admin')}
               </span>
@@ -280,16 +263,28 @@ export default function Setting({ open }: SettingProps) {
               {/* User Management */}
               <button
                 type="button"
-                onClick={() => setSelectedTab('userManagement')}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  selectedTab === 'userManagement'
+                disabled={isAdminAreaDisabled}
+                onClick={() => {
+                  if (isAdminAreaDisabled) return;
+                  setSelectedTab('userManagement');
+                }}
+                title={
+                  isAdminAreaDisabled
+                    ? 'Admin area is disabled for Collector / Operator'
+                    : 'User Management'
+                }
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isAdminAreaDisabled
+                  ? isDark
+                    ? 'border border-transparent text-[#9EA4B0] opacity-45 cursor-not-allowed'
+                    : 'border border-transparent text-slate-400 opacity-50 cursor-not-allowed'
+                  : selectedTab === 'userManagement'
                     ? isDark
-                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs cursor-pointer'
+                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold cursor-pointer'
                     : isDark
-                    ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
-                    : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
+                      ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60 cursor-pointer'
+                      : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100 cursor-pointer'
+                  }`}
               >
                 <svg
                   className="w-4 h-4 shrink-0"
@@ -310,16 +305,28 @@ export default function Setting({ open }: SettingProps) {
               {/* Cameras */}
               <button
                 type="button"
-                onClick={() => setSelectedTab('cameras')}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  selectedTab === 'cameras'
+                disabled={isAdminAreaDisabled}
+                onClick={() => {
+                  if (isAdminAreaDisabled) return;
+                  setSelectedTab('cameras');
+                }}
+                title={
+                  isAdminAreaDisabled
+                    ? 'Admin area is disabled for Collector / Operator'
+                    : 'Cameras'
+                }
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isAdminAreaDisabled
+                  ? isDark
+                    ? 'border border-transparent text-[#9EA4B0] opacity-45 cursor-not-allowed'
+                    : 'border border-transparent text-slate-400 opacity-50 cursor-not-allowed'
+                  : selectedTab === 'cameras'
                     ? isDark
-                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs cursor-pointer'
+                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold cursor-pointer'
                     : isDark
-                    ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
-                    : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
+                      ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60 cursor-pointer'
+                      : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100 cursor-pointer'
+                  }`}
               >
                 <svg
                   className="w-4 h-4 shrink-0"
@@ -337,25 +344,31 @@ export default function Setting({ open }: SettingProps) {
                 <span>Cameras</span>
               </button>
 
-              {/* AI Improvement (locked for collector) */}
+              {/* AI Improvement (locked for collector/operator) */}
               <button
                 type="button"
+                disabled={isAdminAreaDisabled}
                 onClick={() => {
-                  if (isCollector) {
-                    toast.info('AI Improvement is locked for Collector accounts');
-                  }
+                  if (isAdminAreaDisabled) return;
                   setSelectedTab('aiImprovement');
                 }}
-                title={isCollector ? 'Locked for Collector role' : 'AI Improvement'}
-                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  selectedTab === 'aiImprovement'
+                title={
+                  isAdminAreaDisabled
+                    ? 'Admin area is disabled for Collector / Operator'
+                    : 'AI Improvement'
+                }
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isAdminAreaDisabled
+                  ? isDark
+                    ? 'border border-transparent text-[#9EA4B0] opacity-45 cursor-not-allowed'
+                    : 'border border-transparent text-slate-400 opacity-50 cursor-not-allowed'
+                  : selectedTab === 'aiImprovement'
                     ? isDark
-                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs'
-                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold'
+                      ? 'border border-[#5AA7EA] bg-[#2E3E4E] text-white shadow-xs cursor-pointer'
+                      : 'border border-blue-500/80 bg-blue-50 text-blue-700 shadow-xs font-semibold cursor-pointer'
                     : isDark
-                    ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60'
-                    : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
+                      ? 'border border-transparent text-[#9EA4B0] hover:text-white hover:bg-[#353A42]/60 cursor-pointer'
+                      : 'border border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100 cursor-pointer'
+                  }`}
               >
                 <span className="flex items-center gap-3 min-w-0">
                   <svg
@@ -373,7 +386,7 @@ export default function Setting({ open }: SettingProps) {
                   </svg>
                   <span className="truncate">AI Improvement</span>
                 </span>
-                {isCollector && (
+                {(isCollector || isAdminAreaDisabled) && (
                   <svg
                     className="w-3.5 h-3.5 shrink-0 text-[#E5A12B]"
                     fill="none"
@@ -400,18 +413,17 @@ export default function Setting({ open }: SettingProps) {
         {selectedTab === 'systemStats' && <SystemStats />}
         {selectedTab === 'missionManagement' && <MissionManagement />}
         {selectedTab === 'profile' && <Profile />}
-        {selectedTab === 'userManagement' && <UserManagement />}
-        {selectedTab === 'aiImprovement' && <AiImprovement />}
+        {!isAdminAreaDisabled && selectedTab === 'userManagement' && <UserManagement />}
+        {!isAdminAreaDisabled && selectedTab === 'aiImprovement' && <AiImprovement />}
 
         {/* Cameras Management View */}
-        {selectedTab === 'cameras' && (
+        {!isAdminAreaDisabled && selectedTab === 'cameras' && (
           <div className="space-y-5">
             {/* Header */}
             <div>
               <h1
-                className={`text-xl font-bold tracking-tight ${
-                  isDark ? 'text-white' : 'text-slate-900'
-                }`}
+                className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'
+                  }`}
               >
                 Cameras
               </h1>
@@ -422,20 +434,17 @@ export default function Setting({ open }: SettingProps) {
 
             {/* Live Camera View Card */}
             <div
-              className={`rounded-xl border overflow-hidden transition-colors ${
-                isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
-              }`}
+              className={`rounded-xl border overflow-hidden transition-colors ${isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+                }`}
             >
               <div
-                className={`flex items-center justify-between px-4 py-2.5 border-b ${
-                  isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
-                }`}
+                className={`flex items-center justify-between px-4 py-2.5 border-b ${isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
+                  }`}
               >
                 <div className="flex items-center gap-3">
                   <span
-                    className={`text-sm font-semibold ${
-                      isDark ? 'text-white' : 'text-slate-900'
-                    }`}
+                    className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-slate-900'
+                      }`}
                   >
                     Active Feed: Camera #{selectedCam}
                   </span>
@@ -453,9 +462,8 @@ export default function Setting({ open }: SettingProps) {
               <div className="p-4">
                 {/* Video Component */}
                 <div
-                  className={`relative rounded-lg overflow-hidden border flex items-center justify-center min-h-[340px] max-h-[460px] ${
-                    isDark ? 'bg-[#22262B] border-[#383D44]' : 'bg-slate-900 border-slate-200'
-                  }`}
+                  className={`relative rounded-lg overflow-hidden border flex items-center justify-center min-h-[340px] max-h-[460px] ${isDark ? 'bg-[#22262B] border-[#383D44]' : 'bg-slate-900 border-slate-200'
+                    }`}
                 >
                   <VideoComponent currentLocation={currentLocation} selectedCam={selectedCam} />
                 </div>
@@ -463,9 +471,8 @@ export default function Setting({ open }: SettingProps) {
                 {/* Single Camera Switcher Pills */}
                 <div className="mt-4">
                   <div
-                    className={`text-xs font-medium mb-2 ${
-                      isDark ? 'text-[#9EA4B0]' : 'text-slate-500'
-                    }`}
+                    className={`text-xs font-medium mb-2 ${isDark ? 'text-[#9EA4B0]' : 'text-slate-500'
+                      }`}
                   >
                     Switch Active Camera
                   </div>
@@ -478,13 +485,12 @@ export default function Setting({ open }: SettingProps) {
                           key={camId}
                           type="button"
                           onClick={() => setSelectedCam(camId)}
-                          className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                            isActive
-                              ? 'bg-[#5AA7EA] text-white shadow-xs'
-                              : isDark
+                          className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
+                            ? 'bg-[#5AA7EA] text-white shadow-xs'
+                            : isDark
                               ? 'bg-[#353A42] text-slate-300 hover:bg-[#41464E] border border-[#454B53]'
                               : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
-                          }`}
+                            }`}
                         >
                           {camId}
                         </button>
@@ -497,20 +503,17 @@ export default function Setting({ open }: SettingProps) {
 
             {/* Batch Multi-Camera Control Card */}
             <div
-              className={`rounded-xl border overflow-hidden transition-colors ${
-                isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
-              }`}
+              className={`rounded-xl border overflow-hidden transition-colors ${isDark ? 'bg-[#292D33] border-[#383D44]' : 'bg-white border-slate-200 shadow-xs'
+                }`}
             >
               <div
-                className={`flex items-center justify-between px-4 py-2.5 border-b ${
-                  isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
-                }`}
+                className={`flex items-center justify-between px-4 py-2.5 border-b ${isDark ? 'bg-[#353A42] border-[#3E434C]' : 'bg-slate-50 border-slate-200'
+                  }`}
               >
                 <div>
                   <h3
-                    className={`text-sm font-semibold ${
-                      isDark ? 'text-white' : 'text-slate-900'
-                    }`}
+                    className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-slate-900'
+                      }`}
                   >
                     Batch Camera Commands
                   </h3>
@@ -532,9 +535,8 @@ export default function Setting({ open }: SettingProps) {
                     className="w-4 h-4 rounded accent-[#5AA7EA]"
                   />
                   <span
-                    className={`text-xs font-semibold ${
-                      isDark ? 'text-slate-200' : 'text-slate-800'
-                    }`}
+                    className={`text-xs font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'
+                      }`}
                   >
                     Select All (26)
                   </span>
@@ -552,13 +554,12 @@ export default function Setting({ open }: SettingProps) {
                         key={camId}
                         type="button"
                         onClick={() => toggleCamInSet(camId)}
-                        className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                          isChecked
-                            ? 'bg-[#5AA7EA] text-white shadow-xs'
-                            : isDark
+                        className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isChecked
+                          ? 'bg-[#5AA7EA] text-white shadow-xs'
+                          : isDark
                             ? 'bg-[#353A42] text-[#9EA4B0] hover:text-white border border-[#454B53]'
                             : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
-                        }`}
+                          }`}
                       >
                         {camId}
                       </button>

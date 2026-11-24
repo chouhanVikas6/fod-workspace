@@ -23,6 +23,7 @@ import MissionReport from "@/components/mission/missionReport";
 //@ts-ignore
 import Setting from "@/components/setting/setting";
 import ErrorBoundary from "@/components/commen/ErrorBoundary";
+import { Auth } from "@/utils/auth";
 
 const MissionControl = () => {
   // Real-time channel to the internal GUI socket server (fod alerts,
@@ -30,6 +31,31 @@ const MissionControl = () => {
   useSocket();
   const dispatch = useDispatch();
   const [tab, setTab] = useState("dashboard");
+  const [userRole, setUserRole] = useState<string>(() =>
+    String(Auth.getCurrentUser()?.role ?? "").toUpperCase()
+  );
+  const isCollectorOrOperator =
+    userRole === "COLLECTOR" || userRole === "OPERATOR";
+
+  useEffect(() => {
+    let mounted = true;
+    Auth.fetchCurrentUser()
+      .then((u) => {
+        if (mounted && u?.role) {
+          setUserRole(String(u.role).toUpperCase());
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isCollectorOrOperator && (tab === "home" || tab === "reports")) {
+      setTab("dashboard");
+    }
+  }, [isCollectorOrOperator, tab]);
   const missionState = useSelector((store: RootState) => store.MissionState);
   useMissionFodSync(missionState?.missionNumber);
 
@@ -61,6 +87,9 @@ const MissionControl = () => {
   };
   const { isWebCamOpen, isFodFinalReviewOpen } = webCamState;
   const handleTab = (name: string) => {
+    if (isCollectorOrOperator && (name === "home" || name === "reports")) {
+      return;
+    }
     if (isMapOpen) {
       setTab(name);
       return;

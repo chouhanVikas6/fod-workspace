@@ -1,8 +1,9 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
 import { BarLoader } from "../commen/loader";
 import axiosClient from "@/utils/axios";
+import { Auth } from "@/utils/auth";
 import { pause_resumeMission } from "@/store/slices/missionState-slice";
 import {
   exitMission,
@@ -28,6 +29,26 @@ import { HiOutlineMap } from "react-icons/hi";
 const MissionControlPanel = ({ tab, setTab }: any) => {
   const dispatch = useDispatch<AppDispatch>();
   const t = useTranslations("sidebar");
+  const [userRole, setUserRole] = useState<string>(() =>
+    String(Auth.getCurrentUser()?.role ?? "").toUpperCase()
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    Auth.fetchCurrentUser()
+      .then((u) => {
+        if (mounted && u?.role) {
+          setUserRole(String(u.role).toUpperCase());
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const isCollectorOrOperator =
+    userRole === "COLLECTOR" || userRole === "OPERATOR";
 
   const mission = useSelector((store: any) => store.MissionState);
 
@@ -143,13 +164,16 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
 
   // Shared navigation button styles
   const navButtonBase =
-    "w-12 h-12 sm:w-14 sm:h-14 flex flex-col items-center justify-center rounded-[10px] transition-all duration-150 active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4C9FE8]";
+    "w-12 h-12 sm:w-14 sm:h-14 flex flex-col items-center justify-center rounded-[10px] transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4C9FE8]";
 
   const navButtonInactive =
-    "text-slate-500 dark:text-[#A8B0BA] hover:text-slate-600 dark:hover:text-[#D9DDE2] hover:bg-slate-100 dark:hover:bg-[#353A42]";
+    "text-slate-500 dark:text-[#A8B0BA] hover:text-slate-600 dark:hover:text-[#D9DDE2] hover:bg-slate-100 dark:hover:bg-[#353A42] active:scale-95 cursor-pointer";
 
   const navButtonActive =
-    "bg-[#4C9FE8]/20 dark:bg-[#4C9FE8]/20 text-[#4C9FE8] dark:text-[#4C9FE8]";
+    "bg-[#4C9FE8]/20 dark:bg-[#4C9FE8]/20 text-[#4C9FE8] dark:text-[#4C9FE8] active:scale-95 cursor-pointer";
+
+  const navButtonDisabled =
+    "text-slate-400 dark:text-slate-500 bg-slate-100/70 dark:bg-white/[0.03] opacity-50 cursor-not-allowed";
 
   const navLabel =
     "text-[9px] sm:text-[10px] lg:text-[11px] font-semibold tracking-wide mt-0.5";
@@ -166,18 +190,26 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         {/* 1. HOME */}
         <button
           type="button"
+          disabled={isCollectorOrOperator}
           onClick={() => {
+            if (isCollectorOrOperator) return;
             if (isMapOpen) {
               dispatch(toggle_Mapview());
             }
             setTab("home");
           }}
-          title="Home"
+          title={
+            isCollectorOrOperator
+              ? "Home is disabled for Collector / Operator"
+              : "Home"
+          }
           aria-label="Home"
           className={`${navButtonBase} ${
-            tab === "home" && !isMapOpen
-              ? navButtonActive
-              : navButtonInactive
+            isCollectorOrOperator
+              ? navButtonDisabled
+              : tab === "home" && !isMapOpen
+                ? navButtonActive
+                : navButtonInactive
           }`}
         >
           <RxHome className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
@@ -245,18 +277,26 @@ const MissionControlPanel = ({ tab, setTab }: any) => {
         {/* 5. REPORTS */}
         <button
           type="button"
+          disabled={isCollectorOrOperator}
           onClick={() => {
+            if (isCollectorOrOperator) return;
             if (isMapOpen) {
               dispatch(toggle_Mapview());
             }
             setTab("reports");
           }}
-          title="Mission Reports"
+          title={
+            isCollectorOrOperator
+              ? "Reports is disabled for Collector / Operator"
+              : "Mission Reports"
+          }
           aria-label="Mission Reports"
           className={`${navButtonBase} ${
-            tab === "reports" && !isMapOpen
-              ? navButtonActive
-              : navButtonInactive
+            isCollectorOrOperator
+              ? navButtonDisabled
+              : tab === "reports" && !isMapOpen
+                ? navButtonActive
+                : navButtonInactive
           }`}
         >
           <RxFileText className="w-[18px] h-[18px] sm:w-5 sm:h-5" />
