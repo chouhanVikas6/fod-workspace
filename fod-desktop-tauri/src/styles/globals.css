@@ -701,7 +701,6 @@ button:active {
   min-width: 80px;
   background-repeat: no-repeat;
   background-size: cover;
-  transition: transform 0.9s ease-in-out;
   z-index: 1;
   pointer-events: none;
 }

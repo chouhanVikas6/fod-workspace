@@ -139,8 +139,12 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = EMPTY_
         }
       } else if (data.type == 'terminate') {
         const currentMissionId = missionRef.current?.missionNumber;
+        const isLocalTransition = Boolean(missionRef.current?.exitTransition?.active);
         const termId = data.missionNumber || data.missionId || data.message?.missionId;
-        if (!termId || (currentMissionId && String(termId) === String(currentMissionId))) {
+        if (
+          !isLocalTransition &&
+          (!termId || (currentMissionId && String(termId) === String(currentMissionId)))
+        ) {
           toast.warn("Mission terminated.");
           dispatch(set_Terminate());
         }

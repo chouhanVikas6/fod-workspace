@@ -291,6 +291,78 @@ export function sampleCompiledSegments(
   };
 }
 
+export function projectPointOntoRoute(
+  pt: GeoPoint,
+  segments: CompiledSegmentPreview[]
+): {
+  snappedPt: GeoPoint;
+  distanceM: number;
+  progressPct: number;
+  distFromRouteM: number;
+  heading: number;
+} | null {
+  if (!segments || segments.length === 0) return null;
+
+  const totalLen = segments.reduce((acc, s) => acc + s.length_m, 0);
+  const cosLat = Math.cos((pt.lat * Math.PI) / 180) || 1;
+  const mPerDegLat = 111_320;
+  const mPerDegLon = 111_320 * cosLat;
+
+  let bestDistSq = Infinity;
+  let bestSnapped: GeoPoint = pt;
+  let bestRouteDist = 0;
+  let bestHeading = 0;
+  let accum = 0;
+
+  for (const seg of segments) {
+    const pts = seg.points;
+    if (pts.length < 2) {
+      accum += seg.length_m;
+      continue;
+    }
+    let subAccum = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      const subLen = haversineMeters(a, b);
+      const ax = (a.lon - pt.lon) * mPerDegLon;
+      const ay = (a.lat - pt.lat) * mPerDegLat;
+      const bx = (b.lon - pt.lon) * mPerDegLon;
+      const by = (b.lat - pt.lat) * mPerDegLat;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq > 1e-6 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lenSq)) : 0;
+      const px = ax + dx * t;
+      const py = ay + dy * t;
+      const dSq = px * px + py * py;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        bestSnapped = {
+          lat: a.lat + (b.lat - a.lat) * t,
+          lon: a.lon + (b.lon - a.lon) * t,
+        };
+        bestRouteDist = accum + subAccum + subLen * t;
+        bestHeading = subLen > 1e-4 ? bearingDeg(a, b) : 0;
+      }
+      subAccum += subLen;
+    }
+    accum += seg.length_m;
+  }
+
+  if (!Number.isFinite(bestDistSq)) return null;
+  const clampedDist = Math.max(0, Math.min(totalLen, bestRouteDist));
+  const progressPct = totalLen > 0 ? (clampedDist / totalLen) * 100 : 0;
+
+  return {
+    snappedPt: bestSnapped,
+    distanceM: clampedDist,
+    progressPct,
+    distFromRouteM: Math.sqrt(bestDistSq),
+    heading: bestHeading,
+  };
+}
+
 export function formatMeters(m: number): string {
   if (!Number.isFinite(m) || m <= 0) return '0 m';
   if (m >= 1000) return `${(m / 1000).toFixed(2)} km`;

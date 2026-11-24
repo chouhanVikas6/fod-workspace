@@ -833,8 +833,17 @@ async fn publish_mag_sample(
     if let Some(obj) = h.rtk_data.data.as_object_mut() {
         obj.insert("heading".to_string(), json!(smoothed));
         obj.insert("headingSource".to_string(), json!("magnetometer"));
+        if !obj.contains_key("lat") || obj.get("lat").is_some_and(|v| v.is_null()) {
+            obj.insert("lat".to_string(), json!(crate::rtk_reader::DEFAULT_SELF_LAT));
+        }
+        if !obj.contains_key("lon") || obj.get("lon").is_some_and(|v| v.is_null()) {
+            obj.insert("lon".to_string(), json!(crate::rtk_reader::DEFAULT_SELF_LON));
+        }
     } else {
         h.rtk_data.data = json!({
+            "fix": "NO_GPS",
+            "lat": crate::rtk_reader::DEFAULT_SELF_LAT,
+            "lon": crate::rtk_reader::DEFAULT_SELF_LON,
             "heading": smoothed,
             "headingSource": "magnetometer",
         });

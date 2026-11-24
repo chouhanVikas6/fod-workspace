@@ -10,6 +10,14 @@ export interface OperationalAlertItem {
   timestampMs: number;
 }
 
+export interface MissionExitTransition {
+  active: boolean;
+  mode: 'terminate' | 'exit';
+  missionNumber: number | null;
+  displayId?: number | null;
+  stage: 'working' | 'done';
+}
+
 export interface MissionStateType {
   missionNumber: number | null;
   displayId?: number | null;
@@ -24,6 +32,7 @@ export interface MissionStateType {
   isExplore?: boolean;
   status?: string;
   operationalAlerts?: OperationalAlertItem[];
+  exitTransition?: MissionExitTransition | null;
 }
 
 const initialState: MissionStateType = {
@@ -40,6 +49,7 @@ const initialState: MissionStateType = {
   isExplore: false,
   status: undefined,
   operationalAlerts: [],
+  exitTransition: null,
 };
 
 const MissionStateReducer = createSlice({
@@ -56,6 +66,7 @@ const MissionStateReducer = createSlice({
       state.isExplore = isExplore || !isActive;
       state.duration=duration;
       state.status = status;
+      state.exitTransition = null;
     },
     pause_resumeMission: (state, action) => {
       const { payload: pauseStatus } = action;
@@ -83,6 +94,9 @@ const MissionStateReducer = createSlice({
       const list = state.operationalAlerts || [];
       state.operationalAlerts = [item, ...list].slice(0, 30);
     },
+    set_ExitTransition: (state, action) => {
+      state.exitTransition = action.payload ?? null;
+    },
     set_Terminate: (state) => {
       state.isTerminate = true;
       state.duration=null;
@@ -108,6 +122,7 @@ export const {
   toggleNotification,
   set_PauseLoader,
   pushOperationalAlert,
+  set_ExitTransition,
   set_Terminate,
 } = MissionStateReducer.actions;
 export default MissionStateReducer.reducer;

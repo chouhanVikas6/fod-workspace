@@ -37,10 +37,13 @@ import type { InspectorTab, ToolMode } from './types';
 interface OverlayInspectorProps {
   open: boolean;
   activeTab: InspectorTab;
+  toolMode: ToolMode;
   location: LocationConfig;
   compiledRoute: CompiledRoutePreview | null;
   selectedPathwayId: string | null;
   activeCarPathIndex: number | null;
+  vehicleLat: number;
+  vehicleLon: number;
   showTrail: boolean;
   onToggleOpen: () => void;
   onChangeTab: (tab: InspectorTab) => void;
@@ -49,6 +52,7 @@ interface OverlayInspectorProps {
   onSelectPathway: (id: string | null) => void;
   onFlyTo: (pt: GeoPoint, zoom?: number) => void;
   onFitBoundary: () => void;
+  onResetCar: () => void;
   onToggleShowTrail: () => void;
   onClearTrail: () => void;
 }
@@ -56,10 +60,13 @@ interface OverlayInspectorProps {
 export default function OverlayInspector({
   open,
   activeTab,
+  toolMode,
   location,
   compiledRoute,
   selectedPathwayId,
   activeCarPathIndex,
+  vehicleLat,
+  vehicleLon,
   showTrail,
   onToggleOpen,
   onChangeTab,
@@ -68,6 +75,7 @@ export default function OverlayInspector({
   onSelectPathway,
   onFlyTo,
   onFitBoundary,
+  onResetCar,
   onToggleShowTrail,
   onClearTrail,
 }: OverlayInspectorProps) {
@@ -885,6 +893,44 @@ export default function OverlayInspector({
         {/* ================= TAB 3: DRIVE (HUMAN VIBE) ================= */}
         {activeTab === 'drive' && (
           <div className="flex flex-col gap-3">
+            {/* Car Position (Pick from Map) */}
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-[#121a2b] border border-slate-200 dark:border-[#1f2c42] flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 text-xs">
+                  <MapPin className="w-3.5 h-3.5 text-cyan-500" />
+                  Car Position
+                </span>
+                <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                  {vehicleLat.toFixed(6)}, {vehicleLon.toFixed(6)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onChangeToolMode(toolMode === 'car' ? 'select' : 'car')}
+                  className={`py-1.5 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 border cursor-pointer transition-colors ${
+                    toolMode === 'car'
+                      ? 'bg-cyan-600 text-white border-cyan-500 dark:bg-cyan-500 dark:text-slate-950'
+                      : 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-800 dark:bg-cyan-500/15 dark:hover:bg-cyan-500/25 dark:border-cyan-500/40 dark:text-cyan-300'
+                  }`}
+                >
+                  <Crosshair className="w-3.5 h-3.5" />
+                  <span>{toolMode === 'car' ? 'Picking on Map…' : 'Pick on Map'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onResetCar}
+                  className="py-1.5 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 border bg-white hover:bg-slate-100 border-slate-200 text-slate-700 dark:bg-[#0d1422] dark:hover:bg-[#172133] dark:border-[#24324a] dark:text-slate-200 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset</span>
+                </button>
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                Click on the map in <b>Place Car</b> mode or drag the car icon directly.
+              </div>
+            </div>
+
             {/* Global Vehicle Speed */}
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-[#121a2b] border border-slate-200 dark:border-[#1f2c42] flex flex-col gap-1.5">
               <div className="flex justify-between items-center">

@@ -21,7 +21,6 @@ const config: Config = {
         "carIconImg": "url('/images/carIcon.png')",
       },
       animation: {
-        spin: 'mulShdSpin 1.2s infinite linear',
         animloader: 'animloader 1s linear infinite alternate',
         fade458: 'fade458 1s linear infinite',
         mulShdSpin: 'mulShdSpin 1.1s infinite ease',

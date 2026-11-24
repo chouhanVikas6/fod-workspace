@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import {
+  Car,
   Check,
   Compass,
   Crosshair,
@@ -106,6 +107,12 @@ export default function OverlayToolbar({
       icon: <Route className="w-3.5 h-3.5" />,
       title: 'Click sequential points with exact directions',
     },
+    {
+      id: 'car',
+      label: 'Place Car',
+      icon: <Car className="w-3.5 h-3.5" />,
+      title: 'Click anywhere on the map to pick the car position',
+    },
   ];
 
   const layerOptions: Array<{
@@ -179,6 +186,21 @@ export default function OverlayToolbar({
                 Click map to add vertex · Drag <b className="text-cyan-300">P1..P{boundaryCount}</b> or{' '}
                 <b className="text-cyan-300">+</b> midpoint · Right-click vertex to remove
               </span>
+            )}
+
+            {toolMode === 'car' && (
+              <>
+                <span>
+                  Click anywhere on the map (or drag the car) to pick its position
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChangeToolMode('select')}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold cursor-pointer"
+                >
+                  <Check className="w-3 h-3" /> Done
+                </button>
+              </>
             )}
 
             {toolMode === 'draw' && draftStatus.kind !== 'draw' && (

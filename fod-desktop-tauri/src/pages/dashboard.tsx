@@ -17,6 +17,7 @@ import { reset_SelectedFod } from "@/store/slices/selectedFod-slice";
 import { resetSideBarLists } from "@/store/slices/webCam-slice";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { AnimatePresence, motion } from "framer-motion";
 import HomeDashboard from "@/components/homeDashboard";
 import MissionReport from "@/components/mission/missionReport";
 //@ts-ignore
@@ -71,10 +72,90 @@ const MissionControl = () => {
     }
   };
   console.log("Spinning Dashboard");
+  const exitTransition = missionState?.exitTransition;
+  const exitMissionLabel =
+    exitTransition?.displayId ?? exitTransition?.missionNumber
+      ? ` #${exitTransition.displayId ?? exitTransition.missionNumber}`
+      : "";
+
   return (
     <div
       className={`relative h-full w-full overflow-hidden transition-colors duration-200 ${isDark ? "bg-[#22262B]" : "bg-white"}`}
     >
+      <AnimatePresence>
+        {exitTransition?.active && (
+          <motion.div
+            key="mission-exit-transition"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className={`fixed inset-0 z-[1000] flex items-center justify-center backdrop-blur-sm select-none ${
+              isDark ? "bg-[#22262B]/95" : "bg-[#F8F8F8]/95"
+            }`}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.98, y: -4 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className={`w-[360px] max-w-[90vw] rounded-2xl border p-7 shadow-xl text-center ${
+                isDark
+                  ? "bg-[#292D33] border-[#383D44] text-white"
+                  : "bg-white border-slate-200 text-slate-900"
+              }`}
+            >
+              <div
+                className={`mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl ${
+                  isDark ? "bg-[#4C9FE8]/15 text-[#4C9FE8]" : "bg-[#4C9FE8]/10 text-[#4C9FE8]"
+                }`}
+              >
+                <svg className="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    stroke="currentColor"
+                    strokeOpacity="0.22"
+                    strokeWidth="2.5"
+                  />
+                  <path
+                    d="M12 3a9 9 0 0 1 9 9"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </div>
+
+              <h2 className="text-base font-bold tracking-tight">
+                Terminating Mission{exitMissionLabel}
+              </h2>
+
+              <p
+                className={`mt-1.5 text-xs ${
+                  isDark ? "text-[#9EA4B0]" : "text-slate-500"
+                }`}
+              >
+                Returning to Mission Selector...
+              </p>
+
+              <div
+                className={`mt-5 h-1.5 w-full overflow-hidden rounded-full ${
+                  isDark ? "bg-[#1E2228]" : "bg-slate-200"
+                }`}
+              >
+                <motion.div
+                  initial={{ width: "15%" }}
+                  animate={{ width: "100%" }}
+                  transition={{ duration: 1.15, ease: "easeInOut" }}
+                  className="h-full rounded-full bg-[#4C9FE8]"
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {!!missionState?.missionNumber ? (
         <>
           {/* Clear-FOD photo capture: mounts only while open so the

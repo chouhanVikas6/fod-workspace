@@ -1,6 +1,6 @@
 import type { GeoPoint } from '../../store';
 
-export type ToolMode = 'select' | 'boundary' | 'draw' | 'waypoint';
+export type ToolMode = 'select' | 'boundary' | 'draw' | 'waypoint' | 'car';
 
 export type MapLayerStyle = 'hybrid' | 'satellite' | 'offline' | 'street' | 'tactical';
 

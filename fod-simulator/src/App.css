@@ -49,14 +49,26 @@ body {
 }
 
 .leaflet-container img.leaflet-tile,
-.leaflet-container .leaflet-tile {
+.leaflet-container .leaflet-tile,
+.leaflet-tile,
+img.leaflet-tile,
+.leaflet-tile-pane img {
   max-width: none !important;
   max-height: none !important;
   mix-blend-mode: normal !important;
   image-rendering: auto !important;
 }
 
-.leaflet-container .leaflet-tile-loaded {
+.leaflet-container .leaflet-tile-loaded,
+.leaflet-tile-loaded {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.leaflet-container .leaflet-tile-pane,
+.leaflet-container .leaflet-map-pane,
+.leaflet-tile-pane,
+.leaflet-map-pane {
   visibility: visible !important;
   opacity: 1 !important;
 }
@@ -70,11 +82,13 @@ svg.leaflet-zoom-animated {
   border: none !important;
 }
 
+.map-cursor-crosshair .leaflet-container,
 .map-cursor-crosshair .leaflet-grab,
 .map-cursor-crosshair {
   cursor: crosshair !important;
 }
 
+.map-cursor-grab .leaflet-container,
 .map-cursor-grab .leaflet-grab {
   cursor: grab !important;
 }

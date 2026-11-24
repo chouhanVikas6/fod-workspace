@@ -25,7 +25,9 @@ interface MapCanvasProps {
   showTrail: boolean;
   trailPoints: GeoPoint[];
   vehicle: VehicleDisplayState;
+  canDragCar: boolean;
   onUpdateLocation: (patch: Partial<LocationConfig>) => Promise<void>;
+  onPickCarPoint: (pt: GeoPoint) => void;
   onSelectPathway: (id: string | null) => void;
   onCursorMove: (pt: GeoPoint | null) => void;
   onDraftStatusChange: (status: DraftStatus) => void;
@@ -136,7 +138,9 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     showTrail,
     trailPoints,
     vehicle,
+    canDragCar,
     onUpdateLocation,
+    onPickCarPoint,
     onSelectPathway,
     onCursorMove,
     onDraftStatusChange,
@@ -166,6 +170,8 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
   selectedPathwayIdRef.current = selectedPathwayId;
   const onUpdateLocationRef = useRef(onUpdateLocation);
   onUpdateLocationRef.current = onUpdateLocation;
+  const onPickCarPointRef = useRef(onPickCarPoint);
+  onPickCarPointRef.current = onPickCarPoint;
   const onSelectPathwayRef = useRef(onSelectPathway);
   onSelectPathwayRef.current = onSelectPathway;
   const onCursorMoveRef = useRef(onCursorMove);
@@ -184,6 +190,9 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
   const waypointCursorRef = useRef<GeoPoint | null>(null);
   const isDraggingItemRef = useRef(false);
   const lastInteractionEndRef = useRef<number>(0);
+  const lastVehicleIconKeyRef = useRef<string>('');
+  const canDragCarRef = useRef(canDragCar);
+  canDragCarRef.current = canDragCar;
 
   const updateDraftHud = () => {
     if (isDrawingRef.current) {
@@ -373,7 +382,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     const map = L.map(containerRef.current, {
       center: [initialCenter.lat, initialCenter.lon],
       zoom: 16,
-      minZoom: 2,
+      minZoom: 4,
       maxZoom: 22,
       zoomControl: false,
       attributionControl: false,
@@ -400,8 +409,23 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     const carMarker = L.marker([initialCenter.lat, initialCenter.lon], {
       icon: makeVehicleIcon(0, false),
       zIndexOffset: 1200,
-      interactive: false,
+      draggable: canDragCar,
+      interactive: true,
     }).addTo(map);
+
+    carMarker.on('dragstart', () => {
+      isDraggingItemRef.current = true;
+    });
+    carMarker.on('dragend', () => {
+      isDraggingItemRef.current = false;
+      lastInteractionEndRef.current = Date.now();
+      const ll = carMarker.getLatLng();
+      onPickCarPointRef.current({ lat: ll.lat, lon: ll.lng });
+    });
+    carMarker.on('click', (ev) => {
+      L.DomEvent.stopPropagation(ev);
+      lastInteractionEndRef.current = Date.now();
+    });
 
     mapRef.current = map;
     tileGroupRef.current = tileGroup;
@@ -444,6 +468,8 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
         waypointDraftRef.current = [...waypointDraftRef.current, pt];
         renderWaypointDraft();
         updateDraftHud();
+      } else if (mode === 'car') {
+        onPickCarPointRef.current(pt);
       }
     };
 
@@ -603,13 +629,19 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
         map.dragging.disable();
       }
       map.doubleClickZoom.disable();
-    } else if (toolMode === 'waypoint' || toolMode === 'boundary') {
+    } else if (toolMode === 'waypoint' || toolMode === 'boundary' || toolMode === 'car') {
       map.dragging.enable();
       map.doubleClickZoom.disable();
     } else {
       map.dragging.enable();
       map.doubleClickZoom.enable();
     }
+
+    // Repaint Leaflet panes after overlay toolbar/tab transitions on WebKitGTK
+    const rafId = requestAnimationFrame(() => {
+      map.invalidateSize({ animate: false });
+    });
+    return () => cancelAnimationFrame(rafId);
   }, [toolMode, spacePressed]);
 
   // Switch tile layers cleanly
@@ -1084,8 +1116,20 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     const map = mapRef.current;
     if (!marker || !map) return;
 
-    marker.setLatLng([vehicle.lat, vehicle.lon]);
-    marker.setIcon(makeVehicleIcon(vehicle.heading, vehicle.isPreview));
+    if (!isDraggingItemRef.current) {
+      marker.setLatLng([vehicle.lat, vehicle.lon]);
+    }
+
+    const iconKey = `${vehicle.heading.toFixed(1)}:${vehicle.isPreview ? 1 : 0}`;
+    if (iconKey !== lastVehicleIconKeyRef.current) {
+      lastVehicleIconKeyRef.current = iconKey;
+      marker.setIcon(makeVehicleIcon(vehicle.heading, vehicle.isPreview));
+      if (canDragCarRef.current) {
+        marker.dragging?.enable();
+      } else {
+        marker.dragging?.disable();
+      }
+    }
 
     if (trailPolylineRef.current) {
       if (showTrail && trailPoints.length >= 2) {
@@ -1102,19 +1146,29 @@ const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas
     }
   }, [vehicle.lat, vehicle.lon, vehicle.heading, vehicle.isPreview, showTrail, trailPoints, followCar]);
 
+  useEffect(() => {
+    const marker = vehicleMarkerRef.current;
+    if (!marker) return;
+    marker.options.draggable = canDragCar;
+    if (!marker.dragging) return;
+    if (canDragCar) {
+      marker.dragging.enable();
+    } else {
+      marker.dragging.disable();
+    }
+  }, [canDragCar]);
+
   const cursorClass =
     toolMode === 'draw' && !spacePressed
       ? 'map-cursor-crosshair'
-      : toolMode === 'boundary' || toolMode === 'waypoint'
+      : toolMode === 'boundary' || toolMode === 'waypoint' || toolMode === 'car'
         ? 'map-cursor-crosshair'
         : 'map-cursor-grab';
 
   return (
-    <div
-      ref={containerRef}
-      className={`w-full h-full select-none ${cursorClass}`}
-      style={{ minHeight: '100%' }}
-    />
+    <div className={`w-full h-full select-none ${cursorClass}`} style={{ minHeight: '100%' }}>
+      <div ref={containerRef} className="w-full h-full" style={{ minHeight: '100%' }} />
+    </div>
   );
 });
 

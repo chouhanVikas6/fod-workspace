@@ -119,8 +119,14 @@ impl Default for SystemHealthStat {
                 data_status: false,
             },
             rtk_data: StatusBlock {
-                data: json!({}),
-                event_status: false,
+                
+                event_status: false,data: json!({
+                    "fix": "NO_GPS",
+                    "lat": 28.5097806,
+                    "lon": 77.3740667,
+                    "heading": 0.0,
+                    "source": "default_location",
+                }),
                 data_status: false,
             },
             magnetometer: StatusBlock {

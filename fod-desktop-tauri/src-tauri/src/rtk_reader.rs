@@ -25,6 +25,9 @@ use ublox::{
     nav_pvt::common::NavPvtFlags, proto23::PacketRef, GnssFixType, Parser as UbxParser, UbxPacket,
 };
 
+pub const DEFAULT_SELF_LAT: f64 = 28.5097806;
+pub const DEFAULT_SELF_LON: f64 = 77.3740667;
+
 #[derive(Debug, Clone, Default)]
 pub struct RtkFixState {
     pub lat: Option<f64>,
@@ -40,8 +43,8 @@ impl RtkFixState {
     pub fn to_json(&self, source: &str) -> serde_json::Value {
         json!({
             "fix": if self.fix.is_empty() { "NO_GPS" } else { &self.fix },
-            "lat": self.lat,
-            "lon": self.lon,
+            "lat": self.lat.unwrap_or(DEFAULT_SELF_LAT),
+            "lon": self.lon.unwrap_or(DEFAULT_SELF_LON),
             "heading": self.heading,
             "satellites": self.satellites,
             "hdop": (self.hdop * 100.0).round() / 100.0,
@@ -226,13 +229,15 @@ async fn mark_rtk_error(state: &AppState, source: &str, err_msg: &str) {
 
     let mut payload = json!({
         "fix": "NO_GPS",
+        "lat": DEFAULT_SELF_LAT,
+        "lon": DEFAULT_SELF_LON,
+        "heading": mag_heading.unwrap_or(0.0),
         "source": source,
         "error": err_msg,
         "updated_at_ms": now_ms,
     });
-    if let Some(hdg) = mag_heading {
+    if mag_heading.is_some() {
         if let Some(obj) = payload.as_object_mut() {
-            obj.insert("heading".to_string(), json!(hdg));
             obj.insert("headingSource".to_string(), json!("magnetometer"));
         }
     }

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSimulatorStore, type GeoPoint } from '../../store';
-import { haversineMeters, polygonCentroid, sampleCompiledSegments } from '../../utils/mapGeometry';
+import {
+  haversineMeters,
+  polygonCentroid,
+  projectPointOntoRoute,
+  sampleCompiledSegments,
+} from '../../utils/mapGeometry';
 import MapCanvas from '../location/MapCanvas';
 import OverlayInspector from '../location/OverlayInspector';
 import OverlayPlaybackBar from '../location/OverlayPlaybackBar';
@@ -53,6 +58,7 @@ export default function LocationTab() {
   const [previewDistM, setPreviewDistM] = useState<number>(0);
   const [previewForward, setPreviewForward] = useState<boolean>(true);
   const [previewLaps, setPreviewLaps] = useState<number>(0);
+  const [pickedCarPoint, setPickedCarPoint] = useState<GeoPoint | null>(null);
   const previewDistRef = useRef(0);
   const previewForwardRef = useRef(true);
 
@@ -67,7 +73,10 @@ export default function LocationTab() {
     if (telemetry.running && isPreviewing) {
       setIsPreviewing(false);
     }
-  }, [telemetry.running, isPreviewing]);
+    if (telemetry.running && pickedCarPoint) {
+      setPickedCarPoint(null);
+    }
+  }, [telemetry.running, isPreviewing, pickedCarPoint]);
 
   // Keep preview distance clamped if route changes
   useEffect(() => {
@@ -208,6 +217,22 @@ export default function LocationTab() {
       };
     }
 
+    if (!telemetry.running && !isPreviewing && pickedCarPoint) {
+      return {
+        lat: pickedCarPoint.lat,
+        lon: pickedCarPoint.lon,
+        heading: telemetry.current_heading || 0,
+        speedKmh: location.vehicle_speed_kmh,
+        activePathIndex: null,
+        activePathName: null,
+        progressPct: 0,
+        distanceM: 0,
+        totalLengthM: totalLen,
+        lapCount: 0,
+        isPreview: false,
+      };
+    }
+
     const fallbackCenter = polygonCentroid(location.boundary_points);
     return {
       lat: telemetry.current_lat || fallbackCenter.lat,
@@ -229,6 +254,7 @@ export default function LocationTab() {
     previewDistM,
     previewForward,
     previewLaps,
+    pickedCarPoint,
     location.boundary_points,
     location.vehicle_speed_kmh,
     location.path_mode,
@@ -251,6 +277,7 @@ export default function LocationTab() {
 
   const handleResetVehicle = () => {
     setIsPreviewing(false);
+    setPickedCarPoint(null);
     previewDistRef.current = 0;
     previewForwardRef.current = true;
     setPreviewDistM(0);
@@ -263,6 +290,7 @@ export default function LocationTab() {
   const handleScrubProgress = (pct: number) => {
     const totalLen = compiledRoute?.total_length_m ?? 0;
     const targetDist = (pct / 100) * totalLen;
+    setPickedCarPoint(null);
     if (!telemetry.running) {
       previewDistRef.current = targetDist;
       previewForwardRef.current = true;
@@ -270,6 +298,27 @@ export default function LocationTab() {
       setPreviewForward(true);
     }
     setVehicleProgress(pct);
+  };
+
+  const handlePickCarPoint = (pt: GeoPoint) => {
+    setIsPreviewing(false);
+    const segments = compiledRoute?.segments ?? [];
+    if (segments.length > 0 && (compiledRoute?.total_length_m ?? 0) > 0) {
+      const proj = projectPointOntoRoute(pt, segments);
+      if (proj && proj.distFromRouteM <= 150) {
+        setPickedCarPoint(null);
+        previewDistRef.current = proj.distanceM;
+        previewForwardRef.current = true;
+        setPreviewDistM(proj.distanceM);
+        setPreviewForward(true);
+        setVehicleProgress(proj.progressPct);
+        return;
+      }
+      if (proj) {
+        setVehicleProgress(proj.progressPct);
+      }
+    }
+    setPickedCarPoint(pt);
   };
 
   return (
@@ -294,7 +343,9 @@ export default function LocationTab() {
         showTrail={showTrail}
         trailPoints={trailPoints}
         vehicle={vehicle}
+        canDragCar={!telemetry.running && !isPreviewing}
         onUpdateLocation={updateLocation}
+        onPickCarPoint={handlePickCarPoint}
         onSelectPathway={(id) => {
           setSelectedPathwayId(id);
           if (id) setInspectorTab('pathways');
@@ -319,6 +370,7 @@ export default function LocationTab() {
           setToolMode(mode);
           if (mode === 'boundary') setInspectorTab('boundary');
           if (mode === 'draw' || mode === 'waypoint') setInspectorTab('pathways');
+          if (mode === 'car') setInspectorTab('drive');
         }}
         onChangeLayerStyle={setLayerStyle}
         onToggleFollowCar={() => setFollowCar((f) => !f)}
@@ -335,10 +387,13 @@ export default function LocationTab() {
       <OverlayInspector
         open={inspectorOpen}
         activeTab={inspectorTab}
+        toolMode={toolMode}
         location={location}
         compiledRoute={compiledRoute}
         selectedPathwayId={selectedPathwayId}
         activeCarPathIndex={vehicle.activePathIndex}
+        vehicleLat={vehicle.lat}
+        vehicleLon={vehicle.lon}
         showTrail={showTrail}
         onToggleOpen={() => setInspectorOpen((o) => !o)}
         onChangeTab={setInspectorTab}
@@ -347,6 +402,7 @@ export default function LocationTab() {
         onSelectPathway={setSelectedPathwayId}
         onFlyTo={(pt, zoom) => mapHandleRef.current?.flyToPoint(pt, zoom)}
         onFitBoundary={() => mapHandleRef.current?.fitBoundary()}
+        onResetCar={handleResetVehicle}
         onToggleShowTrail={() => setShowTrail((s) => !s)}
         onClearTrail={() => setTrailPoints([])}
       />
