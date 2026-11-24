@@ -420,7 +420,7 @@ export default function UserManagement() {
           }`}
         >
           {/* Search & Filter Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3.5">
+          <div className="flex flex-wrap items-end justify-between gap-2.5 mb-3.5">
             <div className="flex flex-wrap items-center gap-2 flex-1">
               {/* Search */}
               <div
@@ -809,13 +809,13 @@ export default function UserManagement() {
                     <button
                       type="button"
                       onClick={() => setEditLiveCams(!editLiveCams)}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
+                      className={`relative inline-flex items-center h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
                         editLiveCams ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
                       }`}
                     >
                       <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition translate-y-0.5 ${
-                          editLiveCams ? 'translate-x-4.5' : 'translate-x-0.5'
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition ${
+                          editLiveCams ? 'translate-x-[18px]' : 'translate-x-[2px]'
                         }`}
                       />
                     </button>
@@ -826,13 +826,13 @@ export default function UserManagement() {
                     <button
                       type="button"
                       onClick={() => setEditConfirmFod(!editConfirmFod)}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
+                      className={`relative inline-flex items-center h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
                         editConfirmFod ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
                       }`}
                     >
                       <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition translate-y-0.5 ${
-                          editConfirmFod ? 'translate-x-4.5' : 'translate-x-0.5'
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition ${
+                          editConfirmFod ? 'translate-x-[18px]' : 'translate-x-[2px]'
                         }`}
                       />
                     </button>
@@ -843,13 +843,13 @@ export default function UserManagement() {
                     <button
                       type="button"
                       onClick={() => setEditSysSettings(!editSysSettings)}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
+                      className={`relative inline-flex items-center h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
                         editSysSettings ? 'bg-[#00B957]' : isDark ? 'bg-[#454B53]' : 'bg-slate-300'
                       }`}
                     >
                       <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition translate-y-0.5 ${
-                          editSysSettings ? 'translate-x-4.5' : 'translate-x-0.5'
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition ${
+                          editSysSettings ? 'translate-x-[18px]' : 'translate-x-[2px]'
                         }`}
                       />
                     </button>

@@ -1144,3 +1144,22 @@ html.theme-dark .zoid-shimmer {
 .zoid-fade-slide {
   animation: zoidFadeSlideIn 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* =========================================
+   GLOBAL SELECT DROPDOWN CHEVRON SPACING
+========================================= */
+
+select:not(.appearance-none) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.25rem !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+  background-size: 14px 14px;
+}
+
+html.dark select:not(.appearance-none),
+.dark select:not(.appearance-none) {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

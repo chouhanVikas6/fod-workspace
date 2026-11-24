@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+﻿import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useDispatch } from "react-redux";
 import { toast } from "react-toastify";
 import mapboxgl from "mapbox-gl";
@@ -623,9 +623,6 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
             <h1 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight truncate">
               Mission Planner &amp; Templates
             </h1>
-            <p className="text-[11px] text-slate-500 dark:text-[#8C939C] font-medium leading-none mt-0.5 truncate">
-              Define scan boundaries, generate sweep paths and configure telemetry
-            </p>
           </div>
         </div>
 
@@ -788,10 +785,10 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                     type="button"
                     onClick={() => setDirection((prev) => (prev === "LENGTHWISE" ? "CROSSWISE" : "LENGTHWISE"))}
                     className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-[#4C9FE8]/10 text-[#4C9FE8] font-bold text-xs px-3 py-1.5 rounded-xl border border-[#4C9FE8]/40 shadow-sm active:scale-95 transition-all flex items-center space-x-1.5 cursor-pointer"
-                    title="Rotate sweep path direction 90Â°"
+                    title="Rotate sweep path direction 90 deg"
                   >
                     <RxReload className="w-3.5 h-3.5" />
-                    <span>Rotate 90Â°</span>
+                    <span>Rotate 90</span>
                   </button>
 
                   <button
@@ -804,7 +801,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                     }`}
                     title="Reverse start point / traversal order"
                   >
-                    â‡„ {reversePath ? "Reversed" : "Reverse"}
+                    {reversePath ? "Reversed" : "Reverse"}
                   </button>
                 </div>
               </>
@@ -814,30 +811,23 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
             {activeTab === "CN" && (
               <>
                 <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center gap-2">
-                  <div className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-200/90 dark:border-white/15 shadow-sm text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center space-x-2">
-                    <span className="w-2 h-2 rounded-full bg-[#E5A12B] animate-ping shrink-0" />
-                    <span>
-                      {creatorPoints.length < 3
-                        ? `Click map to add vertex (${creatorPoints.length}/3 min)`
-                        : `Polygon closed (${creatorPoints.length} pts)`}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setCreatorPoints(DEFAULT_TEMPLATES[0].boundaryPoints)}
-                    className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-slate-100 dark:hover:bg-white/10 text-slate-700 dark:text-slate-200 font-semibold text-xs px-2.5 py-1.5 rounded-xl border border-slate-200/90 dark:border-white/15 shadow-sm active:scale-95 transition-all cursor-pointer"
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const idx = Number(e.target.value);
+                      if (!Number.isNaN(idx) && DEFAULT_TEMPLATES[idx]) {
+                        setCreatorPoints(DEFAULT_TEMPLATES[idx].boundaryPoints);
+                      }
+                    }}
+                    className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-slate-100 dark:hover:bg-white/10 text-slate-700 dark:text-slate-200 font-semibold text-xs px-2.5 py-1.5 rounded-xl border border-slate-200/90 dark:border-white/15 shadow-sm focus:outline-none cursor-pointer"
+                    title="Load boundary preset"
                   >
-                    Runway Preset
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setCreatorPoints(DEFAULT_TEMPLATES[1].boundaryPoints)}
-                    className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-slate-100 dark:hover:bg-white/10 text-slate-700 dark:text-slate-200 font-semibold text-xs px-2.5 py-1.5 rounded-xl border border-slate-200/90 dark:border-white/15 shadow-sm active:scale-95 transition-all cursor-pointer"
-                  >
-                    Taxiway Preset
-                  </button>
+                    <option value="" disabled>
+                      Presets
+                    </option>
+                    <option value="0">Runway Preset</option>
+                    <option value="1">Taxiway Preset</option>
+                  </select>
 
                   {creatorPoints.length > 0 && (
                     <button
@@ -864,11 +854,10 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                   <button
                     type="button"
                     onClick={() => setDirection((prev) => (prev === "LENGTHWISE" ? "CROSSWISE" : "LENGTHWISE"))}
-                    className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-[#4C9FE8]/10 text-[#4C9FE8] font-bold text-xs px-2.5 py-1.5 rounded-xl border border-[#4C9FE8]/40 shadow-sm active:scale-95 transition-all flex items-center space-x-1.5 cursor-pointer"
-                    title="Rotate sweep path direction 90Â°"
+                    className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md hover:bg-[#4C9FE8]/10 text-[#4C9FE8] font-bold text-xs px-2.5 py-1.5 rounded-xl border border-[#4C9FE8]/40 shadow-sm active:scale-95 transition-all cursor-pointer"
+                    title="Rotate sweep path direction 90 deg"
                   >
-                    <RxReload className="w-3.5 h-3.5" />
-                    <span>Rotate 90Â°</span>
+                    Rotate 90
                   </button>
 
                   <button
@@ -881,7 +870,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                     }`}
                     title="Reverse start point / traversal order"
                   >
-                    â‡„ {reversePath ? "Reversed" : "Reverse"}
+                    {reversePath ? "Reversed" : "Reverse"}
                   </button>
                 </div>
 
@@ -904,7 +893,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
               <div className="absolute top-3 left-3 flex items-center space-x-2">
                 <div className="bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/90 dark:border-white/15 shadow-sm flex items-center space-x-2.5 text-xs font-bold text-slate-700 dark:text-slate-200">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#01B656] animate-pulse" />
-                  <span>Free Run Scanning Mode â€¢ Full Airfield Free Roam</span>
+                  <span>Free Run Scanning Mode - Full Airfield Free Roam</span>
                 </div>
               </div>
             )}
@@ -1109,7 +1098,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
                         className="text-slate-400 hover:text-[#D51F32] px-1 font-sans cursor-pointer"
                         title={`Remove Point #${idx + 1}`}
                       >
-                        Ã—
+                        <RxCross2 className="w-3 h-3" />
                       </button>
                     </div>
                   ))
@@ -1297,24 +1286,24 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
         {/* COLUMN 3 (RIGHT): FREE RUN PARAMETERS (When in FR mode)                   */}
         {/* ========================================================================= */}
         {activeTab === "FR" && (
-          <div className="w-full md:w-[320px] lg:w-[340px] max-h-[45%] md:max-h-none bg-white dark:bg-[#292D33] border-t md:border-t-0 md:border-l border-slate-200 dark:border-[#373C43] p-4 sm:p-5 flex flex-col gap-4 overflow-y-auto shrink-0">
-            <div className="flex items-center space-x-3.5 pb-3 border-b border-slate-200 dark:border-[#373C43]">
-              <div className="w-11 h-11 rounded-xl bg-[#01B656]/15 text-[#01B656] border border-[#01B656]/30 flex items-center justify-center shrink-0">
-                <RxPlay className="w-5 h-5" />
+          <div className="w-full md:w-[320px] lg:w-[340px] max-h-[45%] md:max-h-none bg-white dark:bg-[#292D33] border-t md:border-t-0 md:border-l border-slate-200 dark:border-[#373C43] p-3 sm:p-4 flex flex-col gap-2.5 sm:gap-3 overflow-y-auto shrink-0">
+            <div className="flex items-center space-x-3 pb-2.5 border-b border-slate-200 dark:border-[#373C43] shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-[#01B656]/15 text-[#01B656] border border-[#01B656]/30 flex items-center justify-center shrink-0">
+                <RxPlay className="w-4 h-4" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white tracking-tight">Free Run Scanning</h2>
-                <p className="text-[11px] text-slate-500 dark:text-[#8C939C] mt-0.5">
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight leading-tight">Free Run Scanning</h2>
+                <p className="text-[11px] text-slate-500 dark:text-[#8C939C] mt-0.5 leading-tight">
                   Manual inspection drive with live AI detection
                 </p>
               </div>
             </div>
 
-            <div className="p-3.5 bg-[#01B656]/10 border border-[#01B656]/30 rounded-xl space-y-2">
-              <span className="text-xs font-bold text-[#01B656] uppercase tracking-wide">
+            <div className="p-2.5 sm:p-3 bg-[#01B656]/10 border border-[#01B656]/30 rounded-xl space-y-1.5 shrink-0">
+              <span className="text-[11px] font-bold text-[#01B656] uppercase tracking-wide block">
                 Autonomous Scanning Telemetry
               </span>
-              <ul className="text-xs text-slate-700 dark:text-slate-200 space-y-1.5 list-disc list-inside">
+              <ul className="text-[11px] sm:text-xs text-slate-700 dark:text-slate-200 space-y-1 leading-snug list-disc list-inside">
                 <li>Continuous 26-camera vision stream and neural FOD detection</li>
                 <li>Real-time vehicle RTK centimeter positioning &amp; trail logging</li>
                 <li>Unrestricted drive boundary for ad-hoc tarmac inspections</li>
@@ -1323,7 +1312,7 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
             </div>
 
             {/* Speed Control */}
-            <div className="space-y-2">
+            <div className="space-y-1 shrink-0">
               <div className="flex justify-between items-center text-xs font-bold text-slate-700 dark:text-slate-200">
                 <span>Target Inspection Speed</span>
                 <span className="text-[#01B656] font-mono text-sm">{freeRunSpeed} km/h</span>
@@ -1342,12 +1331,12 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
               </div>
             </div>
 
-            <div className="mt-auto pt-3">
+            <div className="mt-auto pt-1 shrink-0">
               <button
                 type="button"
                 onClick={() => handleLaunchMission({ isFreeRun: true })}
                 disabled={apiLoading}
-                className="w-full py-3 px-6 bg-[#01B656] hover:bg-[#009E48] text-white font-bold text-sm rounded-lg shadow active:scale-[0.98] transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
+                className="w-full py-2.5 px-4 bg-[#01B656] hover:bg-[#009E48] text-white font-bold text-xs sm:text-sm rounded-lg shadow active:scale-[0.98] transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
               >
                 <RxPlay className="w-4 h-4" />
                 <span>{apiLoading ? "Starting Vehicle..." : "Launch Free Run Mission"}</span>

@@ -323,11 +323,6 @@ const HealthBar = () => {
 
       <div className={dividerClass} />
 
-      {/* COMPASS / MAGNETOMETER HEADING */}
-      
-
-      <div className={dividerClass} />
-
       {/* CAR */}
       <button
         type="button"

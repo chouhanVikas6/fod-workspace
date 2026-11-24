@@ -46,7 +46,7 @@ const SortBy = () => {
         <select
           onChange={(e) => dispatch(set_SortBy(e.target.value))}
           value={sortby}
-          className="bg-white dark:bg-[#181D24] text-slate-800 dark:text-white border border-slate-300 dark:border-[#2B323D] hover:border-slate-400 dark:hover:border-[#3E4755] rounded-lg pl-3 pr-7 py-1.5 text-xs font-semibold appearance-none cursor-pointer shadow-xs focus:outline-none focus:border-[#388AEB] transition-colors"
+          className="bg-white dark:bg-[#181D24] text-slate-800 dark:text-white border border-slate-300 dark:border-[#2B323D] hover:border-slate-400 dark:hover:border-[#3E4755] rounded-lg pl-3 pr-8 py-1.5 text-xs font-semibold appearance-none cursor-pointer shadow-xs focus:outline-none focus:border-[#388AEB] transition-colors"
         >
           <option value="latest">{t("latest")}</option>
           <option value="oldest">{t("oldest")}</option>
@@ -55,7 +55,7 @@ const SortBy = () => {
           <option value="nearestFirst">{t("distance-nearest")}</option>
         </select>
 
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500 dark:text-[#7E8691]">
+        <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center px-2 text-slate-500 dark:text-[#7E8691]">
           <RxChevronDown className="w-3.5 h-3.5" />
         </div>
       </div>
