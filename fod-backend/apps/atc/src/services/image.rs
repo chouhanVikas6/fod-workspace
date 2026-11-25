@@ -52,8 +52,18 @@ impl ImageService for AtcImageServiceImpl {
 
     async fn upload_image(
         &self,
-        _request: Request<UploadImageRequest>,
+        request: Request<UploadImageRequest>,
     ) -> Result<Response<UploadImageResponse>, Status> {
-        Err(Status::permission_denied("Image upload is only allowed on the Car node"))
+        let req = request.into_inner();
+        let sha256 = self
+            .storage
+            .save_frame(&req.jpeg)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(UploadImageResponse {
+            sha256,
+            size: req.jpeg.len() as i64,
+        }))
     }
 }

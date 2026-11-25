@@ -97,27 +97,9 @@ const MissionSelector = () => {
         setSelectedMission(null);
     };
 
-    // Assign incremental 1-based displayId chronologically (oldest = 1, newest = N)
-    const missionsWithDisplayId = useMemo(() => {
-        if (!missions?.length) return [];
-        const chronological = [...missions].sort((a, b) => {
-            const ta = new Date(a.createdAt || a.created_at || 0).getTime() || Number(a.mission_id ?? a.id ?? 0);
-            const tb = new Date(b.createdAt || b.created_at || 0).getTime() || Number(b.mission_id ?? b.id ?? 0);
-            return ta - tb;
-        });
-        const displayIdMap = new Map<string, number>();
-        chronological.forEach((m, i) => {
-            displayIdMap.set(String(m.mission_id ?? m.id), i + 1);
-        });
-        return missions.map((m) => ({
-            ...m,
-            displayId: m.displayId ?? displayIdMap.get(String(m.mission_id ?? m.id)),
-        }));
-    }, [missions]);
-
     // Filter and sort missions by date/month/range and sortOrder
     const filteredMissions = useMemo(() => {
-        const list = missionsWithDisplayId.filter((m) => {
+        const list = (missions || []).filter((m) => {
             if (dateFilterMode === "all") return true;
             const raw = m.createdAt || m.created_at;
             if (!raw) return false;
@@ -148,7 +130,7 @@ const MissionSelector = () => {
             const tb = new Date(b.createdAt || b.created_at || 0).getTime() || Number(b.mission_id ?? b.id ?? 0);
             return sortOrder === "newest" ? tb - ta : ta - tb;
         });
-    }, [missionsWithDisplayId, dateFilterMode, selectedDate, selectedDateEnd, selectedMonth, sortOrder]);
+    }, [missions, dateFilterMode, selectedDate, selectedDateEnd, selectedMonth, sortOrder]);
 
     const isDateFiltered =
         (dateFilterMode === "date" && !!selectedDate) ||
@@ -164,8 +146,8 @@ const MissionSelector = () => {
     // Live active mission
     const activeMission = useMemo(() => {
         if (!isCarLive) return [];
-        return missionsWithDisplayId?.filter((mission: any) => mission.status === 'ACTIVE') || [];
-    }, [missionsWithDisplayId, isCarLive]);
+        return missions?.filter((mission: any) => mission.status === 'ACTIVE') || [];
+    }, [missions, isCarLive]);
 
     if (loading) return <MissionSelectorSkeleton />;
 
@@ -335,7 +317,7 @@ const MissionSelector = () => {
             }`}>
                 <div key={viewKey} className="w-full h-full flex items-center justify-center zoid-fade-slide">
                 {currentScreen === 'MissionTemplate' ? (
-                    <MissionTemplate {...{ stopTemplateView, nextDisplayId: missions.length + 1 }} />
+                    <MissionTemplate {...{ stopTemplateView }} />
                 ) : currentScreen === 'MissionExplore' ? (
                     <MissionExplore {...{ stopTemplateView, selectedMission }} />
                 ) : (

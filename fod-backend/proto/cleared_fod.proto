@@ -5,6 +5,7 @@ import "common.proto";
 
 service ClearedFodService {
     rpc FindClearedFod (FindClearedFodRequest) returns (ClearedFodEntity);
+    rpc RecordClearedFod (RecordClearedFodRequest) returns (ClearedFodEntity);
 }
 
 message RecordClearedFodRequest {
@@ -15,6 +16,8 @@ message RecordClearedFodRequest {
     zoid.common.LatLon location = 5;
     repeated string before_image_sha256 = 6;
     repeated string after_image_sha256 = 7;
+    int64 created_at = 8;
+    optional string created_by = 9;
 }
 
 message ClearedFodEntity {

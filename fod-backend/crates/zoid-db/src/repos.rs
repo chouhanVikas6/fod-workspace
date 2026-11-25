@@ -1,8 +1,8 @@
+use crate::Db;
 use crate::models::{
     AppliedCommandRow, ChangeLogRow, ClearedFodRow, FodGroupRow, FodGroupStatus, FodRow,
     GroupWrite, MissionRow, MissionScanStatus, MissionStatus, UserRole, UserRow,
 };
-use crate::Db;
 use uuid::Uuid;
 use zoid_core::{Result, ZoidError};
 
@@ -38,8 +38,8 @@ impl Db {
     ) -> Result<MissionRow> {
         sqlx::query_as::<_, MissionRow>(
             r#"
-            INSERT INTO missions (id, status, scan_status, speed, pass)
-            VALUES ($1, 'ACTIVE', 'PAUSE', $2, $3)
+            INSERT INTO missions (id, status, scan_status, speed, pass, display_id)
+            VALUES ($1, 'ACTIVE', 'PAUSE', $2, $3, COALESCE((SELECT MAX(display_id) FROM missions), 0) + 1)
             RETURNING *
             "#,
         )
@@ -99,11 +99,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn increment_mission_timer(
-        &self,
-        mission_id: i64,
-        delta_seconds: i64,
-    ) -> Result<()> {
+    pub async fn increment_mission_timer(&self, mission_id: i64, delta_seconds: i64) -> Result<()> {
         if delta_seconds <= 0 {
             return Ok(());
         }
@@ -182,12 +178,11 @@ impl Db {
     }
 
     pub async fn get_group_count(&self, mission_id: i64) -> Result<i64> {
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
-                .bind(mission_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| ZoidError::Database(e.to_string()))?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
+            .bind(mission_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
         Ok(count.0)
     }
 
@@ -197,12 +192,11 @@ impl Db {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<FodGroupRow>, i64)> {
-        let total: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
-                .bind(mission_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| ZoidError::Database(e.to_string()))?;
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
+            .bind(mission_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
 
         let rows = sqlx::query_as::<_, FodGroupRow>(
             "SELECT * FROM fod_groups WHERE mission_id = $1 ORDER BY group_id ASC LIMIT $2 OFFSET $3",
@@ -404,7 +398,10 @@ impl Db {
         biggest_fod: Option<&str>,
         biggest_fod_size: Option<f64>,
     ) -> Result<()> {
-        let (Some(fod), Some(size)) = (biggest_fod.and_then(|u| Uuid::parse_str(u).ok()), biggest_fod_size) else {
+        let (Some(fod), Some(size)) = (
+            biggest_fod.and_then(|u| Uuid::parse_str(u).ok()),
+            biggest_fod_size,
+        ) else {
             return Ok(());
         };
         sqlx::query(
@@ -567,7 +564,9 @@ impl Db {
             }
 
             accepted += 1;
-            let entry = group_biggest.entry(fod.group_id).or_insert((fod.id, fod.size));
+            let entry = group_biggest
+                .entry(fod.group_id)
+                .or_insert((fod.id, fod.size));
             if fod.size > entry.1 {
                 *entry = (fod.id, fod.size);
             }
@@ -633,11 +632,24 @@ impl Db {
         group_id: i64,
     ) -> Result<Option<ClearedFodRow>> {
         sqlx::query_as::<_, ClearedFodRow>(
-            "SELECT * FROM cleared_fods WHERE mission_id = $1 AND group_id = $2",
+            "SELECT * FROM cleared_fods WHERE mission_id = $1 AND group_id = $2 ORDER BY created_at DESC LIMIT 1",
         )
         .bind(mission_id)
         .bind(group_id)
         .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn list_cleared_fods_for_mission(
+        &self,
+        mission_id: i64,
+    ) -> Result<Vec<ClearedFodRow>> {
+        sqlx::query_as::<_, ClearedFodRow>(
+            "SELECT * FROM cleared_fods WHERE mission_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(mission_id)
+        .fetch_all(&self.pool)
         .await
         .map_err(|e| ZoidError::Database(e.to_string()))
     }
@@ -651,7 +663,20 @@ impl Db {
                 lat, lon, sd, created_at, created_by
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (id) DO NOTHING
+            ON CONFLICT (id) DO UPDATE SET
+                status = EXCLUDED.status,
+                before_image_sha256 = CASE
+                    WHEN array_length(EXCLUDED.before_image_sha256, 1) > 0 THEN EXCLUDED.before_image_sha256
+                    ELSE cleared_fods.before_image_sha256
+                END,
+                after_image_sha256 = CASE
+                    WHEN array_length(EXCLUDED.after_image_sha256, 1) > 0 THEN EXCLUDED.after_image_sha256
+                    ELSE cleared_fods.after_image_sha256
+                END,
+                lat = EXCLUDED.lat,
+                lon = EXCLUDED.lon,
+                sd = EXCLUDED.sd,
+                created_by = COALESCE(EXCLUDED.created_by, cleared_fods.created_by)
             "#,
         )
         .bind(cleared.id)
@@ -743,13 +768,12 @@ impl Db {
     // ----------------- Replica Helpers -----------------
 
     pub async fn get_upstream_cursor(&self, node_id: &str) -> Result<i64> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT cursor FROM upstream_cursor WHERE upstream_node_id = $1",
-        )
-        .bind(node_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| ZoidError::Database(e.to_string()))?;
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT cursor FROM upstream_cursor WHERE upstream_node_id = $1")
+                .bind(node_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| ZoidError::Database(e.to_string()))?;
 
         Ok(row.map(|r| r.0).unwrap_or(0))
     }
@@ -785,11 +809,12 @@ impl Db {
 
         sqlx::query(
             r#"
-            INSERT INTO missions (id, status, scan_status, timer, speed, pass)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO missions (id, status, scan_status, timer, speed, pass, display_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (id) DO UPDATE
             SET status = EXCLUDED.status, scan_status = EXCLUDED.scan_status,
                 timer = EXCLUDED.timer, speed = EXCLUDED.speed, pass = EXCLUDED.pass,
+                display_id = COALESCE(EXCLUDED.display_id, missions.display_id),
                 updated_at = now()
             "#,
         )
@@ -799,6 +824,7 @@ impl Db {
         .bind(m.timer)
         .bind(m.speed)
         .bind(m.pass)
+        .bind(m.display_id)
         .execute(&self.pool)
         .await
         .map_err(|e| ZoidError::Database(e.to_string()))?;
@@ -809,8 +835,8 @@ impl Db {
     pub async fn ensure_mission_exists(&self, id: i64) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO missions (id, status, scan_status, timer, speed, pass)
-            VALUES ($1, 'ACTIVE', 'PAUSE', 0, 20, 1)
+            INSERT INTO missions (id, status, scan_status, timer, speed, pass, display_id)
+            VALUES ($1, 'ACTIVE', 'PAUSE', 0, 20, 1, COALESCE((SELECT MAX(display_id) FROM missions), 0) + 1)
             ON CONFLICT (id) DO NOTHING
             "#,
         )
@@ -821,7 +847,6 @@ impl Db {
 
         Ok(())
     }
-
 
     pub async fn upsert_replicated_fod(&self, f: &proto_defination::fod::FodEntity) -> Result<()> {
         let id = Uuid::parse_str(&f.id).unwrap_or_else(|_| Uuid::new_v4());
@@ -892,15 +917,23 @@ impl Db {
             .map_err(|e| ZoidError::Database(e.to_string()))
     }
 
-    pub async fn get_users_since(&self, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<UserRow>> {
-        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE updated_at >= $1 ORDER BY updated_at ASC")
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| ZoidError::Database(e.to_string()))
+    pub async fn get_users_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<UserRow>> {
+        sqlx::query_as::<_, UserRow>(
+            "SELECT * FROM users WHERE updated_at >= $1 ORDER BY updated_at ASC",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
     }
 
-    pub async fn get_deleted_usernames_since(&self, since: chrono::DateTime<chrono::Utc>) -> Result<Vec<String>> {
+    pub async fn get_deleted_usernames_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<String>> {
         sqlx::query_scalar::<_, String>(
             r#"
             SELECT DISTINCT cl.entity_key
@@ -915,9 +948,14 @@ impl Db {
         .map_err(|e| ZoidError::Database(e.to_string()))
     }
 
-    pub async fn upsert_replicated_user(&self, u: &proto_defination::user::UserEntity) -> Result<UserRow> {
+    pub async fn upsert_replicated_user(
+        &self,
+        u: &proto_defination::user::UserEntity,
+    ) -> Result<UserRow> {
         let id = Uuid::parse_str(&u.id).unwrap_or_else(|_| Uuid::new_v4());
-        let role = match proto_defination::user::UserRole::try_from(u.role).unwrap_or(proto_defination::user::UserRole::Collector) {
+        let role = match proto_defination::user::UserRole::try_from(u.role)
+            .unwrap_or(proto_defination::user::UserRole::Collector)
+        {
             proto_defination::user::UserRole::Admin => UserRole::Admin,
             proto_defination::user::UserRole::Collector => UserRole::Collector,
             proto_defination::user::UserRole::Driver => UserRole::Driver,
@@ -925,12 +963,14 @@ impl Db {
             _ => UserRole::Collector,
         };
         let created_at = if u.created_at_ms > 0 {
-            chrono::DateTime::from_timestamp_millis(u.created_at_ms).unwrap_or_else(chrono::Utc::now)
+            chrono::DateTime::from_timestamp_millis(u.created_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
         } else {
             chrono::Utc::now()
         };
         let updated_at = if u.updated_at_ms > 0 {
-            chrono::DateTime::from_timestamp_millis(u.updated_at_ms).unwrap_or_else(chrono::Utc::now)
+            chrono::DateTime::from_timestamp_millis(u.updated_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
         } else {
             chrono::Utc::now()
         };
@@ -974,12 +1014,12 @@ impl Db {
     }
 
     pub async fn delete_user_by_username(&self, username: &str) -> Result<bool> {
-        let res = sqlx::query("DELETE FROM users WHERE username = $1 OR LOWER(username) = LOWER($1)")
-            .bind(username)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| ZoidError::Database(e.to_string()))?;
+        let res =
+            sqlx::query("DELETE FROM users WHERE username = $1 OR LOWER(username) = LOWER($1)")
+                .bind(username)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| ZoidError::Database(e.to_string()))?;
         Ok(res.rows_affected() > 0)
     }
 }
-

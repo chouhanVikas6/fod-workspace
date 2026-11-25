@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { RxCross1 } from "react-icons/rx";
 import { HiOutlineCheck } from "react-icons/hi";
@@ -13,11 +13,24 @@ import {
 import { RootState } from "@/store";
 
 const SIDEBAR_PAGE_SIZE = 60;
+const DRAWER_WIDTH = 320;
+const SWIPE_THRESHOLD = 40;
+const DRAG_SLOP = 6;
 
 const FodCategoryAndDetail = () => {
   const dispatch = useDispatch();
   const [selectedList, setSelectedList] = useState<string>("ACCEPTED");
   const [visibleLimit, setVisibleLimit] = useState<number>(SIDEBAR_PAGE_SIZE);
+  const [dragTranslateX, setDragTranslateX] = useState<number | null>(null);
+
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  const suppressClickRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+    };
+  }, []);
 
   const fods = useSelector((state: RootState) => state.FodReducer.fods);
   const selectedFod = useSelector((state: RootState) => state.SelectedFod);
@@ -75,26 +88,112 @@ const FodCategoryAndDetail = () => {
     }
   };
 
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+
+    dragCleanupRef.current?.();
+    suppressClickRef.current = false;
+
+    const pointerId = e.pointerId;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const baseX = isSidebarVisible ? 0 : DRAWER_WIDTH;
+    let axis: "pending" | "horizontal" | "vertical" = "pending";
+    let lastDx = 0;
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      dragCleanupRef.current = null;
+    };
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+
+      if (axis === "pending") {
+        if (Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return;
+        if (Math.abs(dy) > Math.abs(dx)) {
+          axis = "vertical";
+          cleanup();
+          return;
+        }
+        axis = "horizontal";
+        suppressClickRef.current = true;
+      }
+
+      lastDx = dx;
+      const nextX = Math.max(0, Math.min(DRAWER_WIDTH, baseX + dx));
+      setDragTranslateX(nextX);
+    };
+
+    const finishDrag = (commit: boolean) => {
+      cleanup();
+      if (axis === "horizontal") {
+        if (commit) {
+          if (lastDx <= -SWIPE_THRESHOLD) {
+            dispatch(setSideBarVisibility(true));
+          } else if (lastDx >= SWIPE_THRESHOLD) {
+            dispatch(setSideBarVisibility(false));
+          }
+        }
+        setDragTranslateX(null);
+        setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      }
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      finishDrag(true);
+    };
+
+    const onPointerCancel = (cancelEvent: PointerEvent) => {
+      if (cancelEvent.pointerId !== pointerId) return;
+      finishDrag(false);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    dragCleanupRef.current = cleanup;
+  };
+
+  const handleClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressClickRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      suppressClickRef.current = false;
+    }
+  };
+
+  const isDragging = dragTranslateX !== null;
+
   return (
     <div
-      className={`absolute top-0 bottom-0 right-0 h-full flex z-30 pointer-events-none transition-transform duration-300 ease-in-out ${
-        isSidebarVisible ? "translate-x-0" : "translate-x-[320px]"
+      onPointerDown={handlePointerDown}
+      onClickCapture={handleClickCapture}
+      style={
+        isDragging
+          ? { transform: `translateX(${dragTranslateX}px)` }
+          : undefined
+      }
+      className={`absolute top-0 bottom-0 right-0 h-full flex z-30 pointer-events-none touch-pan-y ${
+        isDragging ? "" : "transition-transform duration-300 ease-in-out"
+      } ${
+        isDragging
+          ? ""
+          : isSidebarVisible
+            ? "translate-x-0"
+            : "translate-x-[320px]"
       }`}
     >
       {/* Floating vertical pill counter */}
       <div className="h-full flex items-center pr-2">
-        <div
-          className="w-[48px] py-4 rounded-2xl bg-white dark:bg-[#181D25] border border-slate-200 dark:border-[#2B3542] shadow-[0_8px_24px_rgba(15,23,42,0.12)] dark:shadow-2xl flex flex-col items-center gap-3.5 pointer-events-auto select-none cursor-pointer transition-colors"
-          onDoubleClick={() =>
-            dispatch(setSideBarVisibility(!isSidebarVisible))
-          }
-          onClick={() => {
-            if (!isSidebarVisible) {
-              dispatch(setSideBarVisibility(true));
-            }
-            dispatch(close_SideBarFodDetail());
-          }}
-        >
+        <div className="w-[48px] py-4 rounded-2xl bg-white dark:bg-[#181D25] border border-slate-200 dark:border-[#2B3542] shadow-[0_8px_24px_rgba(15,23,42,0.12)] dark:shadow-2xl flex flex-col items-center gap-3.5 pointer-events-auto select-none cursor-grab active:cursor-grabbing touch-pan-y transition-colors">
           {/* Cleared FODs */}
           <button
             type="button"

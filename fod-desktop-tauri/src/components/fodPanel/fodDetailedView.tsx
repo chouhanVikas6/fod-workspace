@@ -25,6 +25,7 @@ import Distance from "../commen/distance";
 import { doubleAccept, undo_fod } from "@/store/slices/fodReducer-slice";
 import { toast } from "react-toastify";
 import { config } from "@/config/clientConfig";
+import { calculateFodRisk, RiskLevel } from "@/config/riskConfig";
 
 const EMPTY_FODS: any[] = [];
 const EMPTY_DOUBLE_ACCEPTED: Record<string, any> = {};
@@ -78,17 +79,13 @@ const DetailedView = () => {
     event.stopPropagation();
   }
 
-  const getRiskBadge = (value: number) => {
-    const { FodSize } = config.FodCard;
-    const medium = FodSize?.medium ?? 30;
-    const large = FodSize?.large ?? 90;
-
-    if (value >= large) {
+  const getRiskBadge = (riskLevel: RiskLevel) => {
+    if (riskLevel === "HIGH") {
       return {
         badgeStyle: "bg-[#DC2626] text-white",
         text: "HIGH RISK",
       };
-    } else if (value >= medium) {
+    } else if (riskLevel === "MEDIUM") {
       return {
         badgeStyle: "bg-[#F59E0B] text-black font-extrabold",
         text: "MEDIUM RISK",
@@ -451,7 +448,8 @@ const DetailedView = () => {
   }, [dispatch]);
 
   const currentSize = Number(activeFrame?.size ?? (fod as any)?.size ?? 24);
-  const risk = getRiskBadge(currentSize);
+  const currentClass = activeFrame?.class ?? (fod as any)?.class;
+  const risk = getRiskBadge(calculateFodRisk(currentClass, currentSize));
   const fodNumber = (fod as any)?.groupId ?? fod?.id ?? "";
   const groupStatus = (fod as any)?.groupStatus;
   const isAcceptedFod = groupStatus === "ACCEPTED";

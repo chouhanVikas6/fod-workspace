@@ -158,7 +158,15 @@ async fn get_fod_image(
     // 2. If it's a 64-char hex sha256 (e.g. ClearedFod beforeClearImg / afterClearImg)
     let stem = clean.trim_end_matches(".jpg");
     if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+        let cached = std::path::Path::new("fod-images/mission").join(format!("{stem}.jpg"));
+        if let Ok(bytes) = tokio::fs::read(&cached).await {
+            return Ok(Some(bytes_to_data_url(&bytes)));
+        }
         if let Some(bytes) = services::fetch_image_from_car(&state, stem, false).await {
+            if let Some(parent) = cached.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let _ = tokio::fs::write(&cached, &bytes).await;
             return Ok(Some(bytes_to_data_url(&bytes)));
         }
     }

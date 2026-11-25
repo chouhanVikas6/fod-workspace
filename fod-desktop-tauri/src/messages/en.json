@@ -75,6 +75,8 @@
         "sort-by": "Sort By:",
         "latest": "Latest",
         "oldest": "Oldest",
+        "risk-highest": "Risk: Highest",
+        "risk-lowest": "Risk: Lowest",
         "size-largest": "Size: Largest",
         "size-smallest": "Size: Smallest",
         "distance-nearest": "Distance: Nearest",

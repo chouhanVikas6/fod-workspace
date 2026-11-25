@@ -43,7 +43,7 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
             const mid = data?.missionId || data?.id;
             if (mid) {
                 const duration = data?.duration ?? (data?.timer ? data.timer * 1000 : 0);
-                dispatch(start_Mission({ id: mid, displayId, isActive: true, duration }));
+                dispatch(start_Mission({ id: mid, displayId: data?.displayId ?? displayId ?? null, isActive: true, duration }));
             } else {
                 toast.error(data?.error || 'Failed to join mission');
             }

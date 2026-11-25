@@ -207,6 +207,7 @@ fn proto_ms_to_iso(ms: i64) -> String {
 fn proto_mission_detail_to_json(m: &proto_defination::mission::MissionDetail) -> Value {
     json!({
         "id": m.id,
+        "displayId": m.display_id,
         "status": proto_mission_status_str(m.status),
         "timer": m.timer as f64,
         "scanStatus": proto_scan_status_str(m.scan_status),
@@ -303,15 +304,120 @@ async fn connect_fod_client(state: &AppState) -> Option<proto_defination::fod::f
     )
 }
 
-#[allow(dead_code)]
-async fn connect_image_client(state: &AppState) -> Option<proto_defination::image::image_service_client::ImageServiceClient<tonic::transport::Channel>> {
-    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
-    Some(proto_defination::image::image_service_client::ImageServiceClient::new(ch))
+async fn connect_image_client_for_url(
+    url: &str,
+) -> Option<
+    proto_defination::image::image_service_client::ImageServiceClient<tonic::transport::Channel>,
+> {
+    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
+    let ch = endpoint
+        .connect_timeout(Duration::from_millis(600))
+        .timeout(Duration::from_secs(10))
+        .connect()
+        .await
+        .ok()?;
+    Some(
+        proto_defination::image::image_service_client::ImageServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024)
+            .max_encoding_message_size(32 * 1024 * 1024),
+    )
 }
 
-pub async fn connect_cleared_fod_client(state: &AppState) -> Option<proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient<tonic::transport::Channel>> {
+async fn connect_image_client(
+    state: &AppState,
+) -> Option<
+    proto_defination::image::image_service_client::ImageServiceClient<tonic::transport::Channel>,
+> {
+    let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
+    Some(
+        proto_defination::image::image_service_client::ImageServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024)
+            .max_encoding_message_size(32 * 1024 * 1024),
+    )
+}
+
+pub async fn connect_cleared_fod_client_for_url(
+    url: &str,
+) -> Option<
+    proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient<
+        tonic::transport::Channel,
+    >,
+> {
+    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
+    let ch = endpoint
+        .connect_timeout(Duration::from_millis(600))
+        .timeout(Duration::from_secs(5))
+        .connect()
+        .await
+        .ok()?;
+    Some(
+        proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient::new(ch),
+    )
+}
+
+pub async fn connect_cleared_fod_client(
+    state: &AppState,
+) -> Option<
+    proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient<
+        tonic::transport::Channel,
+    >,
+> {
     let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
     Some(proto_defination::cleared_fod::cleared_fod_service_client::ClearedFodServiceClient::new(ch))
+}
+
+fn is_hex_sha256(s: &str) -> bool {
+    let stem = s.trim().trim_end_matches(".jpg");
+    stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+async fn upload_cleared_image(state: &AppState, mission_id: i64, raw: &str) -> Option<String> {
+    use base64::Engine as _;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if is_hex_sha256(trimmed) {
+        return Some(trimmed.trim_end_matches(".jpg").to_string());
+    }
+
+    let b64_part = if let Some(idx) = trimmed.find("base64,") {
+        &trimmed[idx + "base64,".len()..]
+    } else {
+        trimmed
+    };
+    let cleaned: String = b64_part.chars().filter(|c| !c.is_whitespace()).collect();
+    let jpeg = match base64::engine::general_purpose::STANDARD.decode(&cleaned) {
+        Ok(bytes) if !bytes.is_empty() => bytes,
+        Ok(_) => return None,
+        Err(e) => {
+            tracing::warn!("Failed to base64-decode cleared FOD image: {e}");
+            return None;
+        }
+    };
+
+    let mut client = connect_image_client(state).await?;
+    match client
+        .upload_image(tonic::Request::new(
+            proto_defination::image::UploadImageRequest { mission_id, jpeg },
+        ))
+        .await
+    {
+        Ok(resp) => Some(resp.into_inner().sha256),
+        Err(e) => {
+            tracing::warn!("Failed to upload cleared FOD image to backend: {e}");
+            None
+        }
+    }
+}
+
+fn proto_cleared_status_from_str(s: &str) -> i32 {
+    match s.to_ascii_lowercase().as_str() {
+        "found" => proto_defination::common::ClearedFodStatus::Found as i32,
+        "not_found" => proto_defination::common::ClearedFodStatus::NotFound as i32,
+        "false_positive" => proto_defination::common::ClearedFodStatus::FalsePositive as i32,
+        _ => proto_defination::common::ClearedFodStatus::Found as i32,
+    }
 }
 
 pub async fn call_car_grpc(
@@ -350,6 +456,7 @@ pub async fn call_car_grpc(
             "data": {
                 "id": res.mission_id,
                 "missionId": res.mission_id,
+                "displayId": res.display_id,
                 "status": proto_mission_status_str(res.status),
                 "scanStatus": proto_scan_status_str(res.scan_status),
                 "timer": res.timer_seconds,
@@ -372,6 +479,7 @@ pub async fn call_car_grpc(
             "data": {
                 "id": res.mission_id,
                 "missionId": res.mission_id,
+                "displayId": res.display_id,
                 "status": proto_mission_status_str(res.status),
                 "scanStatus": proto_scan_status_str(res.scan_status),
                 "startTime": res.start_time,
@@ -396,6 +504,7 @@ pub async fn call_car_grpc(
             "data": {
                 "id": res.mission_id,
                 "missionId": res.mission_id,
+                "displayId": res.display_id,
                 "status": proto_mission_status_str(res.status),
                 "scanStatus": proto_scan_status_str(res.scan_status),
                 "timer": res.timer_seconds,
@@ -701,6 +810,100 @@ pub async fn call_car_grpc(
                     .filter(|s| !s.is_empty())
                     .unwrap_or("desktop")
                     .to_string();
+
+                // Upload before/after images and record ClearedFod BEFORE resolving group status
+                // so other devices immediately see images when status flips to CLEARED.
+                if st.eq_ignore_ascii_case("CLEARED") {
+                    if let Some(cf) = item.get("clearedFod").filter(|v| v.is_object()) {
+                        let mut before_shas = Vec::new();
+                        if let Some(arr) = cf.get("beforeClearImg").and_then(Value::as_array) {
+                            for img in arr {
+                                if let Some(s) = img.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                                    let Some(sha) = upload_cleared_image(state, mid, s).await else {
+                                        tracing::warn!(
+                                            "Aborting resolve for mission {mid} group {gid}: beforeClearImg upload failed (will retry)"
+                                        );
+                                        return None;
+                                    };
+                                    before_shas.push(sha);
+                                }
+                            }
+                        }
+
+                        let mut after_shas = Vec::new();
+                        if let Some(arr) = cf.get("afterClearImg").and_then(Value::as_array) {
+                            for img in arr {
+                                if let Some(s) = img.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                                    let Some(sha) = upload_cleared_image(state, mid, s).await else {
+                                        tracing::warn!(
+                                            "Aborting resolve for mission {mid} group {gid}: afterClearImg upload failed (will retry)"
+                                        );
+                                        return None;
+                                    };
+                                    after_shas.push(sha);
+                                }
+                            }
+                        }
+
+                        let cf_id = cf
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                        let cf_status = cf
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .map(proto_cleared_status_from_str)
+                            .unwrap_or(proto_defination::common::ClearedFodStatus::Found as i32);
+                        let loc_obj = cf.get("location");
+                        let lat = loc_obj
+                            .and_then(|l| l.get("lat"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0);
+                        let lon = loc_obj
+                            .and_then(|l| l.get("lon"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0);
+                        let sd = loc_obj
+                            .and_then(|l| l.get("sd"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0);
+                        let created_at_ms = cf
+                            .get("createdAt")
+                            .and_then(parse_js_date)
+                            .map(|dt| dt.and_utc().timestamp_millis())
+                            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                        let created_by = cf
+                            .get("createdBy")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+
+                        let mut cf_client = connect_cleared_fod_client(state).await?;
+                        if let Err(e) = cf_client
+                            .record_cleared_fod(tonic::Request::new(
+                                proto_defination::cleared_fod::RecordClearedFodRequest {
+                                    id: cf_id,
+                                    mission_id: mid,
+                                    group_id: gid,
+                                    status: cf_status,
+                                    location: Some(proto_defination::common::LatLon { lat, lon, sd }),
+                                    before_image_sha256: before_shas,
+                                    after_image_sha256: after_shas,
+                                    created_at: created_at_ms,
+                                    created_by,
+                                },
+                            ))
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to record cleared FOD for mission {mid} group {gid}: {e} (will retry)"
+                            );
+                            return None;
+                        }
+                    }
+                }
+
                 resolutions.push(proto_defination::fod_group::GroupResolution {
                     command_id: uuid::Uuid::new_v4().to_string(),
                     mission_id: mid,
@@ -946,25 +1149,33 @@ pub async fn fetch_image_from_car(
         }
     }
 
-    // gRPC download with Car priority and ATC fallback
-    let mut client = connect_image_client(state).await?;
-    let stream_res = client.download_image(tonic::Request::new(
-        proto_defination::image::ImageDownloadRequest {
-            sha256: sha256.to_string(),
-            thumbnail,
-        }
-    )).await.ok()?;
+    // gRPC download with Car priority and ATC fallback (also falls back if primary returns NOT_FOUND)
+    for url in [&state.cfg.car_backend_url, &state.cfg.atc_backend_url] {
+        let Some(mut client) = connect_image_client_for_url(url).await else {
+            continue;
+        };
+        let Ok(stream_res) = client
+            .download_image(tonic::Request::new(
+                proto_defination::image::ImageDownloadRequest {
+                    sha256: sha256.to_string(),
+                    thumbnail,
+                },
+            ))
+            .await
+        else {
+            continue;
+        };
 
-    let mut stream = stream_res.into_inner();
-    let mut all_bytes = Vec::new();
-    while let Ok(Some(chunk)) = stream.message().await {
-        all_bytes.extend_from_slice(&chunk.data);
+        let mut stream = stream_res.into_inner();
+        let mut all_bytes = Vec::new();
+        while let Ok(Some(chunk)) = stream.message().await {
+            all_bytes.extend_from_slice(&chunk.data);
+        }
+        if !all_bytes.is_empty() {
+            return Some(all_bytes);
+        }
     }
-    if !all_bytes.is_empty() {
-        Some(all_bytes)
-    } else {
-        None
-    }
+    None
 }
 
 

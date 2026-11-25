@@ -50,6 +50,8 @@ const SortBy = () => {
         >
           <option value="latest">{t("latest")}</option>
           <option value="oldest">{t("oldest")}</option>
+          <option value="riskHighToLow">{t("risk-highest")}</option>
+          <option value="riskLowToHigh">{t("risk-lowest")}</option>
           <option value="biggestTosmallest">{t("size-largest")}</option>
           <option value="smallestTobiggest">{t("size-smallest")}</option>
           <option value="nearestFirst">{t("distance-nearest")}</option>

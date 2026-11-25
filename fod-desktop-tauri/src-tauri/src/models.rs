@@ -144,6 +144,7 @@ pub struct Mission {
     pub dirty: Option<bool>,
     #[serde(with = "iso_millis_opt")]
     pub previous_time: Option<NaiveDateTime>,
+    pub display_id: Option<i64>,
 }
 
 #[derive(sqlx::FromRow, Serialize, Clone, Debug)]

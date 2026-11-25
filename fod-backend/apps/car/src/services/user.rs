@@ -38,6 +38,7 @@ impl UserService for UserServiceImpl {
             seq,
             entity: Some(change::Entity::User(proto_user.clone())),
             frame_jpeg: Vec::new(),
+            cleared_images: Vec::new(),
         });
 
         Ok(Response::new(UpsertUserResponse {
@@ -72,6 +73,7 @@ impl UserService for UserServiceImpl {
                     entity_key: username.to_string(),
                 })),
                 frame_jpeg: Vec::new(),
+                cleared_images: Vec::new(),
             });
         }
 

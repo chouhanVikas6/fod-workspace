@@ -17,6 +17,7 @@ import { setFodFinalReview } from "@/store/actions/WebCam";
 
 import BarLoader from "../../../utils/Helper/BarLoader.jsx";
 import { config } from "@/config/clientConfig";
+import { calculateFodRisk } from "@/config/riskConfig";
 
 import Image from "next/image";
 
@@ -44,26 +45,21 @@ const Fodcard = ({
 
   const missionNumber = propMissionNumber ?? storeMissionNumber;
 
-  const { FodSize } = config.FodCard;
-
   const [fade, setFade] = useState(false);
   const [imgModal, setImageModal] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   const isFodFound = fod.groupStatus === "ACCEPTED";
 
-  const getStyleBySize = (value) => {
-    const medium = FodSize?.medium ?? 30;
-    const large = FodSize?.large ?? 90;
-
-    if (value >= large) {
+  const getStyleByRisk = (riskLevel) => {
+    if (riskLevel === "HIGH") {
       return {
         badgeStyle: "bg-[#EF4444] text-white",
         borderStyle:
           "border-2 border-[#EF4444] shadow-[0_0_12px_rgba(239,68,68,0.25)]",
         text: "HIGH RISK",
       };
-    } else if (value >= medium) {
+    } else if (riskLevel === "MEDIUM") {
       return {
         badgeStyle: "bg-[#F59E0B] text-black font-extrabold",
         borderStyle:
@@ -82,7 +78,8 @@ const Fodcard = ({
   };
 
   const size = fod?.size ?? 24;
-  const style = getStyleBySize(size);
+  const riskLevel = calculateFodRisk(fod?.class, size);
+  const style = getStyleByRisk(riskLevel);
 
   const getLocationDisplay = () => {
     if (fod?.grid) return `Grid ${fod.grid}`;
@@ -216,9 +213,8 @@ const Fodcard = ({
     <div
       id={fod.id}
       key={fod.id}
-      className={`w-full h-full relative rounded-xl p-3 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${
-        fade ? "fade-out opacity-40" : ""
-      }`}
+      className={`w-full h-full relative rounded-xl p-3 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${fade ? "fade-out opacity-40" : ""
+        }`}
     >
       {imgModal && (
         <div className="absolute inset-0 rounded-xl bg-slate-900/20 dark:bg-black/60 backdrop-blur-xs z-30 flex flex-col items-center justify-center gap-2 zoid-fade-slide">
@@ -376,7 +372,8 @@ const Fodcard = ({
 
 export default React.memo(Fodcard, (prevProps, nextProps) => {
   return (
-    prevProps.fod.id === nextProps.fod.id &&
-    prevProps.fod.groupStatus === nextProps.fod.groupStatus
+    prevProps.fod === nextProps.fod &&
+    prevProps.missionNumber === nextProps.missionNumber &&
+    prevProps.handleDetailViewRequest === nextProps.handleDetailViewRequest
   );
 });

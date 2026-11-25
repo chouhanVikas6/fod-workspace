@@ -1,6 +1,9 @@
+import { getFodRiskRank } from "@/config/riskConfig";
+
 export interface FodItem {
   id: string;
   size: number;
+  class?: string;
   timeStamp: string;
   groupId: string;
   groupStatus: string;
@@ -77,6 +80,20 @@ if(!fods || fods.length === 0)return [];
       break;
     case "smallestTobiggest":
       sorted.sort((a, b) => a.size - b.size);
+      break;
+    case "riskHighToLow":
+      sorted.sort((a, b) => {
+        const rankDiff =
+          getFodRiskRank(b.class, b.size) - getFodRiskRank(a.class, a.size);
+        return rankDiff !== 0 ? rankDiff : (b.size || 0) - (a.size || 0);
+      });
+      break;
+    case "riskLowToHigh":
+      sorted.sort((a, b) => {
+        const rankDiff =
+          getFodRiskRank(a.class, a.size) - getFodRiskRank(b.class, b.size);
+        return rankDiff !== 0 ? rankDiff : (a.size || 0) - (b.size || 0);
+      });
       break;
     case "nearestFirst":
       if (currentLocation) {

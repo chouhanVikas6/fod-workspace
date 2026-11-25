@@ -80,6 +80,7 @@ async fn connect_mission_stream_client(
 
 async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::Result<()> {
     let mid = event.mission_id;
+    let display_id = event.display_id;
     let now = crate::services::now_naive();
     match event.event {
         Some(proto_defination::mission_control::mission_event::Event::RawCommand(cmd)) => {
@@ -135,11 +136,15 @@ async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::
                 .await;
 
                 let _ = sqlx::query(
-                    r#"INSERT INTO "Mission" ("id", "status", "scanStatus", "createdAt", "updatedAt")
-                       VALUES ($1, 'ACTIVE', 'PAUSE', $2, $2)
-                       ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = $2"#,
+                    r#"INSERT INTO "Mission" ("id", "displayId", "status", "scanStatus", "createdAt", "updatedAt")
+                       VALUES ($1, $2, 'ACTIVE', 'PAUSE', $3, $3)
+                       ON CONFLICT ("id") DO UPDATE SET
+                         "status" = 'ACTIVE',
+                         "displayId" = COALESCE(EXCLUDED."displayId", "Mission"."displayId"),
+                         "updatedAt" = $3"#,
                 )
                 .bind(mid)
+                .bind(display_id)
                 .bind(now)
                 .execute(&state.db)
                 .await;
@@ -148,7 +153,7 @@ async fn handle_mission_event(state: &AppState, event: MissionEvent) -> anyhow::
                     "update",
                     &json!({
                         "type": "mission",
-                        "data": { "id": mid, "status": "ACTIVE" }
+                        "data": { "id": mid, "displayId": display_id, "status": "ACTIVE" }
                     }),
                 );
             }

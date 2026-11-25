@@ -94,7 +94,7 @@ const MissionType = ({ activeMission, selectedMission, startTemplateView, missio
                                     title={!carLive ? "Vehicle not in communication" : undefined}
                                     onClick={() => restartMission(selectedMission.mission_id)}
                                 >
-                                    Restart Mission #{selectedMission.mission_id}
+                                    Restart Mission #{selectedMission.displayId ?? selectedMission.mission_id}
                                 </button>
                                 :
                                 <button

@@ -92,7 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fod_group_svc =
         FodGroupServiceImpl::new(db.clone(), group_tx.clone(), "car-primary".to_string());
     let fod_svc = FodServiceImpl::new(db.clone(), storage.clone());
-    let cleared_fod_svc = ClearedFodServiceImpl::new(db.clone());
+    let cleared_fod_svc =
+        ClearedFodServiceImpl::new(db.clone(), storage.clone(), change_tx.clone());
     let mission_svc = MissionServiceImpl::new(db.clone());
     let ingest_svc = IngestServiceImpl::new(
         db.clone(),
@@ -156,7 +157,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(tonic_web::GrpcWebLayer::new())
         .add_service(health_service)
         .add_service(BiteServiceServer::new(bite_svc))
-        .add_service(ImageServiceServer::new(image_svc))
+        .add_service(
+            ImageServiceServer::new(image_svc)
+                .max_decoding_message_size(32 * 1024 * 1024)
+                .max_encoding_message_size(32 * 1024 * 1024),
+        )
         .add_service(MissionControlServiceServer::new(mission_ctrl_svc))
         .add_service(FodGroupServiceServer::new(fod_group_svc))
         .add_service(

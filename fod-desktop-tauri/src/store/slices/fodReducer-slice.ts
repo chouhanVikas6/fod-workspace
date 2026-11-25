@@ -82,6 +82,7 @@ function normalizeFodItem(item: any) {
   return {
     ...item,
     groupId: Number(item.groupId),
+    groupStatus: item.groupStatus || item.status || 'NEW',
     _ts: parsedTs,
     _loc: parsedLoc ?? null,
   };

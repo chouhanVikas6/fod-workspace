@@ -43,62 +43,92 @@ async fn response(
             json!({ "error": "Failed to retrieve cleared response" }),
         );
     };
-    let row: Result<Option<ClearedFod>, sqlx::Error> = sqlx::query_as(
+    let local_row: Option<ClearedFod> = sqlx::query_as(
         "SELECT * FROM \"ClearedFod\" WHERE \"missionId\" = $1 AND \"groupId\" = $2 LIMIT 1",
     )
     .bind(mission_id)
     .bind(group_id)
     .fetch_optional(&s.db)
-    .await;
-    if let Ok(Some(cleared)) = row {
-        return (StatusCode::OK, Json(cleared)).into_response();
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(ref cleared) = local_row {
+        if !cleared.before_clear_img.is_empty() || !cleared.after_clear_img.is_empty() {
+            return (StatusCode::OK, Json(cleared)).into_response();
+        }
     }
 
-    // Try fetching from Car/ATC gRPC ClearedFodService
-    if let Some(mut client) = svc::connect_cleared_fod_client(&s).await {
-        if let Ok(resp) = client.find_cleared_fod(tonic::Request::new(
-            proto_defination::cleared_fod::FindClearedFodRequest {
-                mission_id,
-                group_id: group_id as i64,
+    // Try fetching from Car/ATC gRPC ClearedFodService (try Car first, fall back to ATC)
+    for url in [&s.cfg.car_backend_url, &s.cfg.atc_backend_url] {
+        let Some(mut client) = svc::connect_cleared_fod_client_for_url(url).await else {
+            continue;
+        };
+        let Ok(resp) = client
+            .find_cleared_fod(tonic::Request::new(
+                proto_defination::cleared_fod::FindClearedFodRequest {
+                    mission_id,
+                    group_id: group_id as i64,
+                },
+            ))
+            .await
+        else {
+            continue;
+        };
+
+        let entity = resp.into_inner();
+        let before_img = entity.before_image_sha256;
+        let after_img = entity.after_image_sha256;
+        let lat = entity.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
+        let lon = entity.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
+        let sd = entity.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
+        let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
+        let created = chrono::DateTime::from_timestamp_millis(entity.created_at)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or_else(svc::now_naive);
+        let st = match proto_defination::common::ClearedFodStatus::try_from(entity.status) {
+            Ok(proto_defination::common::ClearedFodStatus::Found) => {
+                crate::models::ClearedFodStatus::Found
             }
-        )).await {
-            let entity = resp.into_inner();
-            let before_img = entity.before_image_sha256;
-            let after_img = entity.after_image_sha256;
-            let lat = entity.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
-            let lon = entity.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
-            let sd = entity.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
-            let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
-            let created = chrono::DateTime::from_timestamp_millis(entity.created_at)
-                .map(|dt| dt.naive_utc())
-                .unwrap_or_else(svc::now_naive);
-            let st = match proto_defination::common::ClearedFodStatus::try_from(entity.status) {
-                Ok(proto_defination::common::ClearedFodStatus::Found) => crate::models::ClearedFodStatus::Found,
-                Ok(proto_defination::common::ClearedFodStatus::NotFound) => crate::models::ClearedFodStatus::NotFound,
-                _ => crate::models::ClearedFodStatus::Found,
-            };
-            let created_by = entity.created_by;
+            Ok(proto_defination::common::ClearedFodStatus::NotFound) => {
+                crate::models::ClearedFodStatus::NotFound
+            }
+            Ok(proto_defination::common::ClearedFodStatus::FalsePositive) => {
+                crate::models::ClearedFodStatus::FalsePositive
+            }
+            _ => crate::models::ClearedFodStatus::Found,
+        };
+        let created_by = entity.created_by;
 
-            let now = svc::now_naive();
-            let _ = sqlx::query(
-                r#"INSERT INTO "ClearedFod" ("id", "missionId", "groupId", "status", "beforeClearImg", "afterClearImg", "location", "createdAt", "updatedAt", "createdBy", "dirty")
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
-                   ON CONFLICT ("groupId", "missionId") DO NOTHING"#,
-            )
-            .bind(&entity.id)
-            .bind(mission_id)
-            .bind(group_id)
-            .bind(st)
-            .bind(sqlx::types::Json(&before_img))
-            .bind(sqlx::types::Json(&after_img))
-            .bind(&loc)
-            .bind(created)
-            .bind(now)
-            .bind(&created_by)
-            .execute(&s.db)
-            .await;
+        let now = svc::now_naive();
+        let _ = sqlx::query(
+            r#"INSERT INTO "ClearedFod" ("id", "missionId", "groupId", "status", "beforeClearImg", "afterClearImg", "location", "createdAt", "updatedAt", "createdBy", "dirty")
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
+               ON CONFLICT ("groupId", "missionId") DO UPDATE SET
+                   "status" = EXCLUDED."status",
+                   "beforeClearImg" = EXCLUDED."beforeClearImg",
+                   "afterClearImg" = EXCLUDED."afterClearImg",
+                   "location" = EXCLUDED."location",
+                   "updatedAt" = EXCLUDED."updatedAt",
+                   "createdBy" = COALESCE(EXCLUDED."createdBy", "ClearedFod"."createdBy"),
+                   "dirty" = false"#,
+        )
+        .bind(&entity.id)
+        .bind(mission_id)
+        .bind(group_id)
+        .bind(st)
+        .bind(sqlx::types::Json(&before_img))
+        .bind(sqlx::types::Json(&after_img))
+        .bind(&loc)
+        .bind(created)
+        .bind(now)
+        .bind(&created_by)
+        .execute(&s.db)
+        .await;
 
-            return (StatusCode::OK, Json(ClearedFod {
+        return (
+            StatusCode::OK,
+            Json(ClearedFod {
                 id: entity.id,
                 status: st,
                 before_clear_img: before_img,
@@ -111,8 +141,13 @@ async fn response(
                 created_by,
                 updated_by: None,
                 dirty: Some(false),
-            })).into_response();
-        }
+            }),
+        )
+            .into_response();
+    }
+
+    if let Some(cleared) = local_row {
+        return (StatusCode::OK, Json(cleared)).into_response();
     }
 
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))).into_response()

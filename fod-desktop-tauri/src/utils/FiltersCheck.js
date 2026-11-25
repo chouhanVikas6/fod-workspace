@@ -1,4 +1,5 @@
 import { distanceBwCollectorAndFod } from "./MapUtils";
+import { getFodRiskRank } from "@/config/riskConfig";
 
 const KNOWN_CLASSES = ['Metallic', 'Rocks/Ashpalt', 'Organic', 'Non-Metallic'];
 
@@ -49,6 +50,26 @@ export const sortByFilter = (filters, fods, currentLocation = null) => {
             return list.sort((a, b) => (b.size || 0) - (a.size || 0));
         case 'smallestTobiggest':
             return list.sort((a, b) => (a.size || 0) - (b.size || 0));
+        case 'riskHighToLow':
+            return list.sort((a, b) => {
+                const rankDiff =
+                    getFodRiskRank(b.class, b.size) - getFodRiskRank(a.class, a.size);
+                if (rankDiff !== 0) return rankDiff;
+                const sizeDiff = (Number(b.size) || 0) - (Number(a.size) || 0);
+                if (sizeDiff !== 0) return sizeDiff;
+                const tsDiff = getTimestampMs(b) - getTimestampMs(a);
+                return tsDiff !== 0 ? tsDiff : (b.groupId || 0) - (a.groupId || 0);
+            });
+        case 'riskLowToHigh':
+            return list.sort((a, b) => {
+                const rankDiff =
+                    getFodRiskRank(a.class, a.size) - getFodRiskRank(b.class, b.size);
+                if (rankDiff !== 0) return rankDiff;
+                const sizeDiff = (Number(a.size) || 0) - (Number(b.size) || 0);
+                if (sizeDiff !== 0) return sizeDiff;
+                const tsDiff = getTimestampMs(b) - getTimestampMs(a);
+                return tsDiff !== 0 ? tsDiff : (b.groupId || 0) - (a.groupId || 0);
+            });
         case 'nearestFirst': {
             if (!currentLocation) {
                 return list; // no self location -> leave order untouched

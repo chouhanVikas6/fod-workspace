@@ -3,6 +3,8 @@ import { useSelector } from "react-redux";
 
 import { RootState } from "@/store";
 import FodPanel from "@/components/fodPanel/fodPanel";
+import { useWaypointProgress } from "@/hooks/useWaypointProgress";
+import { formatWaypointDistance } from "@/utils/waypointProgress";
 
 type MobileTab = "fod" | "mission" | "alerts";
 
@@ -23,6 +25,12 @@ const HomeDashboard = () => {
     (state: RootState) => state.MissionState?.operationalAlerts || []
   );
   const missionLabel = missionDisplayId ? `#${missionDisplayId}` : missionNumber || "—";
+
+  // Nearest waypoint progress based on live vehicle location
+  const waypointStatus = useWaypointProgress();
+  const waypointDistanceLabel = formatWaypointDistance(
+    waypointStatus.distanceMeters
+  );
 
   // Live FOD data from Redux
   const fods = useSelector((state: RootState) => state.FodReducer.fods);
@@ -222,7 +230,20 @@ const HomeDashboard = () => {
 
               <div className="flex items-center justify-between text-xs">
                 <span className={secondaryText}>Waypoints completed</span>
-                <span>— / —</span>
+                <span
+                  className="font-mono font-semibold tabular-nums"
+                  title={
+                    waypointStatus.currentWaypoint != null && waypointDistanceLabel
+                      ? `Nearest waypoint: WP ${waypointStatus.currentWaypoint} (${waypointDistanceLabel} away)`
+                      : waypointStatus.totalWaypoints > 0
+                        ? "Waiting for car GPS location"
+                        : "No waypoints defined"
+                  }
+                >
+                  {waypointStatus.totalWaypoints > 0
+                    ? `${waypointStatus.currentWaypoint ?? "—"} / ${waypointStatus.totalWaypoints}`
+                    : "— / —"}
+                </span>
               </div>
 
               <div
@@ -230,8 +251,20 @@ const HomeDashboard = () => {
                   isDark ? "bg-[#454B53]" : "bg-[#E5E7EB]"
                 }`}
               >
-                <div className="h-full w-0 rounded-full bg-[#00B957]" />
+                <div
+                  className="h-full rounded-full bg-[#00B957] transition-all duration-300"
+                  style={{ width: `${waypointStatus.progressPercent}%` }}
+                />
               </div>
+
+              {waypointStatus.currentWaypoint != null && (
+                <div className={`mt-1.5 flex items-center justify-between text-[11px] ${secondaryText}`}>
+                  <span>Nearest: WP #{waypointStatus.currentWaypoint}</span>
+                  {waypointDistanceLabel && (
+                    <span className="font-mono tabular-nums">{waypointDistanceLabel}</span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Quick stats */}

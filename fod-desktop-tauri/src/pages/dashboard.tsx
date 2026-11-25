@@ -102,10 +102,17 @@ const MissionControl = () => {
   };
   console.log("Spinning Dashboard");
   const exitTransition = missionState?.exitTransition;
+  const isTerminating = exitTransition?.mode === "terminate";
   const exitMissionLabel =
     exitTransition?.displayId ?? exitTransition?.missionNumber
       ? ` #${exitTransition.displayId ?? exitTransition.missionNumber}`
       : "";
+  const exitTransitionTitle = isTerminating
+    ? `Terminating Mission${exitMissionLabel}`
+    : `Exiting Mission${exitMissionLabel}`;
+  const exitTransitionSubtitle = isTerminating
+    ? "Stopping active mission and returning to Mission Selector..."
+    : "Leaving mission view and returning to Mission Selector...";
 
   return (
     <div
@@ -136,7 +143,13 @@ const MissionControl = () => {
             >
               <div
                 className={`mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl ${
-                  isDark ? "bg-[#4C9FE8]/15 text-[#4C9FE8]" : "bg-[#4C9FE8]/10 text-[#4C9FE8]"
+                  isTerminating
+                    ? isDark
+                      ? "bg-[#D51F32]/15 text-[#D51F32]"
+                      : "bg-[#D51F32]/10 text-[#D51F32]"
+                    : isDark
+                      ? "bg-[#4C9FE8]/15 text-[#4C9FE8]"
+                      : "bg-[#4C9FE8]/10 text-[#4C9FE8]"
                 }`}
               >
                 <svg className="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -158,7 +171,7 @@ const MissionControl = () => {
               </div>
 
               <h2 className="text-base font-bold tracking-tight">
-                Terminating Mission{exitMissionLabel}
+                {exitTransitionTitle}
               </h2>
 
               <p
@@ -166,7 +179,7 @@ const MissionControl = () => {
                   isDark ? "text-[#9EA4B0]" : "text-slate-500"
                 }`}
               >
-                Returning to Mission Selector...
+                {exitTransitionSubtitle}
               </p>
 
               <div
@@ -178,7 +191,9 @@ const MissionControl = () => {
                   initial={{ width: "15%" }}
                   animate={{ width: "100%" }}
                   transition={{ duration: 1.15, ease: "easeInOut" }}
-                  className="h-full rounded-full bg-[#4C9FE8]"
+                  className={`h-full rounded-full ${
+                    isTerminating ? "bg-[#D51F32]" : "bg-[#4C9FE8]"
+                  }`}
                 />
               </div>
             </motion.div>

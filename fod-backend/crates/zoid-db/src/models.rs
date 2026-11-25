@@ -55,6 +55,7 @@ pub struct MissionRow {
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<String>,
     pub updated_by: Option<String>,
+    pub display_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -247,6 +248,7 @@ impl MissionRow {
             updated_at: self.updated_at.timestamp_millis(),
             created_by: self.created_by.clone(),
             updated_by: self.updated_by.clone(),
+            display_id: self.display_id,
         }
     }
 }

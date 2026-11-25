@@ -1,4 +1,6 @@
 import { RootState } from "@/store";
+import { useWaypointProgress } from "@/hooks/useWaypointProgress";
+import { formatWaypointDistance } from "@/utils/waypointProgress";
 import axiosClient from "@/utils/axios";
 import React, { useEffect, useMemo, useState } from "react";
 import {useSelector} from 'react-redux';
@@ -16,10 +18,12 @@ const formatElapsed = (ms: number) => {
 const MissionProgress = () => {
   const [groupCount,setGroupCount]=useState(0);
   const {missionNumber,displayId,duration,isStart,isActive} = useSelector((state:RootState) => state.MissionState)
-  // Waypoint progress is only defined for template/search-area missions; there
-  // is no source for free-run missions, so this stays null ("--"). Wire to the
-  // mission's waypoint field here once the template planner provides one.
-  const waypoint: string | null = null;
+  const waypointStatus = useWaypointProgress();
+  const waypointDistanceLabel = formatWaypointDistance(waypointStatus.distanceMeters);
+  const waypoint: string | null =
+    waypointStatus.totalWaypoints > 0
+      ? `${waypointStatus.currentWaypoint ?? "--"}/${waypointStatus.totalWaypoints}`
+      : null;
 
   // duration is the elapsed-ms baseline captured at start/join; tick locally
   // from there (the vehicle accumulates authoritative time in the DB).
@@ -89,7 +93,18 @@ const MissionProgress = () => {
 
       <div className="flex flex-col items-center w-full">
         <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">WayPoint</span>
-        <span className="font-mono font-bold text-xs leading-tight mt-0.5 text-slate-500 dark:text-slate-400">
+        <span
+          className={`font-mono font-bold text-xs leading-tight mt-0.5 ${
+            waypointStatus.currentWaypoint != null
+              ? "text-slate-700 dark:text-slate-200"
+              : "text-slate-500 dark:text-slate-400"
+          }`}
+          title={
+            waypointStatus.currentWaypoint != null && waypointDistanceLabel
+              ? `Nearest waypoint: WP #${waypointStatus.currentWaypoint} (${waypointDistanceLabel} away)`
+              : undefined
+          }
+        >
           {waypoint ?? "--"}
         </span>
       </div>

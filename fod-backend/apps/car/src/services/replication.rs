@@ -25,6 +25,25 @@ async fn load_fod_frame(storage: &FrameStorage, f: &proto_defination::fod::FodEn
     storage.read_frame(&f.image_sha256, false).await.unwrap_or_default()
 }
 
+async fn load_cleared_images(
+    storage: &FrameStorage,
+    c: &proto_defination::cleared_fod::ClearedFodEntity,
+) -> Vec<Vec<u8>> {
+    let mut images = Vec::new();
+    for sha in c
+        .before_image_sha256
+        .iter()
+        .chain(c.after_image_sha256.iter())
+    {
+        if !sha.is_empty() {
+            if let Ok(bytes) = storage.read_frame(sha, false).await {
+                images.push(bytes);
+            }
+        }
+    }
+    images
+}
+
 pub struct ReplicationServiceImpl {
     db: Db,
     storage: Arc<FrameStorage>,
@@ -58,6 +77,7 @@ impl ReplicationServiceImpl {
                             seq,
                             entity: Some(change::Entity::Mission(m.to_proto())),
                             frame_jpeg: Vec::new(),
+                            cleared_images: Vec::new(),
                         });
                     }
                 }
@@ -72,6 +92,7 @@ impl ReplicationServiceImpl {
                                 seq,
                                 entity: Some(change::Entity::Group(g.to_proto())),
                                 frame_jpeg: Vec::new(),
+                                cleared_images: Vec::new(),
                             });
                         }
                     }
@@ -89,6 +110,7 @@ impl ReplicationServiceImpl {
                             seq,
                             entity: Some(change::Entity::Fod(f_proto)),
                             frame_jpeg,
+                            cleared_images: Vec::new(),
                         });
                     }
                 }
@@ -99,10 +121,13 @@ impl ReplicationServiceImpl {
                 if parts.len() == 2 {
                     if let (Ok(m_id), Ok(g_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
                         if let Ok(Some(c)) = self.db.get_cleared_fod(m_id, g_id).await {
+                            let c_proto = c.to_proto();
+                            let cleared_images = load_cleared_images(&self.storage, &c_proto).await;
                             return Some(Change {
                                 seq,
-                                entity: Some(change::Entity::Cleared(c.to_proto())),
+                                entity: Some(change::Entity::Cleared(c_proto)),
                                 frame_jpeg: Vec::new(),
+                                cleared_images,
                             });
                         }
                     }
@@ -115,6 +140,7 @@ impl ReplicationServiceImpl {
                         seq,
                         entity: Some(change::Entity::User(u.to_proto())),
                         frame_jpeg: Vec::new(),
+                        cleared_images: Vec::new(),
                     });
                 } else {
                     return Some(Change {
@@ -124,6 +150,7 @@ impl ReplicationServiceImpl {
                             entity_key: key.to_string(),
                         })),
                         frame_jpeg: Vec::new(),
+                        cleared_images: Vec::new(),
                     });
                 }
             }
@@ -185,6 +212,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                 seq: replica_cursor,
                                 entity: Some(change::Entity::Mission(m.to_proto())),
                                 frame_jpeg: Vec::new(),
+                                cleared_images: Vec::new(),
                             });
                         }
                         if !m_changes.is_empty() {
@@ -207,6 +235,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                         seq: replica_cursor,
                                         entity: Some(change::Entity::Fod(f_proto)),
                                         frame_jpeg,
+                                        cleared_images: Vec::new(),
                                     });
                                     if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 100 {
                                         priority_batches.push_back(ChangeBatch {
@@ -233,12 +262,44 @@ impl ReplicationService for ReplicationServiceImpl {
                                             seq: replica_cursor,
                                             entity: Some(change::Entity::Group(g.to_proto())),
                                             frame_jpeg: Vec::new(),
+                                            cleared_images: Vec::new(),
                                         })
                                         .collect();
                                     priority_batches.push_back(ChangeBatch {
                                         from_seq: replica_cursor,
                                         to_seq: replica_cursor,
                                         changes,
+                                    });
+                                }
+                            }
+                            if let Ok(cleared_list) = db.list_cleared_fods_for_mission(m.id).await {
+                                let mut batch_changes: Vec<Change> = Vec::new();
+                                let mut batch_bytes: usize = 0;
+                                for c in cleared_list {
+                                    let c_proto = c.to_proto();
+                                    let cleared_images = load_cleared_images(&storage, &c_proto).await;
+                                    let img_bytes: usize = cleared_images.iter().map(|b| b.len()).sum();
+                                    batch_bytes += img_bytes;
+                                    batch_changes.push(Change {
+                                        seq: replica_cursor,
+                                        entity: Some(change::Entity::Cleared(c_proto)),
+                                        frame_jpeg: Vec::new(),
+                                        cleared_images,
+                                    });
+                                    if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 50 {
+                                        priority_batches.push_back(ChangeBatch {
+                                            from_seq: replica_cursor,
+                                            to_seq: replica_cursor,
+                                            changes: std::mem::take(&mut batch_changes),
+                                        });
+                                        batch_bytes = 0;
+                                    }
+                                }
+                                if !batch_changes.is_empty() {
+                                    priority_batches.push_back(ChangeBatch {
+                                        from_seq: replica_cursor,
+                                        to_seq: replica_cursor,
+                                        changes: batch_changes,
                                     });
                                 }
                             }
@@ -307,6 +368,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                     seq: new_seq,
                                                     entity: Some(change::Entity::Group(proto_ug)),
                                                     frame_jpeg: Vec::new(),
+                                                    cleared_images: Vec::new(),
                                                 };
                                                 let _ = change_tx.send(change_item);
                                             }
@@ -365,6 +427,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                     seq: new_seq,
                                                     entity: Some(change::Entity::Group(final_proto)),
                                                     frame_jpeg: Vec::new(),
+                                                    cleared_images: Vec::new(),
                                                 };
                                                 let _ = change_tx.send(change_item);
                                             }
@@ -387,8 +450,53 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 seq: new_seq,
                                                 entity: Some(change::Entity::User(proto_user)),
                                                 frame_jpeg: Vec::new(),
+                                                cleared_images: Vec::new(),
                                             };
                                             let _ = change_tx.send(change_item);
+                                        }
+                                    }
+                                    Some(ReplicaMsg::ClearedPush(push)) => {
+                                        for img in &push.images {
+                                            if !img.is_empty() {
+                                                let _ = storage.save_frame(img).await;
+                                            }
+                                        }
+                                        if let Some(c) = push.cleared {
+                                            let _ = db.ensure_mission_exists(c.mission_id).await;
+                                            let (lat, lon, sd) = c
+                                                .location
+                                                .map(|l| (l.lat, l.lon, l.sd))
+                                                .unwrap_or((0.0, 0.0, 0.0));
+                                            let status = proto_defination::common::ClearedFodStatus::try_from(c.status)
+                                                .map(zoid_db::models::ClearedFodStatus::from)
+                                                .unwrap_or(zoid_db::models::ClearedFodStatus::Found);
+                                            let row = zoid_db::models::ClearedFodRow {
+                                                id: Uuid::parse_str(&c.id).unwrap_or_else(|_| Uuid::new_v4()),
+                                                mission_id: c.mission_id,
+                                                group_id: c.group_id,
+                                                status,
+                                                before_image_sha256: c.before_image_sha256,
+                                                after_image_sha256: c.after_image_sha256,
+                                                lat,
+                                                lon,
+                                                sd,
+                                                created_at: chrono::DateTime::from_timestamp_millis(c.created_at)
+                                                    .unwrap_or_else(chrono::Utc::now),
+                                                created_by: c.created_by,
+                                            };
+                                            if db.insert_cleared_fod(&row).await.is_ok() {
+                                                let proto_cleared = row.to_proto();
+                                                let new_seq = db
+                                                    .append_change(4, &format!("{}:{}", row.mission_id, row.group_id))
+                                                    .await
+                                                    .unwrap_or(0);
+                                                let _ = change_tx.send(Change {
+                                                    seq: new_seq,
+                                                    entity: Some(change::Entity::Cleared(proto_cleared)),
+                                                    frame_jpeg: Vec::new(),
+                                                    cleared_images: push.images,
+                                                });
+                                            }
                                         }
                                     }
                                     _ => {}
@@ -451,6 +559,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                     seq: row.seq,
                                                     entity: Some(change::Entity::Mission(m.to_proto())),
                                                     frame_jpeg: Vec::new(),
+                                                    cleared_images: Vec::new(),
                                                 })
                                             } else { None }
                                         }
@@ -462,6 +571,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                         seq: row.seq,
                                                         entity: Some(change::Entity::Group(grp.to_proto())),
                                                         frame_jpeg: Vec::new(),
+                                                        cleared_images: Vec::new(),
                                                     })
                                                 } else { None }
                                             } else { None }
@@ -478,6 +588,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                         seq: row.seq,
                                                         entity: Some(change::Entity::Fod(f_proto)),
                                                         frame_jpeg,
+                                                        cleared_images: Vec::new(),
                                                     })
                                                 } else { None }
                                             } else { None }
@@ -486,11 +597,18 @@ impl ReplicationService for ReplicationServiceImpl {
                                             let parts: Vec<&str> = row.entity_key.split(':').collect();
                                             if parts.len() == 2 {
                                                 if let (Ok(m), Ok(g)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                                                    db.get_cleared_fod(m, g).await.ok().flatten().map(|c| Change {
-                                                        seq: row.seq,
-                                                        entity: Some(change::Entity::Cleared(c.to_proto())),
-                                                        frame_jpeg: Vec::new(),
-                                                    })
+                                                    if let Some(c) = db.get_cleared_fod(m, g).await.ok().flatten() {
+                                                        let c_proto = c.to_proto();
+                                                        let cleared_images = load_cleared_images(&storage, &c_proto).await;
+                                                        let img_bytes: usize = cleared_images.iter().map(|b| b.len()).sum();
+                                                        batch_bytes += img_bytes;
+                                                        Some(Change {
+                                                            seq: row.seq,
+                                                            entity: Some(change::Entity::Cleared(c_proto)),
+                                                            frame_jpeg: Vec::new(),
+                                                            cleared_images,
+                                                        })
+                                                    } else { None }
                                                 } else { None }
                                             } else { None }
                                         }
@@ -499,6 +617,7 @@ impl ReplicationService for ReplicationServiceImpl {
                                                 seq: row.seq,
                                                 entity: Some(change::Entity::User(u.to_proto())),
                                                 frame_jpeg: Vec::new(),
+                                                cleared_images: Vec::new(),
                                             })
                                         }
                                         _ => None,
@@ -584,6 +703,7 @@ impl ReplicationService for ReplicationServiceImpl {
                     seq: (idx + 1) as i64,
                     entity: Some(change::Entity::Group(g.to_proto())),
                     frame_jpeg: Vec::new(),
+                    cleared_images: Vec::new(),
                 });
             }
 

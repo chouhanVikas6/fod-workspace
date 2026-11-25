@@ -126,6 +126,7 @@ impl MissionControlServiceImpl {
                 event: Some(proto_defination::mission_control::mission_event::Event::RawCommand(
                     format!("terminate_{}", current),
                 )),
+                display_id: None,
             });
             let _ = self.event_tx.send(MissionEvent {
                 mission_id: current,
@@ -133,6 +134,7 @@ impl MissionControlServiceImpl {
                 event: Some(proto_defination::mission_control::mission_event::Event::StatusChanged(
                     MissionStatus::Terminated as i32,
                 )),
+                display_id: None,
             });
             let _ = self.event_tx.send(MissionEvent {
                 mission_id: current,
@@ -140,6 +142,7 @@ impl MissionControlServiceImpl {
                 event: Some(proto_defination::mission_control::mission_event::Event::ScanChanged(
                     MissionScanStatus::Pause as i32,
                 )),
+                display_id: None,
             });
             Some(current)
         } else {
@@ -186,9 +189,13 @@ impl MissionControlService for MissionControlServiceImpl {
         self.active_mission_id.store(new_id, Ordering::SeqCst);
         self.scan_status.store(MissionScanStatus::Play as i32, Ordering::SeqCst);
 
-        if let Err(e) = self.db.create_mission(new_id, Some(speed), Some(pass)).await {
-            tracing::warn!("Failed to persist new mission in db: {e}");
-        }
+        let display_id = match self.db.create_mission(new_id, Some(speed), Some(pass)).await {
+            Ok(row) => row.display_id,
+            Err(e) => {
+                tracing::warn!("Failed to persist new mission in db: {e}");
+                None
+            }
+        };
         let _ = self.db.update_scan_status(new_id, zoid_db::models::MissionScanStatus::Play).await;
         let _ = self.db.append_change(1, &new_id.to_string()).await;
 
@@ -200,6 +207,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::RawCommand(
                 format!("start_{}", new_id),
             )),
+            display_id,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id: new_id,
@@ -207,6 +215,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::StatusChanged(
                 MissionStatus::Active as i32,
             )),
+            display_id,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id: new_id,
@@ -214,6 +223,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::ScanChanged(
                 MissionScanStatus::Play as i32,
             )),
+            display_id,
         });
 
         let resp = MissionControlResponse {
@@ -222,6 +232,7 @@ impl MissionControlService for MissionControlServiceImpl {
             scan_status: MissionScanStatus::Play as i32,
             timer_seconds: 0,
             created_at: now,
+            display_id,
         };
 
         Ok(Response::new(resp))
@@ -270,7 +281,7 @@ impl MissionControlService for MissionControlServiceImpl {
                 }
             }
         };
-        let (start_time, duration_ms, fod_group_count) = if let Ok(Some(m)) = self.db.get_mission(current).await {
+        let (start_time, duration_ms, fod_group_count, display_id) = if let Ok(Some(m)) = self.db.get_mission(current).await {
             let start = m.created_at.timestamp_millis();
             let now = chrono::Utc::now().timestamp_millis();
             let dur = if m.timer > 0 || unflushed_ms > 0 {
@@ -279,9 +290,9 @@ impl MissionControlService for MissionControlServiceImpl {
                 (now - start).max(0)
             };
             let count = self.db.get_mission_stats(current).await.map(|(g, _)| g).unwrap_or(0);
-            (start, dur, count)
+            (start, dur, count, m.display_id)
         } else {
-            (chrono::Utc::now().timestamp_millis(), 0, 0)
+            (chrono::Utc::now().timestamp_millis(), 0, 0, None)
         };
 
         Ok(Response::new(ActiveMissionStateResponse {
@@ -291,6 +302,7 @@ impl MissionControlService for MissionControlServiceImpl {
             start_time,
             duration_ms,
             fod_group_count,
+            display_id,
         }))
     }
 
@@ -313,7 +325,10 @@ impl MissionControlService for MissionControlServiceImpl {
             None,
             None,
         ).await;
-        let timer_seconds = updated.map(|m| m.timer).unwrap_or(0);
+        let (timer_seconds, display_id) = match updated {
+            Ok(m) => (m.timer, m.display_id),
+            Err(_) => (0, None),
+        };
         let _ = self.db.append_change(1, &mission_id.to_string()).await;
 
         let now = chrono::Utc::now().timestamp_millis();
@@ -324,6 +339,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::RawCommand(
                 format!("start_{}", mission_id),
             )),
+            display_id,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id,
@@ -331,6 +347,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::ScanChanged(
                 MissionScanStatus::Play as i32,
             )),
+            display_id,
         });
 
         Ok(Response::new(MissionControlResponse {
@@ -339,6 +356,7 @@ impl MissionControlService for MissionControlServiceImpl {
             scan_status: MissionScanStatus::Play as i32,
             timer_seconds,
             created_at: now,
+            display_id,
         }))
     }
 
@@ -403,6 +421,7 @@ impl MissionControlService for MissionControlServiceImpl {
             mission_id: current,
             timestamp: now,
             event: Some(proto_defination::mission_control::mission_event::Event::RawCommand(raw)),
+            display_id: None,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id: current,
@@ -413,6 +432,7 @@ impl MissionControlService for MissionControlServiceImpl {
                     cam_ids: cam_list,
                 },
             )),
+            display_id: None,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id: current,
@@ -420,6 +440,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::ScanChanged(
                 new_status as i32,
             )),
+            display_id: None,
         });
 
         Ok(Response::new(ScanStatusResponse {
@@ -449,6 +470,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::RawCommand(
                 format!("terminate_{}", target_id),
             )),
+            display_id: None,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id: target_id,
@@ -456,6 +478,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::StatusChanged(
                 MissionStatus::Terminated as i32,
             )),
+            display_id: None,
         });
         let _ = self.event_tx.send(MissionEvent {
             mission_id: target_id,
@@ -463,6 +486,7 @@ impl MissionControlService for MissionControlServiceImpl {
             event: Some(proto_defination::mission_control::mission_event::Event::ScanChanged(
                 MissionScanStatus::Pause as i32,
             )),
+            display_id: None,
         });
 
         Ok(Response::new(TerminateResponse {

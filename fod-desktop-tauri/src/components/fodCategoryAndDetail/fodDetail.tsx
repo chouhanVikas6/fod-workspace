@@ -316,6 +316,7 @@ export const FodGrid = () => {
   };
 
   const handleImagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
     swipeStartX.current = e.clientX;
   };
 

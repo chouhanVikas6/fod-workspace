@@ -3,7 +3,7 @@ use proto_defination::replication::primary_message::Msg as PrimaryMsg;
 use proto_defination::replication::replica_message::Msg as ReplicaMsg;
 use proto_defination::replication::replication_service_client::ReplicationServiceClient;
 use proto_defination::replication::{
-    change, Ack, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage,
+    change, Ack, ClearedFodPush, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +23,7 @@ pub struct SyncClient {
     user_tx: mpsc::Sender<proto_defination::user::UserEntity>,
     group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
     group_push_tx: mpsc::Sender<proto_defination::fod_group::FodGroupEntity>,
+    cleared_push_tx: mpsc::Sender<ClearedFodPush>,
 }
 
 impl SyncClient {
@@ -37,10 +38,12 @@ impl SyncClient {
         mpsc::Receiver<Command>,
         mpsc::Receiver<proto_defination::user::UserEntity>,
         mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
+        mpsc::Receiver<ClearedFodPush>,
     ) {
         let (cmd_tx, cmd_rx) = mpsc::channel(100);
         let (user_tx, user_rx) = mpsc::channel(100);
         let (group_push_tx, group_push_rx) = mpsc::channel(200);
+        let (cleared_push_tx, cleared_push_rx) = mpsc::channel(100);
         let client = Self {
             car_endpoint,
             db,
@@ -50,8 +53,9 @@ impl SyncClient {
             user_tx,
             group_tx,
             group_push_tx,
+            cleared_push_tx,
         };
-        (client, cmd_rx, user_rx, group_push_rx)
+        (client, cmd_rx, user_rx, group_push_rx, cleared_push_rx)
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
@@ -66,11 +70,16 @@ impl SyncClient {
         self.group_push_tx.clone()
     }
 
+    pub fn cleared_push_sender(&self) -> mpsc::Sender<ClearedFodPush> {
+        self.cleared_push_tx.clone()
+    }
+
     pub async fn run_replication_loop(
         self: Arc<Self>,
         mut cmd_rx: mpsc::Receiver<Command>,
         mut user_rx: mpsc::Receiver<proto_defination::user::UserEntity>,
         mut group_push_rx: mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
+        mut cleared_push_rx: mpsc::Receiver<ClearedFodPush>,
     ) {
         let mut backoff_secs = 1;
 
@@ -148,6 +157,16 @@ impl SyncClient {
                                         if let Some(g) = push_g {
                                             let push_msg = ReplicaMessage {
                                                 msg: Some(ReplicaMsg::GroupPush(g)),
+                                            };
+                                            if out_tx.send(push_msg).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    push_c = cleared_push_rx.recv() => {
+                                        if let Some(cp) = push_c {
+                                            let push_msg = ReplicaMessage {
+                                                msg: Some(ReplicaMsg::ClearedPush(cp)),
                                             };
                                             if out_tx.send(push_msg).await.is_err() {
                                                 break;
@@ -349,6 +368,56 @@ impl SyncClient {
                             }
                             change::Entity::Cleared(c) => {
                                 self.ensure_mission_exists(c.mission_id).await?;
+                                for img in &change.cleared_images {
+                                    if !img.is_empty() {
+                                        if let Err(e) = self.storage.save_frame(img).await {
+                                            tracing::warn!(
+                                                "Failed to save replicated cleared FOD image for group {}: {}",
+                                                c.group_id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                // Fallback: if any referenced sha256 is still not in local storage, fetch from Car ImageService
+                                let missing_shas: Vec<String> = c
+                                    .before_image_sha256
+                                    .iter()
+                                    .chain(c.after_image_sha256.iter())
+                                    .filter(|sha| !sha.is_empty() && !self.storage.frame_path(sha).exists())
+                                    .cloned()
+                                    .collect();
+                                if !missing_shas.is_empty() {
+                                    if let Ok(mut img_client) =
+                                        proto_defination::image::image_service_client::ImageServiceClient::connect(
+                                            self.car_endpoint.clone(),
+                                        )
+                                        .await
+                                    {
+                                        img_client = img_client
+                                            .max_decoding_message_size(32 * 1024 * 1024);
+                                        for sha in missing_shas {
+                                            if let Ok(resp) = img_client
+                                                .download_image(tonic::Request::new(
+                                                    proto_defination::image::ImageDownloadRequest {
+                                                        sha256: sha.clone(),
+                                                        thumbnail: false,
+                                                    },
+                                                ))
+                                                .await
+                                            {
+                                                let mut stream = resp.into_inner();
+                                                let mut buf = Vec::new();
+                                                while let Ok(Some(chunk)) = stream.message().await {
+                                                    buf.extend_from_slice(&chunk.data);
+                                                }
+                                                if !buf.is_empty() {
+                                                    let _ = self.storage.save_frame(&buf).await;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 let (lat, lon, sd) = c
                                     .location
                                     .map(|l| (l.lat, l.lon, l.sd))

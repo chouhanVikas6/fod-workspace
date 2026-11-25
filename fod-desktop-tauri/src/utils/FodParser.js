@@ -214,12 +214,12 @@ export const Fod_ClearenceTime =(fod)=>{
         return 'N/A';
     }
 
-    const { timeStamp } = fod.collectorResponse;
+    const ts = fod.collectorResponse.timeStamp || fod.collectorResponse.createdAt;
 
-    if (!timeStamp || typeof timeStamp !== 'string') {
+    if (!ts || typeof ts !== 'string') {
         return 'N/A';
     }
-    const istDateTime = convertUTCtoIST(timeStamp);
+    const istDateTime = convertUTCtoIST(ts);
     return `${istDateTime.date} ${istDateTime.time}`;
     
 }

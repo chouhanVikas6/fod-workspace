@@ -18,6 +18,11 @@ export interface MissionExitTransition {
   stage: 'working' | 'done';
 }
 
+export interface MissionWaypointPoint {
+  lat: number;
+  lon: number;
+}
+
 export interface MissionStateType {
   missionNumber: number | null;
   displayId?: number | null;
@@ -30,6 +35,8 @@ export interface MissionStateType {
   isPauseLoading: boolean;
   isActive:boolean;
   isExplore?: boolean;
+  isFreeRun?: boolean;
+  waypoints?: MissionWaypointPoint[];
   status?: string;
   operationalAlerts?: OperationalAlertItem[];
   exitTransition?: MissionExitTransition | null;
@@ -47,6 +54,8 @@ const initialState: MissionStateType = {
   isPauseLoading: false,
   isActive:false,
   isExplore: false,
+  isFreeRun: false,
+  waypoints: [],
   status: undefined,
   operationalAlerts: [],
   exitTransition: null,
@@ -57,13 +66,15 @@ const MissionStateReducer = createSlice({
   initialState,
   reducers: {
     start_Mission: (state, action) => {
-      const { id:missionNumber, displayId=null, isActive=true, duration=null, isExplore=false, status}= action.payload;
+      const { id:missionNumber, displayId=null, isActive=true, duration=null, isExplore=false, isFreeRun=false, waypoints, status}= action.payload;
       state.missionNumber = missionNumber;
       state.displayId = displayId;
       state.isStart = true;
       state.isLoading = false;
       state.isActive=isActive;
       state.isExplore = isExplore || !isActive;
+      state.isFreeRun = Boolean(isFreeRun);
+      state.waypoints = Array.isArray(waypoints) ? waypoints : [];
       state.duration=duration;
       state.status = status;
       state.exitTransition = null;
@@ -109,6 +120,8 @@ const MissionStateReducer = createSlice({
       state.isPauseLoading = false;
       state.isActive = false;
       state.isExplore = false;
+      state.isFreeRun = false;
+      state.waypoints = [];
       state.status = undefined;
       state.operationalAlerts = [];
     },

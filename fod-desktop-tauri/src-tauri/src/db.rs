@@ -51,7 +51,8 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             "createdBy" TEXT DEFAULT '2',
             "updatedBy" TEXT DEFAULT '2',
             "dirty" BOOLEAN DEFAULT 0,
-            "previousTime" DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            "previousTime" DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            "displayId" INTEGER
         )
         "#,
         r#"
@@ -146,6 +147,11 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     for sql in statements {
         sqlx::query(sql).execute(pool).await?;
     }
+
+    // Additive column migration for existing SQLite databases.
+    let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "displayId" INTEGER"#)
+        .execute(pool)
+        .await;
 
     Ok(())
 }

@@ -2,7 +2,6 @@
 'use client';
 
 import React, {
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -68,7 +67,7 @@ const FodGridCell = ({
       className="flex items-center justify-center"
     >
       <Fodcard
-        key={fod.id}
+        key={fod.groupId ?? fod.id}
         fod={fod}
         missionNumber={missionNumber}
         handleDetailViewRequest={onDetailView}
@@ -126,35 +125,29 @@ const FodDisplay = ({
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
-  const deferredFods = useDeferredValue(fods);
-  const deferredFilters = useDeferredValue(filters);
-
-  const deferredGroupStatus =
-    deferredFilters.groupStatus || groupStatus;
-
   const filteredFods = useMemo(() => {
     const byStatus: FodType[] = [];
 
-    for (let i = 0; i < deferredFods.length; i++) {
-      const fod = deferredFods[i];
+    for (let i = 0; i < fods.length; i++) {
+      const fod = fods[i];
 
       if (
-        fod.groupStatus === deferredGroupStatus &&
-        FiltersCheck(fod, deferredFilters)
+        fod.groupStatus === groupStatus &&
+        FiltersCheck(fod, filters)
       ) {
         byStatus.push(fod);
       }
     }
 
     return sortByFilter(
-      deferredFilters,
+      filters,
       byStatus,
       currentLocation
     );
   }, [
-    deferredFods,
-    deferredGroupStatus,
-    deferredFilters,
+    fods,
+    groupStatus,
+    filters,
     currentLocation,
   ]);
 

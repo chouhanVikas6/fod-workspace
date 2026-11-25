@@ -786,12 +786,17 @@ pub async fn reconcile_active_mission(state: &AppState, data: &Value) -> anyhow:
                 .get("createdAt")
                 .and_then(crate::services::parse_js_date)
                 .unwrap_or(now);
+            let display_id = am.get("displayId").and_then(Value::as_i64);
             sqlx::query(
-                r#"INSERT INTO "Mission" ("id","createdAt","updatedAt")
-                   VALUES ($1, $2, $3)
-                   ON CONFLICT ("id") DO UPDATE SET "status" = 'ACTIVE', "updatedAt" = $3"#,
+                r#"INSERT INTO "Mission" ("id","displayId","createdAt","updatedAt")
+                   VALUES ($1, $2, $3, $4)
+                   ON CONFLICT ("id") DO UPDATE SET
+                     "status" = 'ACTIVE',
+                     "displayId" = COALESCE(EXCLUDED."displayId", "Mission"."displayId"),
+                     "updatedAt" = $4"#,
             )
             .bind(aid)
+            .bind(display_id)
             .bind(created)
             .bind(now)
             .execute(&state.db)
@@ -859,12 +864,14 @@ async fn insert_mission_full(state: &AppState, m: &Value) -> anyhow::Result<()> 
         .get("previousTime")
         .and_then(crate::services::parse_js_date)
         .unwrap_or(now);
+    let display_id = m.get("displayId").and_then(Value::as_i64);
 
     sqlx::query(
         r#"INSERT INTO "Mission"
-           ("id","status","timer","scanStatus","pass","speed","createdAt","updatedAt","createdBy","updatedBy","dirty","previousTime")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ("id","displayId","status","timer","scanStatus","pass","speed","createdAt","updatedAt","createdBy","updatedBy","dirty","previousTime")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            ON CONFLICT ("id") DO UPDATE SET
+             "displayId" = COALESCE(EXCLUDED."displayId", "Mission"."displayId"),
              "status" = EXCLUDED."status",
              "timer" = CASE WHEN EXCLUDED."timer" > "Mission"."timer" THEN EXCLUDED."timer" ELSE "Mission"."timer" END,
              "scanStatus" = EXCLUDED."scanStatus",
@@ -874,6 +881,7 @@ async fn insert_mission_full(state: &AppState, m: &Value) -> anyhow::Result<()> 
              "updatedBy" = COALESCE(EXCLUDED."updatedBy", "Mission"."updatedBy")"#,
     )
     .bind(id)
+    .bind(display_id)
     .bind(status)
     .bind(timer)
     .bind(scan_status)

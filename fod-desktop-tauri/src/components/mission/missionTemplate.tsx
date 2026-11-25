@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useDispatch } from "react-redux";
 import { toast } from "react-toastify";
 import mapboxgl from "mapbox-gl";
@@ -20,6 +20,7 @@ import { start_Mission } from "@/store/slices/missionState-slice";
 import axiosClient from "@/utils/axios";
 import { config } from "@/config/clientConfig";
 import { mapArea } from "@/helper/mapHelper";
+import { extractWaypointsFromPathLines } from "@/utils/waypointProgress";
 
 mapboxgl.accessToken =
   config.map.mapboxToken ||
@@ -109,10 +110,9 @@ const DEFAULT_TEMPLATES: MissionTemplateItem[] = [
 
 interface MissionTemplateProps {
   stopTemplateView: () => void;
-  nextDisplayId?: number;
 }
 
-const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nextDisplayId }) => {
+const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) => {
   const dispatch = useDispatch();
   const [activeTab, setActiveTab] = useState<"PE" | "CN" | "FR">("PE");
   const [apiLoading, setApiLoading] = useState<boolean>(false);
@@ -580,12 +580,17 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView, nex
       });
 
       if (res?.data?.id) {
-        toast.success(`Mission #${res.data.id} launched successfully!`);
+        toast.success(`Mission #${res.data.displayId ?? res.data.id} launched successfully!`);
+        const missionWaypoints = opts?.isFreeRun
+          ? []
+          : extractWaypointsFromPathLines(calculatedPathLines);
         dispatch(
           start_Mission({
             ...res.data,
-            displayId: nextDisplayId ?? res.data.displayId ?? null,
+            displayId: res.data.displayId ?? null,
             isActive: true,
+            isFreeRun: Boolean(opts?.isFreeRun),
+            waypoints: missionWaypoints,
             duration: res.data.timer ?? 0,
           })
         );

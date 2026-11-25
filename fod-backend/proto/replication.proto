@@ -29,7 +29,14 @@ message ReplicaMessage {
         zoid.user.UserEntity user_upsert = 5;
         // Replica-side group state (with version vector) to be merged on the primary.
         zoid.fod_group.FodGroupEntity group_push = 6;
+        // Replica-side cleared FOD record + before/after image blobs to be merged on the primary.
+        ClearedFodPush cleared_push = 7;
     }
+}
+
+message ClearedFodPush {
+    zoid.cleared_fod.ClearedFodEntity cleared = 1;
+    repeated bytes images = 2;
 }
 
 message PrimaryMessage {
@@ -83,6 +90,7 @@ message Change {
         zoid.user.UserEntity user = 7;
     }
     bytes frame_jpeg = 8;
+    repeated bytes cleared_images = 9;
 }
 
 message Tombstone {
