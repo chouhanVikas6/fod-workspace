@@ -13,10 +13,10 @@ export const DEFAULT_RISK_THRESHOLD: RiskThreshold = {
 
 
 export const RISK_CONFIG: Record<string, RiskThreshold> = {
-  Metallic: { min: 5, max: 20 },
+  Metallic: { min: 1, max: 2 },
   "Rocks/Asphalt": { min: 10, max: 35 },
   "Non-Metallic": { min: 15, max: 50 },
-  Organic: { min: 5, max: 50 },
+  Organic: { min: 50, max: 60 },
 };
 
 const CLASS_ALIASES: Record<string, string> = {
