@@ -50,8 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Initializing Car daemon on {}", addr);
     tracing::info!("Frames directory: {:?}", frames_dir);
 
-    // Initialize Database
-    let db = match Db::connect(&db_url, 10).await {
+    // Initialize Database (generous pool so health/mission queries never starve behind ingest)
+    let db = match Db::connect(&db_url, 32).await {
         Ok(db) => {
             tracing::info!("Connected to database at {}", db_url);
             db
@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fod_svc = FodServiceImpl::new(db.clone(), storage.clone());
     let cleared_fod_svc =
         ClearedFodServiceImpl::new(db.clone(), storage.clone(), change_tx.clone());
-    let mission_svc = MissionServiceImpl::new(db.clone());
+    let mission_svc = MissionServiceImpl::new(db.clone(), change_tx.clone());
     let ingest_svc = IngestServiceImpl::new(
         db.clone(),
         storage.clone(),
@@ -152,6 +152,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_shutdown = db.clone();
 
     let server_fut = Server::builder()
+        .tcp_nodelay(true)
+        .tcp_keepalive(Some(std::time::Duration::from_secs(10)))
+        .http2_keepalive_interval(Some(std::time::Duration::from_secs(10)))
+        .http2_keepalive_timeout(Some(std::time::Duration::from_secs(20)))
         .accept_http1(true)
         .layer(grpc_core::cors_layer())
         .layer(tonic_web::GrpcWebLayer::new())

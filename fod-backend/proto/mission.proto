@@ -9,6 +9,9 @@ service MissionService {
     rpc GetActiveMission (GetActiveMissionRequest) returns (ActiveMissionResponse);
     rpc RetrieveMissionData (RetrieveMissionRequest) returns (RetrieveMissionResponse);
     rpc UpdateMission (UpdateMissionRequest) returns (MissionDetail);
+    rpc ListMissionTemplates (ListMissionTemplatesRequest) returns (ListMissionTemplatesResponse);
+    rpc UpsertMissionTemplate (MissionTemplateEntity) returns (UpsertMissionTemplateResponse);
+    rpc SyncMissionTemplates (SyncMissionTemplatesRequest) returns (SyncMissionTemplatesResponse);
 }
 
 message MissionDetail {
@@ -70,4 +73,41 @@ message UpdateMissionRequest {
     optional int64 timer = 4;
     optional int32 speed = 5;
     optional int32 pass = 6;
+}
+
+message MissionTemplateEntity {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string template_type = 4;
+    int32 speed = 5;
+    int32 pass = 6;
+    int32 overlap = 7;
+    string direction = 8;
+    bool reverse = 9;
+    string boundary_points_json = 10;
+    bool is_custom = 11;
+    bool is_deleted = 12;
+    int64 created_at_ms = 13;
+    int64 updated_at_ms = 14;
+}
+
+message ListMissionTemplatesRequest {}
+
+message ListMissionTemplatesResponse {
+    repeated MissionTemplateEntity templates = 1;
+}
+
+message UpsertMissionTemplateResponse {
+    bool success = 1;
+    MissionTemplateEntity template = 2;
+    string error = 3;
+}
+
+message SyncMissionTemplatesRequest {
+    int64 since_ms = 1;
+}
+
+message SyncMissionTemplatesResponse {
+    repeated MissionTemplateEntity templates = 1;
 }

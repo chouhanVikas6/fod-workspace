@@ -1,7 +1,8 @@
 use crate::Db;
 use crate::models::{
     AppliedCommandRow, ChangeLogRow, ClearedFodRow, FodGroupRow, FodGroupStatus, FodRow,
-    GroupWrite, MissionRow, MissionScanStatus, MissionStatus, UserRole, UserRow,
+    GroupWrite, MissionRow, MissionScanStatus, MissionStatus, MissionTemplateRow, UserRole,
+    UserRow,
 };
 use uuid::Uuid;
 use zoid_core::{Result, ZoidError};
@@ -1010,6 +1011,109 @@ impl Db {
             self.get_user_by_username(&u.username)
                 .await?
                 .ok_or_else(|| ZoidError::Database("User not found after upsert".to_string()))
+        }
+    }
+
+    // ----------------- Mission Template Queries -----------------
+
+    pub async fn get_mission_template_by_id(&self, id: &str) -> Result<Option<MissionTemplateRow>> {
+        sqlx::query_as::<_, MissionTemplateRow>("SELECT * FROM mission_templates WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_all_mission_templates(&self) -> Result<Vec<MissionTemplateRow>> {
+        sqlx::query_as::<_, MissionTemplateRow>(
+            "SELECT * FROM mission_templates ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_mission_templates_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<MissionTemplateRow>> {
+        sqlx::query_as::<_, MissionTemplateRow>(
+            "SELECT * FROM mission_templates WHERE updated_at >= $1 ORDER BY updated_at ASC",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn upsert_replicated_mission_template(
+        &self,
+        t: &proto_defination::mission::MissionTemplateEntity,
+    ) -> Result<MissionTemplateRow> {
+        let created_at = if t.created_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(t.created_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::Utc::now()
+        };
+        let updated_at = if t.updated_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(t.updated_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::Utc::now()
+        };
+
+        let row = sqlx::query_as::<_, MissionTemplateRow>(
+            r#"
+            INSERT INTO mission_templates (
+                id, name, description, template_type, speed, pass, overlap,
+                direction, reverse, boundary_points_json, is_custom, is_deleted,
+                created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (id) DO UPDATE
+            SET name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                template_type = EXCLUDED.template_type,
+                speed = EXCLUDED.speed,
+                pass = EXCLUDED.pass,
+                overlap = EXCLUDED.overlap,
+                direction = EXCLUDED.direction,
+                reverse = EXCLUDED.reverse,
+                boundary_points_json = EXCLUDED.boundary_points_json,
+                is_custom = EXCLUDED.is_custom,
+                is_deleted = EXCLUDED.is_deleted,
+                updated_at = EXCLUDED.updated_at
+            WHERE mission_templates.updated_at <= EXCLUDED.updated_at
+            RETURNING *
+            "#,
+        )
+        .bind(&t.id)
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind(&t.template_type)
+        .bind(t.speed)
+        .bind(t.pass)
+        .bind(t.overlap)
+        .bind(&t.direction)
+        .bind(t.reverse)
+        .bind(&t.boundary_points_json)
+        .bind(t.is_custom)
+        .bind(t.is_deleted)
+        .bind(created_at)
+        .bind(updated_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+        if let Some(r) = row {
+            Ok(r)
+        } else {
+            self.get_mission_template_by_id(&t.id)
+                .await?
+                .ok_or_else(|| {
+                    ZoidError::Database("Mission template not found after upsert".to_string())
+                })
         }
     }
 

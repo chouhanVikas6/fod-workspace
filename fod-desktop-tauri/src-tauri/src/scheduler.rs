@@ -328,8 +328,9 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
             }
         }
         _ => {
-            // Car is unreachable/down!
-            crate::services::terminate_active_mission_if_car_down(state).await;
+            // Transient sync error/timeout under heavy load: log and retry next tick.
+            // Sustained Car disconnect is handled by the health monitor's grace window.
+            tracing::debug!("sync_mission: /api/mission/exclude failed; will retry next tick");
         }
     }
 
@@ -719,11 +720,11 @@ async fn sync_mission_list(state: &AppState) -> anyhow::Result<()> {
         car_call(state, reqwest::Method::GET, "/api/mission/exclude", Some(json!({ "missionList": ids })))
             .await
     else {
-        crate::services::terminate_active_mission_if_car_down(state).await;
-        return Ok(()); // Node catches the error, logs, returns.
+        tracing::debug!("sync_mission_list: /api/mission/exclude unavailable; skipping");
+        return Ok(());
     };
     if !is_2xx(status) {
-        crate::services::terminate_active_mission_if_car_down(state).await;
+        tracing::debug!("sync_mission_list: /api/mission/exclude returned {status}; skipping");
         return Ok(());
     }
 
@@ -987,6 +988,9 @@ pub fn spawn_user_sync_service(state: AppState) {
             if let Err(e) = sync_users_cycle(&state, full_reconcile).await {
                 tracing::debug!("User sync cycle warning: {e}");
             }
+            if let Err(e) = sync_mission_templates_cycle(&state, full_reconcile).await {
+                tracing::debug!("MissionTemplate sync cycle warning: {e}");
+            }
         }
     });
 }
@@ -1103,6 +1107,100 @@ async fn sync_users_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Res
         .bind(&u.password_hash)
         .bind(u.is_active)
         .bind(role)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&state.db)
+        .await;
+    }
+
+    Ok(())
+}
+
+async fn sync_mission_templates_cycle(state: &AppState, full_reconcile: bool) -> anyhow::Result<()> {
+    // 1. Push any dirty mission templates in local SQLite to upstream Car/ATC
+    let dirty_templates = sqlx::query_as::<_, crate::models::MissionTemplate>(
+        r#"SELECT * FROM "MissionTemplate" WHERE "dirty" = true"#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    for tmpl in dirty_templates {
+        if crate::services::push_mission_template_to_upstream(state, &tmpl).await {
+            let _ = sqlx::query(r#"UPDATE "MissionTemplate" SET "dirty" = false WHERE "id" = $1"#)
+                .bind(&tmpl.id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
+    // 2. Pull mission templates from upstream Car/ATC
+    let latest_ts: Option<sqlx::types::chrono::NaiveDateTime> = sqlx::query_scalar(
+        r#"SELECT MAX("updatedAt") FROM "MissionTemplate""#,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let since_ms = latest_ts
+        .map(|dt| dt.and_utc().timestamp_millis())
+        .unwrap_or(0);
+
+    let incoming =
+        crate::services::pull_mission_templates_from_upstream(state, since_ms, full_reconcile)
+            .await;
+
+    for t in incoming {
+        let created_at = if t.created_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(t.created_at_ms)
+                .map(|dt| dt.naive_utc())
+                .unwrap_or_else(|| chrono::Utc::now().naive_utc())
+        } else {
+            chrono::Utc::now().naive_utc()
+        };
+        let updated_at = if t.updated_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(t.updated_at_ms)
+                .map(|dt| dt.naive_utc())
+                .unwrap_or_else(|| chrono::Utc::now().naive_utc())
+        } else {
+            chrono::Utc::now().naive_utc()
+        };
+
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO "MissionTemplate" (
+                "id", "name", "description", "type", "speed", "pass", "overlap",
+                "direction", "reverse", "boundaryPoints", "isCustom", "isDeleted",
+                "dirty", "createdAt", "updatedAt"
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, $14)
+            ON CONFLICT ("id") DO UPDATE
+            SET "name" = EXCLUDED."name",
+                "description" = EXCLUDED."description",
+                "type" = EXCLUDED."type",
+                "speed" = EXCLUDED."speed",
+                "pass" = EXCLUDED."pass",
+                "overlap" = EXCLUDED."overlap",
+                "direction" = EXCLUDED."direction",
+                "reverse" = EXCLUDED."reverse",
+                "boundaryPoints" = EXCLUDED."boundaryPoints",
+                "isCustom" = EXCLUDED."isCustom",
+                "isDeleted" = EXCLUDED."isDeleted",
+                "updatedAt" = EXCLUDED."updatedAt"
+            WHERE "MissionTemplate"."updatedAt" <= EXCLUDED."updatedAt"
+              AND COALESCE("MissionTemplate"."dirty", false) = false
+            "#,
+        )
+        .bind(&t.id)
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind(&t.template_type)
+        .bind(t.speed)
+        .bind(t.pass)
+        .bind(t.overlap)
+        .bind(&t.direction)
+        .bind(t.reverse)
+        .bind(&t.boundary_points_json)
+        .bind(t.is_custom)
+        .bind(t.is_deleted)
         .bind(created_at)
         .bind(updated_at)
         .execute(&state.db)

@@ -74,6 +74,16 @@ pub fn json_i32(v: &Value) -> Option<i32> {
     json_integer(v).and_then(|n| i32::try_from(n).ok())
 }
 
+/// Coerce a JSON number (integer or floating-point FOD size in mm) to rounded `i32`.
+fn json_size_i32(v: &Value) -> Option<i32> {
+    if let Some(i) = v.as_i64().and_then(|n| i32::try_from(n).ok()) {
+        return Some(i);
+    }
+    v.as_f64()
+        .filter(|f| f.is_finite() && *f >= i32::MIN as f64 && *f <= i32::MAX as f64)
+        .map(|f| f.round() as i32)
+}
+
 /// JS template-literal segment: `${x}` for path building (number → "5",
 /// string kept, missing → "undefined", null → "null").
 pub fn js_seg(v: Option<&Value>) -> String {
@@ -266,14 +276,51 @@ fn proto_fod_entity_to_json(f: &proto_defination::fod::FodEntity) -> Value {
     })
 }
 
-async fn connect_channel_with_fallback(primary: &str, secondary: &str) -> Option<tonic::transport::Channel> {
-    if let Ok(endpoint) = tonic::transport::Endpoint::from_shared(primary.to_string()) {
-        if let Ok(ch) = endpoint.connect_timeout(Duration::from_millis(600)).timeout(Duration::from_secs(5)).connect().await {
-            return Some(ch);
-        }
+fn grpc_channel_cache(
+) -> &'static tokio::sync::RwLock<std::collections::HashMap<String, tonic::transport::Channel>> {
+    static CACHE: std::sync::OnceLock<
+        tokio::sync::RwLock<std::collections::HashMap<String, tonic::transport::Channel>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| tokio::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Returns a cached, multiplexed HTTP/2 gRPC channel for `url`, establishing it if needed.
+/// Reusing a single persistent channel avoids opening dozens of TCP connections per second
+/// under heavy load and prevents spurious fallback to ATC.
+pub async fn get_grpc_channel(url: &str) -> Option<tonic::transport::Channel> {
+    if let Some(ch) = grpc_channel_cache().read().await.get(url).cloned() {
+        return Some(ch);
     }
-    if let Ok(endpoint) = tonic::transport::Endpoint::from_shared(secondary.to_string()) {
-        if let Ok(ch) = endpoint.connect_timeout(Duration::from_millis(600)).timeout(Duration::from_secs(5)).connect().await {
+    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
+    let ch = endpoint
+        .connect_timeout(Duration::from_millis(2500))
+        .timeout(Duration::from_secs(10))
+        .tcp_nodelay(true)
+        .tcp_keepalive(Some(Duration::from_secs(10)))
+        .http2_keep_alive_interval(Duration::from_secs(10))
+        .keep_alive_timeout(Duration::from_secs(20))
+        .keep_alive_while_idle(true)
+        .connect()
+        .await
+        .ok()?;
+    grpc_channel_cache()
+        .write()
+        .await
+        .insert(url.to_string(), ch.clone());
+    Some(ch)
+}
+
+/// Evict a cached gRPC channel (e.g. after sustained disconnect) so fallback to ATC works cleanly.
+pub async fn evict_grpc_channel(url: &str) {
+    grpc_channel_cache().write().await.remove(url);
+}
+
+async fn connect_channel_with_fallback(primary: &str, secondary: &str) -> Option<tonic::transport::Channel> {
+    if let Some(ch) = get_grpc_channel(primary).await {
+        return Some(ch);
+    }
+    if secondary != primary {
+        if let Some(ch) = get_grpc_channel(secondary).await {
             return Some(ch);
         }
     }
@@ -1119,6 +1166,105 @@ pub async fn pull_users_from_upstream(
     PulledUsers::default()
 }
 
+async fn connect_mission_client_url(
+    url: &str,
+) -> Option<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>>
+{
+    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
+    let ch = endpoint
+        .connect_timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_secs(5))
+        .connect()
+        .await
+        .ok()?;
+    Some(proto_defination::mission::mission_service_client::MissionServiceClient::new(ch))
+}
+
+pub async fn push_mission_template_to_upstream(
+    state: &AppState,
+    tmpl: &crate::models::MissionTemplate,
+) -> bool {
+    let entity = proto_defination::mission::MissionTemplateEntity {
+        id: tmpl.id.clone(),
+        name: tmpl.name.clone(),
+        description: tmpl.description.clone(),
+        template_type: tmpl.template_type.clone(),
+        speed: tmpl.speed,
+        pass: tmpl.pass,
+        overlap: tmpl.overlap,
+        direction: tmpl.direction.clone(),
+        reverse: tmpl.reverse,
+        boundary_points_json: tmpl.boundary_points.clone(),
+        is_custom: tmpl.is_custom,
+        is_deleted: tmpl.is_deleted,
+        created_at_ms: tmpl.created_at.and_utc().timestamp_millis(),
+        updated_at_ms: tmpl.updated_at.and_utc().timestamp_millis(),
+    };
+
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    for url in urls {
+        if let Some(mut client) = connect_mission_client_url(&url).await {
+            match client
+                .upsert_mission_template(tonic::Request::new(entity.clone()))
+                .await
+            {
+                Ok(res) => {
+                    if res.into_inner().success {
+                        tracing::info!(
+                            "MissionTemplate '{}' pushed successfully to upstream at {}",
+                            tmpl.id,
+                            url
+                        );
+                        return true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed upsert_mission_template on upstream {url}: {e}");
+                }
+            }
+        }
+    }
+    false
+}
+
+pub async fn pull_mission_templates_from_upstream(
+    state: &AppState,
+    since_ms: i64,
+    full_reconcile: bool,
+) -> Vec<proto_defination::mission::MissionTemplateEntity> {
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    for url in urls {
+        if let Some(mut client) = connect_mission_client_url(&url).await {
+            if full_reconcile || since_ms == 0 {
+                if let Ok(res) = client
+                    .list_mission_templates(tonic::Request::new(
+                        proto_defination::mission::ListMissionTemplatesRequest {},
+                    ))
+                    .await
+                {
+                    return res.into_inner().templates;
+                }
+            } else if let Ok(res) = client
+                .sync_mission_templates(tonic::Request::new(
+                    proto_defination::mission::SyncMissionTemplatesRequest { since_ms },
+                ))
+                .await
+            {
+                return res.into_inner().templates;
+            }
+        }
+    }
+    Vec::new()
+}
+
 pub async fn fetch_image_from_car(
     state: &AppState,
     sha256: &str,
@@ -1506,8 +1652,8 @@ pub async fn upsert_group_data(state: &AppState, data: Value) -> anyhow::Result<
         Some(Value::Null) => cols.push(("biggestFodSize", Bind::OptI32(None))),
         Some(v) => cols.push((
             "biggestFodSize",
-            Bind::OptI32(Some(json_i32(v).ok_or_else(|| {
-                anyhow::anyhow!("Argument biggestFodSize: not an Int")
+            Bind::OptI32(Some(json_size_i32(v).ok_or_else(|| {
+                anyhow::anyhow!("Argument biggestFodSize: not a valid number")
             })?)),
         )),
     }
@@ -1592,8 +1738,8 @@ pub async fn upsert_group_batch(
             Some(Value::Null) => cols.push(("biggestFodSize", Bind::OptI32(None))),
             Some(v) => cols.push((
                 "biggestFodSize",
-                Bind::OptI32(Some(json_i32(v).ok_or_else(|| {
-                    anyhow::anyhow!("Argument biggestFodSize: not an Int")
+                Bind::OptI32(Some(json_size_i32(v).ok_or_else(|| {
+                    anyhow::anyhow!("Argument biggestFodSize: not a valid number")
                 })?)),
             )),
         }
@@ -1823,19 +1969,17 @@ async fn create_fod_inner(state: &AppState, fod: &Value) -> anyhow::Result<()> {
     let group_biggest_size: Option<i32> = match &existing_group {
         Some(g) => g.biggest_fod_size,
         None => {
+            let size_i32 = size.round() as i32;
             let data = json!({
                 "groupId": group_id,
                 "missionId": mission_id,
                 "createdAt": timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
                 "biggestFodId": id,
-                "biggestFodSize": size,
+                "biggestFodSize": size_i32,
                 "status": status,
             });
             upsert_group_data(state, data).await?;
-            Some(
-                json_i32(&json!(size))
-                    .ok_or_else(|| anyhow::anyhow!("Argument biggestFodSize: not an Int"))?,
-            )
+            Some(size_i32)
         }
     };
 
@@ -1893,8 +2037,7 @@ async fn create_fod_inner(state: &AppState, fod: &Value) -> anyhow::Result<()> {
             Some(b) => (b as f64) < size,
         };
         if needs_update {
-            let biggest = json_i32(&json!(size))
-                .ok_or_else(|| anyhow::anyhow!("Argument biggestFodSize: not an Int"))?;
+            let biggest = size.round() as i32;
             update_fod_group_biggest(state, group_id, mission_id, &id, biggest, &status).await?;
         }
     }

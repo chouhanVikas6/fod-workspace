@@ -32,6 +32,7 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
 
     run_migrations(&pool).await?;
     seed_default_users(&pool).await?;
+    seed_default_mission_templates(&pool).await?;
 
     Ok(pool)
 }
@@ -142,6 +143,25 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         r#"
         CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username")
         "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS "MissionTemplate" (
+            "id" TEXT NOT NULL PRIMARY KEY,
+            "name" TEXT NOT NULL,
+            "description" TEXT NOT NULL DEFAULT '',
+            "type" TEXT NOT NULL DEFAULT 'CUSTOM',
+            "speed" INTEGER NOT NULL DEFAULT 20,
+            "pass" INTEGER NOT NULL DEFAULT 1,
+            "overlap" INTEGER NOT NULL DEFAULT 20,
+            "direction" TEXT NOT NULL DEFAULT 'LENGTHWISE',
+            "reverse" BOOLEAN NOT NULL DEFAULT 0,
+            "boundaryPoints" TEXT NOT NULL DEFAULT '[]',
+            "isCustom" BOOLEAN NOT NULL DEFAULT 1,
+            "isDeleted" BOOLEAN NOT NULL DEFAULT 0,
+            "dirty" BOOLEAN DEFAULT 0,
+            "createdAt" DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            "updatedAt" DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        )
+        "#,
     ];
 
     for sql in statements {
@@ -181,6 +201,79 @@ async fn seed_default_users(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .bind(true)
             .bind(now)
             .bind(now)
+            .execute(pool)
+            .await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn seed_default_mission_templates(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "MissionTemplate""#)
+        .fetch_one(pool)
+        .await?;
+
+    if count == 0 {
+        let seed_ts = "2025-01-01 00:00:00.000";
+        let defaults = [
+            (
+                "tmpl-runway-09-27",
+                "Runway 09/27 (Main)",
+                "Standard primary runway inspection sweep with dual-pass coverage.",
+                "RUNWAY",
+                25i32,
+                2i32,
+                20i32,
+                "LENGTHWISE",
+                false,
+                r#"[{"lat":28.5104,"lon":77.3726},{"lat":28.5115,"lon":77.3726},{"lat":28.5115,"lon":77.3739},{"lat":28.5104,"lon":77.3739}]"#,
+            ),
+            (
+                "tmpl-taxiway-alpha",
+                "Taxiway Alpha Sweep",
+                "Rapid single-pass scan along high-speed taxiway connecting main apron.",
+                "TAXIWAY",
+                20i32,
+                1i32,
+                25i32,
+                "LENGTHWISE",
+                false,
+                r#"[{"lat":28.5096,"lon":77.3718},{"lat":28.5104,"lon":77.3718},{"lat":28.5104,"lon":77.3726},{"lat":28.5096,"lon":77.3726}]"#,
+            ),
+            (
+                "tmpl-apron-central",
+                "Apron Central Grid",
+                "High-density multi-angle inspection grid of aircraft parking bays.",
+                "APRON",
+                15i32,
+                1i32,
+                30i32,
+                "LENGTHWISE",
+                false,
+                r#"[{"lat":28.5108,"lon":77.3739},{"lat":28.5118,"lon":77.3739},{"lat":28.5118,"lon":77.3749},{"lat":28.5108,"lon":77.3749}]"#,
+            ),
+        ];
+
+        for (id, name, desc, ttype, speed, pass, overlap, dir, rev, pts) in defaults {
+            let _ = sqlx::query(
+                r#"INSERT OR IGNORE INTO "MissionTemplate"
+                   ("id", "name", "description", "type", "speed", "pass", "overlap",
+                    "direction", "reverse", "boundaryPoints", "isCustom", "isDeleted",
+                    "dirty", "createdAt", "updatedAt")
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, 0, $11, $11)"#,
+            )
+            .bind(id)
+            .bind(name)
+            .bind(desc)
+            .bind(ttype)
+            .bind(speed)
+            .bind(pass)
+            .bind(overlap)
+            .bind(dir)
+            .bind(rev)
+            .bind(pts)
+            .bind(seed_ts)
             .execute(pool)
             .await;
         }

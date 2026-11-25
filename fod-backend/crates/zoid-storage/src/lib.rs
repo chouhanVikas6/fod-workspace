@@ -1,7 +1,16 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tokio::fs;
+use tokio::sync::Semaphore;
 use zoid_core::{Result, ZoidError};
+
+/// Bound background thumbnail generation so 500+ det/s bursts never saturate CPU cores
+/// or block the Tokio worker / blocking thread pools.
+fn thumb_semaphore() -> &'static Semaphore {
+    static SEM: OnceLock<Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| Semaphore::new(2))
+}
 
 #[derive(Clone, Debug)]
 pub struct StorageConfig {
@@ -45,35 +54,43 @@ impl FrameStorage {
         self.config.base_dir.join(prefix).join("thumb").join(format!("{}.jpg", sha256))
     }
 
-    /// Saves a frame JPEG asynchronously: writes full frame, generates thumbnail, and returns SHA-256.
+    /// Saves a frame JPEG asynchronously: writes full frame, schedules non-blocking thumbnail generation, and returns SHA-256.
     pub async fn save_frame(&self, jpeg_bytes: &[u8]) -> Result<String> {
         let sha256 = Self::compute_sha256(jpeg_bytes);
         let target_path = self.frame_path(&sha256);
         let thumb_target = self.thumb_path(&sha256);
 
-        if target_path.exists() {
+        if fs::try_exists(&target_path).await.unwrap_or(false) {
             return Ok(sha256);
         }
 
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| ZoidError::Storage(e.to_string()))?;
         }
-        if let Some(parent) = thumb_target.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| ZoidError::Storage(e.to_string()))?;
-        }
 
         // Write full image
         fs::write(&target_path, jpeg_bytes).await.map_err(|e| ZoidError::Storage(e.to_string()))?;
 
-        // Generate and write thumbnail in blocking thread
-        let bytes_vec = jpeg_bytes.to_vec();
-        let thumb_path_clone = thumb_target.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Ok(img) = image::load_from_memory(&bytes_vec) {
-                let thumb = img.thumbnail(320, 320);
-                let _ = thumb.save(thumb_path_clone);
-            }
-        }).await.map_err(|e| ZoidError::Storage(e.to_string()))?;
+        // Best-effort non-blocking thumbnail generation: if the bounded semaphore is busy
+        // under heavy load (500+ det/s), skip eager thumbnailing — read_frame falls back
+        // seamlessly to the full crop JPEG.
+        if let Ok(permit) = thumb_semaphore().try_acquire() {
+            let bytes_vec = jpeg_bytes.to_vec();
+            let thumb_path_clone = thumb_target.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                if let Some(parent) = thumb_path_clone.parent() {
+                    let _ = fs::create_dir_all(parent).await;
+                }
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Ok(img) = image::load_from_memory(&bytes_vec) {
+                        let thumb = img.thumbnail(320, 320);
+                        let _ = thumb.save(thumb_path_clone);
+                    }
+                })
+                .await;
+            });
+        }
 
         Ok(sha256)
     }
@@ -82,12 +99,16 @@ impl FrameStorage {
     pub async fn read_frame(&self, sha256: &str, thumbnail: bool) -> Result<Vec<u8>> {
         let path = if thumbnail {
             let t = self.thumb_path(sha256);
-            if t.exists() { t } else { self.frame_path(sha256) }
+            if fs::try_exists(&t).await.unwrap_or(false) {
+                t
+            } else {
+                self.frame_path(sha256)
+            }
         } else {
             self.frame_path(sha256)
         };
 
-        if !path.exists() {
+        if !fs::try_exists(&path).await.unwrap_or(false) {
             return Err(ZoidError::NotFound(format!("Frame {} not found", sha256)));
         }
 

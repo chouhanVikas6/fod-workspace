@@ -380,3 +380,42 @@ impl UserRow {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MissionTemplateRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub template_type: String,
+    pub speed: i32,
+    pub pass: i32,
+    pub overlap: i32,
+    pub direction: String,
+    pub reverse: bool,
+    pub boundary_points_json: String,
+    pub is_custom: bool,
+    pub is_deleted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl MissionTemplateRow {
+    pub fn to_proto(&self) -> proto_defination::mission::MissionTemplateEntity {
+        proto_defination::mission::MissionTemplateEntity {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            description: self.description.clone(),
+            template_type: self.template_type.clone(),
+            speed: self.speed,
+            pass: self.pass,
+            overlap: self.overlap,
+            direction: self.direction.clone(),
+            reverse: self.reverse,
+            boundary_points_json: self.boundary_points_json.clone(),
+            is_custom: self.is_custom,
+            is_deleted: self.is_deleted,
+            created_at_ms: self.created_at.timestamp_millis(),
+            updated_at_ms: self.updated_at.timestamp_millis(),
+        }
+    }
+}

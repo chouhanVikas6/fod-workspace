@@ -34,6 +34,7 @@ const PASS_RANGE = { min: 1, max: 3, default: 1 };
 const OVERLAP_RANGE = { min: 10, max: 50, default: 20 };
 
 const SAVED_TEMPLATES_KEY = "ZOID_SAVED_TEMPLATES";
+const TEMPLATES_MIGRATED_KEY = "ZOID_TEMPLATES_MIGRATED_V1";
 
 export interface BoundaryPoint {
   lat: number;
@@ -137,6 +138,77 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
     DEFAULT_TEMPLATES[0].id
   );
+
+  // Fetch synced templates from backend, migrate any legacy localStorage custom templates once, and poll for changes from other devices
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchSyncedTemplates = async (runMigration: boolean) => {
+      try {
+        const res = await axiosClient({
+          method: "GET",
+          url: RestPath.MISSION_TEMPLATES,
+        });
+        let serverTemplates: MissionTemplateItem[] = Array.isArray(res?.data) ? res.data : [];
+
+        if (runMigration && !localStorage.getItem(TEMPLATES_MIGRATED_KEY)) {
+          try {
+            const raw = localStorage.getItem(SAVED_TEMPLATES_KEY);
+            if (raw) {
+              const localParsed: MissionTemplateItem[] = JSON.parse(raw);
+              if (Array.isArray(localParsed)) {
+                const existingIds = new Set(serverTemplates.map((t) => t.id));
+                const toMigrate = localParsed.filter(
+                  (t) => t && t.id && t.isCustom && !existingIds.has(t.id)
+                );
+                for (const tmpl of toMigrate) {
+                  await axiosClient({
+                    method: "POST",
+                    url: RestPath.MISSION_TEMPLATES,
+                    data: tmpl,
+                  }).catch(() => {});
+                }
+                if (toMigrate.length > 0) {
+                  const refreshed = await axiosClient({
+                    method: "GET",
+                    url: RestPath.MISSION_TEMPLATES,
+                  });
+                  if (Array.isArray(refreshed?.data)) {
+                    serverTemplates = refreshed.data;
+                  }
+                }
+              }
+            }
+            localStorage.setItem(TEMPLATES_MIGRATED_KEY, "1");
+          } catch (e) {
+            console.warn("Legacy template migration warning:", e);
+          }
+        }
+
+        if (!cancelled && serverTemplates.length > 0) {
+          setTemplates(serverTemplates);
+          try {
+            localStorage.setItem(SAVED_TEMPLATES_KEY, JSON.stringify(serverTemplates));
+          } catch {}
+          setSelectedTemplateId((prev) =>
+            serverTemplates.some((t) => t.id === prev) ? prev : serverTemplates[0].id
+          );
+        }
+      } catch (e) {
+        // Offline / backend not ready yet — keep cached templates
+      }
+    };
+
+    fetchSyncedTemplates(true);
+    const interval = setInterval(() => {
+      fetchSyncedTemplates(false);
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   // Creator state
   const [creatorName, setCreatorName] = useState<string>("Runway Extension Scan");
@@ -490,8 +562,8 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
     }
   }, [mapLoaded, activeBoundaryPoints, calculatedPathLines]);
 
-  // Save new custom template to localStorage
-  const handleSaveTemplate = () => {
+  // Save new custom template to backend (synced across Car, ATC, and all devices)
+  const handleSaveTemplate = async () => {
     if (creatorPoints.length < 3) {
       toast.error("Please define at least 3 points for the mission boundary.");
       return;
@@ -513,28 +585,45 @@ const MissionTemplate: React.FC<MissionTemplateProps> = ({ stopTemplateView }) =
 
     const updated = [newTemplate, ...templates];
     setTemplates(updated);
+    setSelectedTemplateId(newTemplate.id);
+    setActiveTab("PE");
     try {
       localStorage.setItem(SAVED_TEMPLATES_KEY, JSON.stringify(updated));
-      toast.success(`Template "${newTemplate.name}" saved!`);
-      setSelectedTemplateId(newTemplate.id);
-      setActiveTab("PE");
+    } catch {}
+
+    try {
+      await axiosClient({
+        method: "POST",
+        url: RestPath.MISSION_TEMPLATES,
+        data: newTemplate,
+      });
+      toast.success(`Template "${newTemplate.name}" saved and synced!`);
     } catch (e) {
-      toast.error("Could not save template to localStorage.");
+      toast.error("Saved locally, but failed to sync template to backend.");
     }
   };
 
-  // Delete a custom template
-  const handleDeleteTemplate = (id: string, e: React.MouseEvent) => {
+  // Delete a custom template (synced across Car, ATC, and all devices)
+  const handleDeleteTemplate = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const updated = templates.filter((t) => t.id !== id);
     setTemplates(updated);
+    if (selectedTemplateId === id && updated.length > 0) {
+      setSelectedTemplateId(updated[0].id);
+    }
     try {
       localStorage.setItem(SAVED_TEMPLATES_KEY, JSON.stringify(updated));
+    } catch {}
+
+    try {
+      await axiosClient({
+        method: "DELETE",
+        url: RestPath.DELETE_MISSION_TEMPLATE(id),
+      });
       toast.info("Template deleted.");
-      if (selectedTemplateId === id && updated.length > 0) {
-        setSelectedTemplateId(updated[0].id);
-      }
-    } catch (e) {}
+    } catch (e) {
+      toast.error("Failed to delete template on backend.");
+    }
   };
 
   // Launch the Mission

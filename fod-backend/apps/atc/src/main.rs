@@ -16,8 +16,8 @@ mod services;
 mod sync_client;
 
 use services::{
-    spawn_health_collector, AtcBiteServiceImpl, AtcClearedFodServiceImpl, AtcFodGroupServiceImpl,
-    AtcFodServiceImpl, AtcImageServiceImpl, AtcMissionServiceImpl, AtcUserServiceImpl,
+    AtcBiteServiceImpl, AtcClearedFodServiceImpl, AtcFodGroupServiceImpl, AtcFodServiceImpl,
+    AtcImageServiceImpl, AtcMissionServiceImpl, AtcUserServiceImpl, spawn_health_collector,
 };
 use sync_client::SyncClient;
 use zoid_bite::BiteAggregator;
@@ -59,7 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             tracing::warn!(
                 "Could not connect to database ({}): {}. Running with lazy pool if available.",
-                db_url, e
+                db_url,
+                e
             );
             Db::connect(&db_url, 2).await?
         }
@@ -73,21 +74,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (group_tx, _) = broadcast::channel(1000);
 
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx, user_rx, group_push_rx, cleared_push_rx) = SyncClient::new(
-        car_url.clone(),
-        db.clone(),
-        storage.clone(),
-        node_id.clone(),
-        group_tx.clone(),
-    );
+    let (sync_client, cmd_rx, user_rx, template_rx, group_push_rx, cleared_push_rx) =
+        SyncClient::new(
+            car_url.clone(),
+            db.clone(),
+            storage.clone(),
+            node_id.clone(),
+            group_tx.clone(),
+        );
     let group_push_tx = sync_client.group_push_sender();
     let cleared_push_tx = sync_client.cleared_push_sender();
     let user_tx = sync_client.user_sender();
+    let template_tx = sync_client.template_sender();
     let sync_client_arc = Arc::new(sync_client);
 
     tokio::spawn(async move {
         sync_client_arc
-            .run_replication_loop(cmd_rx, user_rx, group_push_rx, cleared_push_rx)
+            .run_replication_loop(cmd_rx, user_rx, template_rx, group_push_rx, cleared_push_rx)
             .await;
     });
 
@@ -101,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fod_svc = AtcFodServiceImpl::new(db.clone(), storage.clone());
     let cleared_fod_svc =
         AtcClearedFodServiceImpl::new(db.clone(), storage.clone(), cleared_push_tx);
-    let mission_svc = AtcMissionServiceImpl::new(db.clone());
+    let mission_svc = AtcMissionServiceImpl::new(db.clone(), template_tx);
     let image_svc = AtcImageServiceImpl::new(storage);
     let user_svc = AtcUserServiceImpl::new(db.clone(), user_tx);
 

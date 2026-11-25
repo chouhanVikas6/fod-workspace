@@ -53,6 +53,8 @@ pub fn router() -> Router<AppState> {
         .route("/scan-status", any(scan_status))
         .route("/terminate/{id}", any(terminate))
         .route("/update/{id}", any(update_mission))
+        .route("/templates", any(mission_templates))
+        .route("/templates/{id}", any(mission_template_by_id))
 }
 
 /// Node 405: `res.status(405).end(\`Method ${req.method} Not Allowed\`)` —
@@ -1112,4 +1114,195 @@ async fn update_mission(method: Method,
     .await;
     // Node res.json(mission) — null body when upstream failed.
     (StatusCode::OK, Json(v.unwrap_or(Value::Null))).into_response()
+}
+
+fn mission_template_to_json(t: &crate::models::MissionTemplate) -> Value {
+    let boundary_points: Value =
+        serde_json::from_str(&t.boundary_points).unwrap_or_else(|_| json!([]));
+    json!({
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "type": t.template_type,
+        "speed": t.speed,
+        "pass": t.pass,
+        "overlap": t.overlap,
+        "direction": t.direction,
+        "reverse": t.reverse,
+        "boundaryPoints": boundary_points,
+        "isCustom": t.is_custom,
+        "createdAt": t.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        "updatedAt": t.updated_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GET / POST /api/mission/templates
+// ---------------------------------------------------------------------------
+async fn mission_templates(
+    method: Method,
+    State(s): State<AppState>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method == Method::GET {
+        match sqlx::query_as::<_, crate::models::MissionTemplate>(
+            r#"SELECT * FROM "MissionTemplate"
+               WHERE COALESCE("isDeleted", false) = false
+               ORDER BY "createdAt" DESC"#,
+        )
+        .fetch_all(&s.db)
+        .await
+        {
+            Ok(rows) => {
+                let list: Vec<Value> = rows.iter().map(mission_template_to_json).collect();
+                (StatusCode::OK, Json(list)).into_response()
+            }
+            Err(e) => {
+                tracing::error!("Failed to list mission templates: {e}");
+                err500("Failed to retrieve mission templates")
+            }
+        }
+    } else if method == Method::POST {
+        let body = parse_body(&bytes);
+        let id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("tmpl-custom-{}", chrono::Utc::now().timestamp_millis()));
+        let name = body
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or("Custom Scan Template")
+            .to_string();
+        let description = body
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let template_type = body
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("CUSTOM")
+            .to_string();
+        let speed = body.get("speed").and_then(Value::as_i64).unwrap_or(20) as i32;
+        let pass = body.get("pass").and_then(Value::as_i64).unwrap_or(1) as i32;
+        let overlap = body.get("overlap").and_then(Value::as_i64).unwrap_or(20) as i32;
+        let direction = body
+            .get("direction")
+            .and_then(Value::as_str)
+            .unwrap_or("LENGTHWISE")
+            .to_string();
+        let reverse = body.get("reverse").and_then(Value::as_bool).unwrap_or(false);
+        let boundary_points = match body.get("boundaryPoints") {
+            Some(Value::String(s)) => s.clone(),
+            Some(v) => serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string()),
+            None => "[]".to_string(),
+        };
+        let is_custom = body.get("isCustom").and_then(Value::as_bool).unwrap_or(true);
+        let now = svc::now_naive();
+
+        let row = match sqlx::query_as::<_, crate::models::MissionTemplate>(
+            r#"INSERT INTO "MissionTemplate" (
+                   "id", "name", "description", "type", "speed", "pass", "overlap",
+                   "direction", "reverse", "boundaryPoints", "isCustom", "isDeleted",
+                   "dirty", "createdAt", "updatedAt"
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, true, $12, $12)
+               ON CONFLICT ("id") DO UPDATE SET
+                   "name" = EXCLUDED."name",
+                   "description" = EXCLUDED."description",
+                   "type" = EXCLUDED."type",
+                   "speed" = EXCLUDED."speed",
+                   "pass" = EXCLUDED."pass",
+                   "overlap" = EXCLUDED."overlap",
+                   "direction" = EXCLUDED."direction",
+                   "reverse" = EXCLUDED."reverse",
+                   "boundaryPoints" = EXCLUDED."boundaryPoints",
+                   "isCustom" = EXCLUDED."isCustom",
+                   "isDeleted" = false,
+                   "dirty" = true,
+                   "updatedAt" = EXCLUDED."updatedAt"
+               RETURNING *"#,
+        )
+        .bind(&id)
+        .bind(&name)
+        .bind(&description)
+        .bind(&template_type)
+        .bind(speed)
+        .bind(pass)
+        .bind(overlap)
+        .bind(&direction)
+        .bind(reverse)
+        .bind(&boundary_points)
+        .bind(is_custom)
+        .bind(now)
+        .fetch_one(&s.db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to save mission template: {e}");
+                return err500("Failed to save mission template");
+            }
+        };
+
+        // Best-effort immediate push to Car/ATC; background scheduler will retry if offline
+        if svc::push_mission_template_to_upstream(&s, &row).await {
+            let _ = sqlx::query(r#"UPDATE "MissionTemplate" SET "dirty" = false WHERE "id" = $1"#)
+                .bind(&row.id)
+                .execute(&s.db)
+                .await;
+        }
+
+        (StatusCode::OK, Json(mission_template_to_json(&row))).into_response()
+    } else {
+        mna(&method, Some("GET, POST"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/mission/templates/{id}
+// ---------------------------------------------------------------------------
+async fn mission_template_by_id(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if method != Method::DELETE {
+        return mna(&method, Some("DELETE"));
+    }
+    let now = svc::now_naive();
+    let updated = sqlx::query_as::<_, crate::models::MissionTemplate>(
+        r#"UPDATE "MissionTemplate"
+           SET "isDeleted" = true, "dirty" = true, "updatedAt" = $2
+           WHERE "id" = $1
+           RETURNING *"#,
+    )
+    .bind(&id)
+    .bind(now)
+    .fetch_optional(&s.db)
+    .await;
+
+    match updated {
+        Ok(Some(row)) => {
+            if svc::push_mission_template_to_upstream(&s, &row).await {
+                let _ = sqlx::query(
+                    r#"UPDATE "MissionTemplate" SET "dirty" = false WHERE "id" = $1"#,
+                )
+                .bind(&row.id)
+                .execute(&s.db)
+                .await;
+            }
+            (StatusCode::OK, Json(json!({ "success": true, "id": id }))).into_response()
+        }
+        Ok(None) => (StatusCode::OK, Json(json!({ "success": true, "id": id }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete mission template {id}: {e}");
+            err500("Failed to delete mission template")
+        }
+    }
 }

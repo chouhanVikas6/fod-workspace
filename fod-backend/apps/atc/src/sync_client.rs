@@ -21,6 +21,7 @@ pub struct SyncClient {
     node_id: String,
     cmd_tx: mpsc::Sender<Command>,
     user_tx: mpsc::Sender<proto_defination::user::UserEntity>,
+    template_tx: mpsc::Sender<proto_defination::mission::MissionTemplateEntity>,
     group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
     group_push_tx: mpsc::Sender<proto_defination::fod_group::FodGroupEntity>,
     cleared_push_tx: mpsc::Sender<ClearedFodPush>,
@@ -37,11 +38,13 @@ impl SyncClient {
         Self,
         mpsc::Receiver<Command>,
         mpsc::Receiver<proto_defination::user::UserEntity>,
+        mpsc::Receiver<proto_defination::mission::MissionTemplateEntity>,
         mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
         mpsc::Receiver<ClearedFodPush>,
     ) {
         let (cmd_tx, cmd_rx) = mpsc::channel(100);
         let (user_tx, user_rx) = mpsc::channel(100);
+        let (template_tx, template_rx) = mpsc::channel(100);
         let (group_push_tx, group_push_rx) = mpsc::channel(200);
         let (cleared_push_tx, cleared_push_rx) = mpsc::channel(100);
         let client = Self {
@@ -51,11 +54,12 @@ impl SyncClient {
             node_id,
             cmd_tx,
             user_tx,
+            template_tx,
             group_tx,
             group_push_tx,
             cleared_push_tx,
         };
-        (client, cmd_rx, user_rx, group_push_rx, cleared_push_rx)
+        (client, cmd_rx, user_rx, template_rx, group_push_rx, cleared_push_rx)
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
@@ -64,6 +68,10 @@ impl SyncClient {
 
     pub fn user_sender(&self) -> mpsc::Sender<proto_defination::user::UserEntity> {
         self.user_tx.clone()
+    }
+
+    pub fn template_sender(&self) -> mpsc::Sender<proto_defination::mission::MissionTemplateEntity> {
+        self.template_tx.clone()
     }
 
     pub fn group_push_sender(&self) -> mpsc::Sender<proto_defination::fod_group::FodGroupEntity> {
@@ -78,6 +86,7 @@ impl SyncClient {
         self: Arc<Self>,
         mut cmd_rx: mpsc::Receiver<Command>,
         mut user_rx: mpsc::Receiver<proto_defination::user::UserEntity>,
+        mut template_rx: mpsc::Receiver<proto_defination::mission::MissionTemplateEntity>,
         mut group_push_rx: mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
         mut cleared_push_rx: mpsc::Receiver<ClearedFodPush>,
     ) {
@@ -179,6 +188,16 @@ impl SyncClient {
                                                 msg: Some(ReplicaMsg::UserUpsert(user)),
                                             };
                                             if out_tx.send(user_msg).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    t = template_rx.recv() => {
+                                        if let Some(tmpl) = t {
+                                            let tmpl_msg = ReplicaMessage {
+                                                msg: Some(ReplicaMsg::TemplateUpsert(tmpl)),
+                                            };
+                                            if out_tx.send(tmpl_msg).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -449,6 +468,9 @@ impl SyncClient {
                             }
                             change::Entity::User(u) => {
                                 self.db.upsert_replicated_user(&u).await?;
+                            }
+                            change::Entity::MissionTemplate(t) => {
+                                self.db.upsert_replicated_mission_template(&t).await?;
                             }
                             change::Entity::Deleted(t) => {
                                 if t.entity == 5 {

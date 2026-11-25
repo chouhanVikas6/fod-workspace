@@ -229,3 +229,28 @@ pub struct User {
     #[serde(with = "iso_millis")]
     pub updated_at: NaiveDateTime,
 }
+
+#[derive(sqlx::FromRow, Serialize, Clone, Debug)]
+#[sqlx(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub struct MissionTemplate {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    #[sqlx(rename = "type")]
+    #[serde(rename = "type")]
+    pub template_type: String,
+    pub speed: i32,
+    pub pass: i32,
+    pub overlap: i32,
+    pub direction: String,
+    pub reverse: bool,
+    pub boundary_points: String,
+    pub is_custom: bool,
+    pub is_deleted: bool,
+    pub dirty: Option<bool>,
+    #[serde(with = "iso_millis")]
+    pub created_at: NaiveDateTime,
+    #[serde(with = "iso_millis")]
+    pub updated_at: NaiveDateTime,
+}

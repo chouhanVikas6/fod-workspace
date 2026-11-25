@@ -154,6 +154,17 @@ impl ReplicationServiceImpl {
                     });
                 }
             }
+            6 => {
+                // MissionTemplate "id"
+                if let Ok(Some(t)) = self.db.get_mission_template_by_id(key).await {
+                    return Some(Change {
+                        seq,
+                        entity: Some(change::Entity::MissionTemplate(t.to_proto())),
+                        frame_jpeg: Vec::new(),
+                        cleared_images: Vec::new(),
+                    });
+                }
+            }
             _ => {}
         }
         None
@@ -221,6 +232,26 @@ impl ReplicationService for ReplicationServiceImpl {
                                 to_seq: replica_cursor,
                                 changes: m_changes,
                             });
+                        }
+
+                        // Include all mission templates in the initial priority snapshot
+                        if let Ok(templates) = db.get_all_mission_templates().await {
+                            let t_changes: Vec<Change> = templates
+                                .into_iter()
+                                .map(|t| Change {
+                                    seq: replica_cursor,
+                                    entity: Some(change::Entity::MissionTemplate(t.to_proto())),
+                                    frame_jpeg: Vec::new(),
+                                    cleared_images: Vec::new(),
+                                })
+                                .collect();
+                            if !t_changes.is_empty() {
+                                priority_batches.push_back(ChangeBatch {
+                                    from_seq: replica_cursor,
+                                    to_seq: replica_cursor,
+                                    changes: t_changes,
+                                });
+                            }
                         }
 
                         for m in missions.iter().take(6) {
@@ -455,6 +486,19 @@ impl ReplicationService for ReplicationServiceImpl {
                                             let _ = change_tx.send(change_item);
                                         }
                                     }
+                                    Some(ReplicaMsg::TemplateUpsert(t)) => {
+                                        if let Ok(row) = db.upsert_replicated_mission_template(&t).await {
+                                            let proto_tmpl = row.to_proto();
+                                            let new_seq = db.append_change(6, &row.id).await.unwrap_or(0);
+                                            let change_item = Change {
+                                                seq: new_seq,
+                                                entity: Some(change::Entity::MissionTemplate(proto_tmpl)),
+                                                frame_jpeg: Vec::new(),
+                                                cleared_images: Vec::new(),
+                                            };
+                                            let _ = change_tx.send(change_item);
+                                        }
+                                    }
                                     Some(ReplicaMsg::ClearedPush(push)) => {
                                         for img in &push.images {
                                             if !img.is_empty() {
@@ -616,6 +660,14 @@ impl ReplicationService for ReplicationServiceImpl {
                                             db.get_user_by_username(&row.entity_key).await.ok().flatten().map(|u| Change {
                                                 seq: row.seq,
                                                 entity: Some(change::Entity::User(u.to_proto())),
+                                                frame_jpeg: Vec::new(),
+                                                cleared_images: Vec::new(),
+                                            })
+                                        }
+                                        6 => {
+                                            db.get_mission_template_by_id(&row.entity_key).await.ok().flatten().map(|t| Change {
+                                                seq: row.seq,
+                                                entity: Some(change::Entity::MissionTemplate(t.to_proto())),
                                                 frame_jpeg: Vec::new(),
                                                 cleared_images: Vec::new(),
                                             })

@@ -1,20 +1,25 @@
 use proto_defination::common::PaginationMeta;
 use proto_defination::mission::mission_service_server::MissionService;
 use proto_defination::mission::{
-    ActiveMissionResponse, GetActiveMissionRequest, ListMissionsRequest, ListMissionsResponse,
-    ListMissionsWithStatsRequest, MissionDetail, MissionStatsResponse, MissionWithStats,
-    RetrieveMissionRequest, RetrieveMissionResponse, UpdateMissionRequest,
+    ActiveMissionResponse, GetActiveMissionRequest, ListMissionTemplatesRequest,
+    ListMissionTemplatesResponse, ListMissionsRequest, ListMissionsResponse,
+    ListMissionsWithStatsRequest, MissionDetail, MissionStatsResponse, MissionTemplateEntity,
+    MissionWithStats, RetrieveMissionRequest, RetrieveMissionResponse,
+    SyncMissionTemplatesRequest, SyncMissionTemplatesResponse, UpdateMissionRequest,
+    UpsertMissionTemplateResponse,
 };
+use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use zoid_db::Db;
 
 pub struct AtcMissionServiceImpl {
     db: Db,
+    template_tx: mpsc::Sender<MissionTemplateEntity>,
 }
 
 impl AtcMissionServiceImpl {
-    pub fn new(db: Db) -> Self {
-        Self { db }
+    pub fn new(db: Db, template_tx: mpsc::Sender<MissionTemplateEntity>) -> Self {
+        Self { db, template_tx }
     }
 }
 
@@ -132,5 +137,61 @@ impl MissionService for AtcMissionServiceImpl {
         _request: Request<UpdateMissionRequest>,
     ) -> Result<Response<MissionDetail>, Status> {
         Err(Status::permission_denied("Missions are controlled authoritatively on the Car daemon"))
+    }
+
+    async fn list_mission_templates(
+        &self,
+        _request: Request<ListMissionTemplatesRequest>,
+    ) -> Result<Response<ListMissionTemplatesResponse>, Status> {
+        let rows = self
+            .db
+            .get_all_mission_templates()
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let templates = rows.into_iter().map(|r| r.to_proto()).collect();
+        Ok(Response::new(ListMissionTemplatesResponse { templates }))
+    }
+
+    async fn upsert_mission_template(
+        &self,
+        request: Request<MissionTemplateEntity>,
+    ) -> Result<Response<UpsertMissionTemplateResponse>, Status> {
+        let tmpl = request.into_inner();
+        if tmpl.id.trim().is_empty() {
+            return Err(Status::invalid_argument("Template id cannot be empty"));
+        }
+        let row = self
+            .db
+            .upsert_replicated_mission_template(&tmpl)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let proto_tmpl = row.to_proto();
+        // Relay upstream to Car primary so Car persists and broadcasts to all replicas
+        let _ = self.template_tx.send(proto_tmpl.clone()).await;
+
+        Ok(Response::new(UpsertMissionTemplateResponse {
+            success: true,
+            template: Some(proto_tmpl),
+            error: String::new(),
+        }))
+    }
+
+    async fn sync_mission_templates(
+        &self,
+        request: Request<SyncMissionTemplatesRequest>,
+    ) -> Result<Response<SyncMissionTemplatesResponse>, Status> {
+        let since_ms = request.into_inner().since_ms;
+        let rows = if since_ms <= 0 {
+            self.db.get_all_mission_templates().await
+        } else {
+            let since_dt = chrono::DateTime::from_timestamp_millis(since_ms)
+                .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+            self.db.get_mission_templates_since(since_dt).await
+        }
+        .map_err(|e| Status::internal(e.to_string()))?;
+
+        let templates = rows.into_iter().map(|r| r.to_proto()).collect();
+        Ok(Response::new(SyncMissionTemplatesResponse { templates }))
     }
 }
