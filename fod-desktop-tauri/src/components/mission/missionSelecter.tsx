@@ -97,9 +97,13 @@ const MissionSelector = () => {
         setSelectedMission(null);
     };
 
-    // Filter and sort missions by date/month/range and sortOrder
+    // Filter and sort missions by date/month/range and sortOrder (never show cold-stored missions)
+    const activeMissionsList = useMemo(() => {
+        return (missions || []).filter((m) => (m.storageTier || 'HOT') !== 'COLD_STORED');
+    }, [missions]);
+
     const filteredMissions = useMemo(() => {
-        const list = (missions || []).filter((m) => {
+        const list = activeMissionsList.filter((m) => {
             if (dateFilterMode === "all") return true;
             const raw = m.createdAt || m.created_at;
             if (!raw) return false;
@@ -130,7 +134,7 @@ const MissionSelector = () => {
             const tb = new Date(b.createdAt || b.created_at || 0).getTime() || Number(b.mission_id ?? b.id ?? 0);
             return sortOrder === "newest" ? tb - ta : ta - tb;
         });
-    }, [missions, dateFilterMode, selectedDate, selectedDateEnd, selectedMonth, sortOrder]);
+    }, [activeMissionsList, dateFilterMode, selectedDate, selectedDateEnd, selectedMonth, sortOrder]);
 
     const isDateFiltered =
         (dateFilterMode === "date" && !!selectedDate) ||
@@ -194,7 +198,7 @@ const MissionSelector = () => {
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-xs font-semibold text-[#4C9FE8] font-mono">
-                            {isDateFiltered ? `${filteredMissions.length}/${missions.length}` : missions.length} {t("total")}
+                            {isDateFiltered ? `${filteredMissions.length}/${activeMissionsList.length}` : activeMissionsList.length} {t("total")}
                         </span>
                         <button
                             type="button"

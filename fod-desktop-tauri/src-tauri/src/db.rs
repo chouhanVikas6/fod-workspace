@@ -165,6 +165,13 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             "updatedAt" DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
         )
         "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS "StoragePolicy" (
+            "key" TEXT NOT NULL PRIMARY KEY,
+            "policyJson" TEXT NOT NULL,
+            "updatedAt" DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        )
+        "#,
     ];
 
     for sql in statements {
@@ -173,6 +180,21 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Additive column migration for existing SQLite databases.
     let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "displayId" INTEGER"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "localEvicted" BOOLEAN NOT NULL DEFAULT 0"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "storageTier" TEXT NOT NULL DEFAULT 'HOT'"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "storageEpoch" INTEGER NOT NULL DEFAULT 1"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "archiveSizeBytes" INTEGER"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "coldStoredAt" DATETIME"#)
         .execute(pool)
         .await;
     let _ = sqlx::query(r#"ALTER TABLE "FodGroup" ADD COLUMN "versionVector" TEXT DEFAULT '{}'"#)

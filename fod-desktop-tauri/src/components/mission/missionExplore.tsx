@@ -96,6 +96,8 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
     const [fodList, setFodList] = useState<any[]>([]);
     const [fodsLoading, setFodsLoading] = useState(true);
     const [exploring, setExploring] = useState(false);
+    const [reimporting, setReimporting] = useState(false);
+    const [reloadNonce, setReloadNonce] = useState(0);
     const [selectedFod, setSelectedFod] = useState<any>(null);
     const [displayLimit, setDisplayLimit] = useState(60);
     const [showReport, setShowReport] = useState(false);
@@ -175,6 +177,23 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
         }).finally(() => {
             setExploring(false);
         });
+    }
+
+    async function handleReimportFromExplore() {
+        if (!selectedMission?.id || reimporting) return;
+        setReimporting(true);
+        try {
+            await axiosClient({
+                method: 'POST',
+                url: `/api/mission/local-reimport/${selectedMission.id}`,
+            });
+            toast.success('Mission re-imported from ATC');
+            setReloadNonce((n) => n + 1);
+        } catch (err: any) {
+            toast.error(err?.data?.error || 'Failed to re-import mission');
+        } finally {
+            setReimporting(false);
+        }
     }
 
     function handleSelectFod(fod: any, fromMap = false) {
@@ -305,7 +324,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
 
             invoke('stop_retrive_stream', { subId }).catch(() => {});
         };
-    }, [selectedMission]);
+    }, [selectedMission, reloadNonce]);
 
     const stats = [
         { label: 'Started', value: formatDate(selectedMission?.createdAt) ?? '—' },
@@ -646,10 +665,29 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                             )}
                         </div>
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500 p-4 text-center">
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                                No FODs recorded for this mission
-                            </span>
+                        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 dark:text-slate-500 p-4 text-center">
+                            {selectedMission?.localEvicted ? (
+                                <>
+                                    <span className="text-xs font-semibold text-amber-400">
+                                        Local Cache Freed
+                                    </span>
+                                    <span className="text-[11px] text-slate-500 dark:text-slate-400 max-w-[230px]">
+                                        Mission data was cleared on this device to save space. Refetch it from ATC anytime.
+                                    </span>
+                                    <button
+                                        type="button"
+                                        disabled={reimporting}
+                                        onClick={handleReimportFromExplore}
+                                        className="px-3 py-1.5 rounded-lg bg-[#4C9FE8] hover:bg-[#3B91DC] text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                                    >
+                                        {reimporting ? 'Re-importing...' : 'Re-import from ATC'}
+                                    </button>
+                                </>
+                            ) : (
+                                <span className="text-xs text-slate-500 dark:text-slate-400">
+                                    No FODs recorded for this mission
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>

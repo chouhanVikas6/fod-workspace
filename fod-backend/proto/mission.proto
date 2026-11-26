@@ -12,6 +12,13 @@ service MissionService {
     rpc ListMissionTemplates (ListMissionTemplatesRequest) returns (ListMissionTemplatesResponse);
     rpc UpsertMissionTemplate (MissionTemplateEntity) returns (UpsertMissionTemplateResponse);
     rpc SyncMissionTemplates (SyncMissionTemplatesRequest) returns (SyncMissionTemplatesResponse);
+    rpc ColdStoreMission (ColdStoreMissionRequest) returns (ColdStoreMissionResponse);
+    rpc RestoreColdMission (RestoreColdMissionRequest) returns (RestoreColdMissionResponse);
+    rpc DropMissionHotData (DropMissionHotDataRequest) returns (DropMissionHotDataResponse);
+    rpc ExportMissionArchive (ExportMissionArchiveRequest) returns (stream ArchiveChunk);
+    rpc ImportMissionArchive (stream ArchiveChunk) returns (ImportMissionArchiveResponse);
+    rpc GetStorageOverview (GetStorageOverviewRequest) returns (StorageOverviewResponse);
+    rpc UpdateStoragePolicy (StoragePolicyConfig) returns (StoragePolicyConfig);
 }
 
 message MissionDetail {
@@ -26,6 +33,11 @@ message MissionDetail {
     optional string created_by = 9;
     optional string updated_by = 10;
     optional int64 display_id = 11;
+    string storage_tier = 12;
+    int64 storage_epoch = 13;
+    optional int64 archive_size_bytes = 14;
+    optional int64 cold_stored_at_ms = 15;
+    optional int64 storage_bytes = 16;
 }
 
 message ListMissionsRequest {
@@ -110,4 +122,110 @@ message SyncMissionTemplatesRequest {
 
 message SyncMissionTemplatesResponse {
     repeated MissionTemplateEntity templates = 1;
+}
+
+message ColdStoreMissionRequest {
+    int64 mission_id = 1;
+    bool force_drop_car = 2;
+}
+
+message ColdStoreMissionResponse {
+    bool success = 1;
+    string message = 2;
+    MissionDetail mission = 3;
+    int64 archive_size_bytes = 4;
+    string archive_sha256 = 5;
+    int64 bytes_freed = 6;
+}
+
+message RestoreColdMissionRequest {
+    int64 mission_id = 1;
+}
+
+message RestoreColdMissionResponse {
+    bool success = 1;
+    string message = 2;
+    MissionDetail mission = 3;
+    int64 restored_groups = 4;
+    int64 restored_fods = 5;
+    int64 restored_frames = 6;
+}
+
+message DropMissionHotDataRequest {
+    int64 mission_id = 1;
+    string target_tier = 2;
+    int64 storage_epoch = 3;
+}
+
+message DropMissionHotDataResponse {
+    bool success = 1;
+    string message = 2;
+    int64 bytes_freed = 3;
+    int64 frames_removed = 4;
+}
+
+message ExportMissionArchiveRequest {
+    int64 mission_id = 1;
+}
+
+message ArchiveChunk {
+    bytes data = 1;
+    string filename = 2;
+    int64 total_size = 3;
+    bool import_to_fleet = 4;
+}
+
+message ImportMissionArchiveResponse {
+    bool success = 1;
+    string message = 2;
+    MissionDetail mission = 3;
+    int64 restored_groups = 4;
+    int64 restored_fods = 5;
+    int64 restored_frames = 6;
+}
+
+message NodeDiskInfo {
+    string node_id = 1;
+    bool online = 2;
+    uint64 total_bytes = 3;
+    uint64 used_bytes = 4;
+    uint64 free_bytes = 5;
+    double usage_percent = 6;
+    uint64 frames_bytes = 7;
+    uint64 archives_bytes = 8;
+    int64 hot_mission_count = 9;
+    int64 cold_mission_count = 10;
+}
+
+message MissionStorageEntry {
+    MissionDetail mission = 1;
+    int64 total_fod_groups = 2;
+    int64 total_fods = 3;
+    int64 cleared_count = 4;
+    int64 dirty_group_count = 5;
+    int64 hot_bytes = 6;
+    int64 archive_bytes = 7;
+    bool present_hot_on_atc = 8;
+    bool present_cold_on_atc = 9;
+    bool present_hot_on_car = 10;
+    string car_storage_tier = 11;
+}
+
+message StoragePolicyConfig {
+    bool auto_cold_store_enabled = 1;
+    uint32 atc_keep_hot_missions = 2;
+    uint32 atc_max_disk_percent = 3;
+    bool auto_drop_car_on_cold_store = 4;
+    bool auto_drop_car_when_backed_up = 5;
+    uint32 car_keep_hot_missions = 6;
+    uint32 car_max_disk_percent = 7;
+}
+
+message GetStorageOverviewRequest {}
+
+message StorageOverviewResponse {
+    NodeDiskInfo atc_disk = 1;
+    NodeDiskInfo car_disk = 2;
+    repeated MissionStorageEntry missions = 3;
+    StoragePolicyConfig policy = 4;
 }

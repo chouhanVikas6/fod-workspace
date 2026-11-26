@@ -407,8 +407,13 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
 
     // Also include up to 4 recent missions + any unsynced missions (0 FodGroups locally)
     // so missions 20, 19, 18, etc. stay synced even before the user clicks into them.
+    // IMPORTANT: Never auto-fetch missions that were explicitly evicted locally (`localEvicted = 1`)
+    // or cold-stored on ATC (`storageTier = 'COLD_STORED'`).
     if let Ok(recent_ids) = sqlx::query_scalar::<_, i64>(
-        r#"SELECT "id" FROM "Mission" ORDER BY "id" DESC LIMIT 6"#,
+        r#"SELECT "id" FROM "Mission"
+           WHERE COALESCE("localEvicted", 0) = 0
+             AND COALESCE("storageTier", 'HOT') != 'COLD_STORED'
+           ORDER BY "id" DESC LIMIT 6"#,
     )
     .fetch_all(&state.db)
     .await
@@ -421,7 +426,12 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
     }
 
     if let Ok(unsynced_ids) = sqlx::query_scalar::<_, i64>(
-        r#"SELECT m."id" FROM "Mission" m LEFT JOIN "FodGroup" fg ON fg."missionId" = m."id" GROUP BY m."id" HAVING COUNT(fg."id") = 0 ORDER BY m."id" DESC LIMIT 3"#,
+        r#"SELECT m."id" FROM "Mission" m
+           LEFT JOIN "FodGroup" fg ON fg."missionId" = m."id"
+           WHERE COALESCE(m."localEvicted", 0) = 0
+             AND COALESCE(m."storageTier", 'HOT') != 'COLD_STORED'
+           GROUP BY m."id" HAVING COUNT(fg."id") = 0
+           ORDER BY m."id" DESC LIMIT 3"#,
     )
     .fetch_all(&state.db)
     .await
@@ -433,8 +443,21 @@ async fn sync_mission(state: &AppState) -> anyhow::Result<()> {
         }
     }
 
+    // Filter out any target that is locally evicted or cold-stored (unless ACTIVE)
     for mid in targets {
-        sync_fod(state, mid).await?;
+        let skip: bool = sqlx::query_scalar(
+            r#"SELECT (COALESCE("localEvicted", 0) = 1 OR COALESCE("storageTier", 'HOT') = 'COLD_STORED') AND "status" != 'ACTIVE'
+               FROM "Mission" WHERE "id" = $1"#,
+        )
+        .bind(mid)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+        if !skip {
+            sync_fod(state, mid).await?;
+        }
     }
     Ok(())
 }
@@ -534,6 +557,16 @@ fn mission_sync_cursors(
         std::sync::Mutex<std::collections::HashMap<(String, i64), i64>>,
     > = std::sync::OnceLock::new();
     CURSORS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn clear_mission_sync_cursor(mission_id: i64) {
+    if let Ok(mut map) = mission_sync_cursors().lock() {
+        map.retain(|(_, mid), _| *mid != mission_id);
+    }
+}
+
+pub fn current_viewed_mission_id() -> i64 {
+    VIEWED_MISSION_ID.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 async fn current_upstream_tag(state: &AppState) -> String {
@@ -1161,11 +1194,51 @@ async fn insert_mission_full(state: &AppState, m: &Value) -> anyhow::Result<()> 
         .and_then(crate::services::parse_js_date)
         .unwrap_or(now);
     let display_id = m.get("displayId").and_then(Value::as_i64);
+    let incoming_tier = m
+        .get("storageTier")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("HOT");
+    let incoming_epoch = m
+        .get("storageEpoch")
+        .and_then(Value::as_i64)
+        .filter(|&e| e > 0)
+        .unwrap_or(1);
+    let archive_size_bytes = m.get("archiveSizeBytes").and_then(Value::as_i64);
+    let cold_stored_at = m
+        .get("coldStoredAt")
+        .and_then(crate::services::parse_js_date);
+
+    let prev_storage: Option<(Option<String>, Option<i64>, bool)> = sqlx::query_as(
+        r#"SELECT "storageTier", "storageEpoch", COALESCE("localEvicted", 0) FROM "Mission" WHERE "id" = $1"#,
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    // Cold-stored missions are archived exclusively on ATC and must be completely
+    // dropped from Desktop devices (never inserted or retained in local SQLite).
+    if incoming_tier == "COLD_STORED" && status != "ACTIVE" {
+        if prev_storage.is_some() {
+            if let Ok(freed) = drop_cold_stored_mission_locally(state, id).await {
+                tracing::info!(
+                    "Dropped cold-stored mission {id} completely from desktop ({freed} bytes freed)"
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // A mission restored from ATC cold storage (epoch > 1) that is not yet cached locally
+    // joins the device list as `localEvicted = 1` so operators can re-import it on demand.
+    let initial_evicted = prev_storage.is_none() && incoming_epoch > 1;
 
     sqlx::query(
         r#"INSERT INTO "Mission"
-           ("id","displayId","status","timer","scanStatus","pass","speed","createdAt","updatedAt","createdBy","updatedBy","dirty","previousTime")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           ("id","displayId","status","timer","scanStatus","pass","speed","createdAt","updatedAt","createdBy","updatedBy","dirty","previousTime","localEvicted","storageTier","storageEpoch","archiveSizeBytes","coldStoredAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
            ON CONFLICT ("id") DO UPDATE SET
              "displayId" = COALESCE(EXCLUDED."displayId", "Mission"."displayId"),
              "status" = EXCLUDED."status",
@@ -1173,6 +1246,21 @@ async fn insert_mission_full(state: &AppState, m: &Value) -> anyhow::Result<()> 
              "scanStatus" = EXCLUDED."scanStatus",
              "pass" = COALESCE(EXCLUDED."pass", "Mission"."pass"),
              "speed" = COALESCE(EXCLUDED."speed", "Mission"."speed"),
+             "storageTier" = CASE
+               WHEN EXCLUDED."storageEpoch" > COALESCE("Mission"."storageEpoch", 1) THEN EXCLUDED."storageTier"
+               WHEN EXCLUDED."storageEpoch" = COALESCE("Mission"."storageEpoch", 1) AND (COALESCE("Mission"."storageTier", 'HOT') = 'COLD_STORED' OR EXCLUDED."storageTier" = 'COLD_STORED') THEN 'COLD_STORED'
+               ELSE COALESCE("Mission"."storageTier", 'HOT')
+             END,
+             "storageEpoch" = MAX(COALESCE("Mission"."storageEpoch", 1), EXCLUDED."storageEpoch"),
+             "archiveSizeBytes" = CASE
+               WHEN EXCLUDED."storageEpoch" >= COALESCE("Mission"."storageEpoch", 1) THEN COALESCE(EXCLUDED."archiveSizeBytes", "Mission"."archiveSizeBytes")
+               ELSE "Mission"."archiveSizeBytes"
+             END,
+             "coldStoredAt" = CASE
+               WHEN EXCLUDED."storageTier" = 'HOT' AND EXCLUDED."storageEpoch" > COALESCE("Mission"."storageEpoch", 1) THEN NULL
+               WHEN EXCLUDED."storageEpoch" >= COALESCE("Mission"."storageEpoch", 1) THEN COALESCE(EXCLUDED."coldStoredAt", "Mission"."coldStoredAt")
+               ELSE "Mission"."coldStoredAt"
+             END,
              "updatedAt" = CASE WHEN EXCLUDED."updatedAt" > "Mission"."updatedAt" THEN EXCLUDED."updatedAt" ELSE "Mission"."updatedAt" END,
              "updatedBy" = COALESCE(EXCLUDED."updatedBy", "Mission"."updatedBy")"#,
     )
@@ -1189,9 +1277,235 @@ async fn insert_mission_full(state: &AppState, m: &Value) -> anyhow::Result<()> 
     .bind(updated_by)
     .bind(dirty)
     .bind(previous_time)
+    .bind(initial_evicted)
+    .bind(incoming_tier)
+    .bind(incoming_epoch)
+    .bind(archive_size_bytes)
+    .bind(cold_stored_at)
+    .execute(&state.db)
+    .await?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DesktopStoragePolicy {
+    pub enabled: bool,
+    pub max_local_missions: u32,
+    pub max_disk_percent: u32,
+}
+
+impl Default for DesktopStoragePolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_local_missions: 15,
+            max_disk_percent: 85,
+        }
+    }
+}
+
+pub async fn get_desktop_storage_policy(state: &AppState) -> DesktopStoragePolicy {
+    let raw: Option<String> =
+        sqlx::query_scalar(r#"SELECT "policyJson" FROM "StoragePolicy" WHERE "key" = 'desktop'"#)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    raw.and_then(|s| serde_json::from_str::<DesktopStoragePolicy>(&s).ok())
+        .unwrap_or_default()
+}
+
+pub async fn save_desktop_storage_policy(
+    state: &AppState,
+    policy: &DesktopStoragePolicy,
+) -> anyhow::Result<()> {
+    let json_str = serde_json::to_string(policy)?;
+    let now = crate::services::now_naive();
+    sqlx::query(
+        r#"INSERT INTO "StoragePolicy" ("key", "policyJson", "updatedAt")
+           VALUES ('desktop', $1, $2)
+           ON CONFLICT ("key") DO UPDATE SET "policyJson" = EXCLUDED."policyJson", "updatedAt" = EXCLUDED."updatedAt""#,
+    )
+    .bind(json_str)
+    .bind(now)
     .execute(&state.db)
     .await?;
     Ok(())
+}
+
+/// Frees local SQLite FOD payloads (`Fod`, `FodGroup`, `ClearedFod`) and `fod-images/mission/<id>`
+/// while keeping the `"Mission"` metadata row with `localEvicted = 1`.
+/// Returns `(bytes_freed, rows_removed)`.
+pub async fn purge_local_mission_data(
+    state: &AppState,
+    mission_id: i64,
+    force_dirty: bool,
+) -> anyhow::Result<(u64, u64)> {
+    let status: Option<String> =
+        sqlx::query_scalar(r#"SELECT "status" FROM "Mission" WHERE "id" = $1"#)
+            .bind(mission_id)
+            .fetch_optional(&state.db)
+            .await?;
+    if status.as_deref() == Some("ACTIVE") {
+        anyhow::bail!("Cannot free storage for an ACTIVE mission — terminate it first");
+    }
+
+    if !force_dirty {
+        let dirty_cnt: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM "FodGroup" WHERE "missionId" = $1 AND COALESCE("dirty", 0) = 1"#,
+        )
+        .bind(mission_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+        if dirty_cnt > 0 {
+            anyhow::bail!(
+                "Mission {mission_id} has {dirty_cnt} unsynced local decision(s) — sync before freeing storage"
+            );
+        }
+    }
+
+    let mut tx = state.db.begin().await?;
+    let fods = sqlx::query(r#"DELETE FROM "Fod" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    let groups = sqlx::query(r#"DELETE FROM "FodGroup" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    let cleared = sqlx::query(r#"DELETE FROM "ClearedFod" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    sqlx::query(
+        r#"UPDATE "Mission" SET "localEvicted" = 1, "updatedAt" = $2 WHERE "id" = $1"#,
+    )
+    .bind(mission_id)
+    .bind(crate::services::now_naive())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    clear_mission_sync_cursor(mission_id);
+
+    let image_dir = std::path::Path::new("fod-images/mission").join(mission_id.to_string());
+    let dir_bytes = crate::archive::dir_size_bytes(&image_dir).await;
+    if image_dir.exists() {
+        let _ = tokio::fs::remove_dir_all(&image_dir).await;
+    }
+
+    Ok((dir_bytes, fods + groups + cleared))
+}
+
+/// Completely drops a cold-stored mission from Desktop SQLite (`Fod`, `FodGroup`,
+/// `ClearedFod`, AND the `"Mission"` row itself) plus its local image cache.
+/// Returns bytes freed on disk.
+pub async fn drop_cold_stored_mission_locally(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<u64> {
+    let status: Option<String> =
+        sqlx::query_scalar(r#"SELECT "status" FROM "Mission" WHERE "id" = $1"#)
+            .bind(mission_id)
+            .fetch_optional(&state.db)
+            .await?;
+    if status.as_deref() == Some("ACTIVE") {
+        anyhow::bail!("Cannot drop an ACTIVE mission");
+    }
+
+    let dirty_cnt: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM "FodGroup" WHERE "missionId" = $1 AND COALESCE("dirty", 0) = 1"#,
+    )
+    .bind(mission_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    if dirty_cnt > 0 {
+        anyhow::bail!("Mission {mission_id} has {dirty_cnt} unsynced local decision(s)");
+    }
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query(r#"DELETE FROM "Fod" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(r#"DELETE FROM "FodGroup" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(r#"DELETE FROM "ClearedFod" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(r#"DELETE FROM "Mission" WHERE "id" = $1"#)
+        .bind(mission_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    clear_mission_sync_cursor(mission_id);
+
+    let image_dir = std::path::Path::new("fod-images/mission").join(mission_id.to_string());
+    let dir_bytes = crate::archive::dir_size_bytes(&image_dir).await;
+    if image_dir.exists() {
+        let _ = tokio::fs::remove_dir_all(&image_dir).await;
+    }
+
+    Ok(dir_bytes)
+}
+
+pub fn spawn_desktop_auto_storage_daemon(state: AppState) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(60));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let policy = get_desktop_storage_policy(&state).await;
+            if !policy.enabled {
+                continue;
+            }
+            let (_, _, _, usage_pct) =
+                crate::archive::disk_usage_for_path(std::path::Path::new("fod-images/mission")).await;
+            let viewed = current_viewed_mission_id();
+
+            let local_missions: Vec<(i64,)> = sqlx::query_as(
+                r#"SELECT "id" FROM "Mission"
+                   WHERE COALESCE("localEvicted", 0) = 0
+                     AND "status" != 'ACTIVE'
+                     AND "id" != $1
+                   ORDER BY "createdAt" ASC, "id" ASC"#,
+            )
+            .bind(viewed)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+
+            let total_local = local_missions.len() as u32;
+            let over_disk = usage_pct >= policy.max_disk_percent as f64;
+            let mut excess = total_local.saturating_sub(policy.max_local_missions);
+
+            for (mid,) in local_missions {
+                if !over_disk && excess == 0 {
+                    break;
+                }
+                if let Ok((freed, _)) = purge_local_mission_data(&state, mid, false).await {
+                    tracing::info!(
+                        "Desktop auto-free evicted mission {mid} ({freed} bytes freed)"
+                    );
+                    excess = excess.saturating_sub(1);
+                    if over_disk {
+                        break;
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Prisma `clearedFod.findFirst({where:{missionId, groupId}})` serialized to JSON

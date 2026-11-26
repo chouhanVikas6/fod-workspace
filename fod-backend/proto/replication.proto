@@ -33,7 +33,18 @@ message ReplicaMessage {
         ClearedFodPush cleared_push = 7;
         // Replica-side mission template upsert/delete to be replicated across all nodes.
         zoid.mission.MissionTemplateEntity template_upsert = 8;
+        // ATC storage lifecycle directive to Car (drop hot data or restore available).
+        StorageDirective storage_directive = 9;
     }
+}
+
+message StorageDirective {
+    int64 mission_id = 1;
+    string directive = 2;
+    string storage_tier = 3;
+    int64 storage_epoch = 4;
+    optional int64 archive_size_bytes = 5;
+    optional int64 cold_stored_at_ms = 6;
 }
 
 message ClearedFodPush {

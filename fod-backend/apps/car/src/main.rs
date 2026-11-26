@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fod_svc = FodServiceImpl::new(db.clone(), storage.clone());
     let cleared_fod_svc =
         ClearedFodServiceImpl::new(db.clone(), storage.clone(), change_tx.clone());
-    let mission_svc = MissionServiceImpl::new(db.clone(), change_tx.clone());
+    let mission_svc = MissionServiceImpl::new(db.clone(), storage.clone(), change_tx.clone());
     let ingest_svc = IngestServiceImpl::new(
         db.clone(),
         storage.clone(),

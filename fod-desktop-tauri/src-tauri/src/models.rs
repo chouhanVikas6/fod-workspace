@@ -145,6 +145,17 @@ pub struct Mission {
     #[serde(with = "iso_millis_opt")]
     pub previous_time: Option<NaiveDateTime>,
     pub display_id: Option<i64>,
+    #[sqlx(default)]
+    pub local_evicted: bool,
+    #[sqlx(default)]
+    pub storage_tier: Option<String>,
+    #[sqlx(default)]
+    pub storage_epoch: Option<i64>,
+    #[sqlx(default)]
+    pub archive_size_bytes: Option<i64>,
+    #[sqlx(default)]
+    #[serde(with = "iso_millis_opt")]
+    pub cold_stored_at: Option<NaiveDateTime>,
 }
 
 #[derive(sqlx::FromRow, Serialize, Clone, Debug)]

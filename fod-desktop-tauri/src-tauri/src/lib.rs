@@ -4,6 +4,7 @@
 //! run directly inside this process and communicate with the React frontend via
 //! Tauri IPC commands and events.
 
+pub mod archive;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -330,6 +331,43 @@ async fn mag_reset_calibration(
     Ok(state.mag_control.reset_calibration().await)
 }
 
+#[tauri::command]
+async fn pick_archive_save_path(
+    app: tauri::AppHandle,
+    default_name: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let file_name = if default_name.trim().is_empty() {
+        "mission-backup.zoidpack".to_string()
+    } else {
+        default_name
+    };
+    let path = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("ZOID Mission Archive", &["zoidpack", "gz", "tar"])
+            .set_file_name(&file_name)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(path.map(|fp| fp.to_string()))
+}
+
+#[tauri::command]
+async fn pick_archive_open_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let path = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("ZOID Mission Archive", &["zoidpack", "gz", "tar"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(path.map(|fp| fp.to_string()))
+}
+
 #[cfg(target_os = "linux")]
 fn read_tablet_battery() -> Value {
     let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") else {
@@ -553,6 +591,8 @@ pub fn run() {
             mag_set_zero_north,
             mag_update_settings,
             mag_reset_calibration,
+            pick_archive_save_path,
+            pick_archive_open_path,
         ])
         .setup(move |app| {
             app_state.set_app_handle(app.handle().clone());
@@ -580,7 +620,8 @@ pub fn run() {
                 rtk_reader::spawn(st.clone());
                 scheduler::spawn_primary_schedular(st.clone());
                 scheduler::spawn_sync_service(st.clone());
-                scheduler::spawn_user_sync_service(st);
+                scheduler::spawn_user_sync_service(st.clone());
+                scheduler::spawn_desktop_auto_storage_daemon(st);
             });
 
             if let Some(w) = app.get_webview_window("main") {

@@ -4,6 +4,7 @@ use proto_defination::replication::replica_message::Msg as ReplicaMsg;
 use proto_defination::replication::replication_service_client::ReplicationServiceClient;
 use proto_defination::replication::{
     change, Ack, ClearedFodPush, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage,
+    StorageDirective,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +26,7 @@ pub struct SyncClient {
     group_tx: tokio::sync::broadcast::Sender<proto_defination::fod_group::FodGroupEntity>,
     group_push_tx: mpsc::Sender<proto_defination::fod_group::FodGroupEntity>,
     cleared_push_tx: mpsc::Sender<ClearedFodPush>,
+    storage_directive_tx: mpsc::Sender<StorageDirective>,
 }
 
 impl SyncClient {
@@ -41,12 +43,14 @@ impl SyncClient {
         mpsc::Receiver<proto_defination::mission::MissionTemplateEntity>,
         mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
         mpsc::Receiver<ClearedFodPush>,
+        mpsc::Receiver<StorageDirective>,
     ) {
         let (cmd_tx, cmd_rx) = mpsc::channel(100);
         let (user_tx, user_rx) = mpsc::channel(100);
         let (template_tx, template_rx) = mpsc::channel(100);
         let (group_push_tx, group_push_rx) = mpsc::channel(200);
         let (cleared_push_tx, cleared_push_rx) = mpsc::channel(100);
+        let (storage_directive_tx, storage_directive_rx) = mpsc::channel(100);
         let client = Self {
             car_endpoint,
             db,
@@ -58,8 +62,17 @@ impl SyncClient {
             group_tx,
             group_push_tx,
             cleared_push_tx,
+            storage_directive_tx,
         };
-        (client, cmd_rx, user_rx, template_rx, group_push_rx, cleared_push_rx)
+        (
+            client,
+            cmd_rx,
+            user_rx,
+            template_rx,
+            group_push_rx,
+            cleared_push_rx,
+            storage_directive_rx,
+        )
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
@@ -82,6 +95,10 @@ impl SyncClient {
         self.cleared_push_tx.clone()
     }
 
+    pub fn storage_directive_sender(&self) -> mpsc::Sender<StorageDirective> {
+        self.storage_directive_tx.clone()
+    }
+
     pub async fn run_replication_loop(
         self: Arc<Self>,
         mut cmd_rx: mpsc::Receiver<Command>,
@@ -89,6 +106,7 @@ impl SyncClient {
         mut template_rx: mpsc::Receiver<proto_defination::mission::MissionTemplateEntity>,
         mut group_push_rx: mpsc::Receiver<proto_defination::fod_group::FodGroupEntity>,
         mut cleared_push_rx: mpsc::Receiver<ClearedFodPush>,
+        mut storage_directive_rx: mpsc::Receiver<StorageDirective>,
     ) {
         let mut backoff_secs = 1;
 
@@ -134,6 +152,26 @@ impl SyncClient {
                                 for dg in dirty_groups {
                                     let _ = out_tx.try_send(ReplicaMessage {
                                         msg: Some(ReplicaMsg::GroupPush(dg.to_proto())),
+                                    });
+                                }
+                            }
+                            // Replay any storage directives (cold-stored / dropped / restored) so Car catches up after offline periods
+                            if let Ok(storage_missions) = self.db.list_missions_with_non_default_storage().await {
+                                for m in storage_missions {
+                                    let directive = if m.storage_tier == "COLD_STORED" || m.storage_tier == "CAR_DROPPED" {
+                                        "DROP_HOT_DATA"
+                                    } else {
+                                        "RESTORE_AVAILABLE"
+                                    };
+                                    let _ = out_tx.try_send(ReplicaMessage {
+                                        msg: Some(ReplicaMsg::StorageDirective(StorageDirective {
+                                            mission_id: m.id,
+                                            directive: directive.to_string(),
+                                            storage_tier: m.storage_tier,
+                                            storage_epoch: m.storage_epoch,
+                                            archive_size_bytes: m.archive_size_bytes,
+                                            cold_stored_at_ms: m.cold_stored_at.map(|dt| dt.timestamp_millis()),
+                                        })),
                                     });
                                 }
                             }
@@ -198,6 +236,16 @@ impl SyncClient {
                                                 msg: Some(ReplicaMsg::TemplateUpsert(tmpl)),
                                             };
                                             if out_tx.send(tmpl_msg).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    sd = storage_directive_rx.recv() => {
+                                        if let Some(dir) = sd {
+                                            let dir_msg = ReplicaMessage {
+                                                msg: Some(ReplicaMsg::StorageDirective(dir)),
+                                            };
+                                            if out_tx.send(dir_msg).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -304,6 +352,9 @@ impl SyncClient {
                                 self.db.upsert_replicated_mission(&m).await?;
                             }
                             change::Entity::Group(g) => {
+                                if self.db.is_mission_cold_stored(g.mission_id).await.unwrap_or(false) {
+                                    continue;
+                                }
                                 self.ensure_mission_exists(g.mission_id).await?;
                                 let _ = self.db.insert_replicated_group_if_absent(&g, false).await;
                                 let _ = self.db.merge_group_biggest_fod(g.mission_id, g.group_id, g.biggest_fod.as_deref(), g.biggest_fod_size).await;
@@ -381,6 +432,9 @@ impl SyncClient {
                                 }
                             }
                             change::Entity::Fod(f) => {
+                                if self.db.is_mission_cold_stored(f.mission_id).await.unwrap_or(false) {
+                                    continue;
+                                }
                                 self.ensure_mission_exists(f.mission_id).await?;
                                 if !change.frame_jpeg.is_empty() {
                                     if let Err(e) = self.storage.save_frame(&change.frame_jpeg).await {
@@ -390,6 +444,9 @@ impl SyncClient {
                                 self.db.upsert_replicated_fod(&f).await?;
                             }
                             change::Entity::Cleared(c) => {
+                                if self.db.is_mission_cold_stored(c.mission_id).await.unwrap_or(false) {
+                                    continue;
+                                }
                                 self.ensure_mission_exists(c.mission_id).await?;
                                 for img in &change.cleared_images {
                                     if !img.is_empty() {

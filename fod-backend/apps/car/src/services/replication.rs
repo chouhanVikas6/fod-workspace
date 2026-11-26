@@ -257,6 +257,9 @@ impl ReplicationService for ReplicationServiceImpl {
 
                         if replica_cursor == 0 {
                             for m in missions.iter().take(6) {
+                                if m.storage_tier == "COLD_STORED" || m.storage_tier == "CAR_DROPPED" {
+                                    continue;
+                                }
                                 if let Ok(fods) = db.get_biggest_fods_for_mission(m.id).await {
                                     let mut batch_changes: Vec<Change> = Vec::new();
                                     let mut batch_bytes: usize = 0;
@@ -366,6 +369,17 @@ impl ReplicationService for ReplicationServiceImpl {
                                         replica_cursor = replica_cursor.max(ack.cursor);
                                     }
                                     Some(ReplicaMsg::Command(cmd)) => {
+                                        if db.is_mission_cold_stored(cmd.mission_id).await.unwrap_or(false) {
+                                            yield PrimaryMessage {
+                                                msg: Some(PrimaryMsg::Result(CommandResult {
+                                                    command_id: cmd.command_id,
+                                                    outcome: CommandOutcome::RejectedInvalid as i32,
+                                                    group: None,
+                                                    detail: "Mission is cold-stored (frozen)".to_string(),
+                                                })),
+                                            };
+                                            continue;
+                                        }
                                         let cmd_uuid = Uuid::parse_str(&cmd.command_id).unwrap_or_else(|_| Uuid::new_v4());
                                         let desired_proto = FodGroupStatus::try_from(cmd.desired_status).unwrap_or(FodGroupStatus::GroupStatusUnspecified);
                                         let decided_at = if cmd.issued_at_ms > 0 { cmd.issued_at_ms } else { chrono::Utc::now().timestamp_millis() };
@@ -420,6 +434,17 @@ impl ReplicationService for ReplicationServiceImpl {
                                     Some(ReplicaMsg::GroupPush(push_g)) => {
                                         let mission_id = push_g.mission_id;
                                         let group_id = push_g.group_id;
+                                        if db.is_mission_cold_stored(mission_id).await.unwrap_or(false) {
+                                            yield PrimaryMessage {
+                                                msg: Some(PrimaryMsg::GroupAck(GroupPushAck {
+                                                    mission_id,
+                                                    group_id,
+                                                    merged: None,
+                                                    outcome: "FROZEN_COLD_STORED".to_string(),
+                                                })),
+                                            };
+                                            continue;
+                                        }
                                         let incoming = zoid_db::models::versioned_from_proto(&push_g);
 
                                         let _ = db.insert_replicated_group_if_absent(&push_g, false).await;
@@ -503,6 +528,11 @@ impl ReplicationService for ReplicationServiceImpl {
                                         }
                                     }
                                     Some(ReplicaMsg::ClearedPush(push)) => {
+                                        if let Some(ref c) = push.cleared {
+                                            if db.is_mission_cold_stored(c.mission_id).await.unwrap_or(false) {
+                                                continue;
+                                            }
+                                        }
                                         for img in &push.images {
                                             if !img.is_empty() {
                                                 let _ = storage.save_frame(img).await;
@@ -543,6 +573,67 @@ impl ReplicationService for ReplicationServiceImpl {
                                                     frame_jpeg: Vec::new(),
                                                     cleared_images: push.images,
                                                 });
+                                            }
+                                        }
+                                    }
+                                    Some(ReplicaMsg::StorageDirective(dir)) => {
+                                        if let Ok(Some(m)) = db.get_mission(dir.mission_id).await {
+                                            if m.status == zoid_db::models::MissionStatus::Active {
+                                                tracing::warn!("Ignoring StorageDirective for ACTIVE mission {}", dir.mission_id);
+                                                continue;
+                                            }
+                                            if dir.directive == "DROP_HOT_DATA" && dir.storage_epoch >= m.storage_epoch {
+                                                let target_tier = if dir.storage_tier.is_empty() {
+                                                    "COLD_STORED"
+                                                } else {
+                                                    dir.storage_tier.as_str()
+                                                };
+                                                let cold_at = dir
+                                                    .cold_stored_at_ms
+                                                    .filter(|&ms| ms > 0)
+                                                    .and_then(chrono::DateTime::from_timestamp_millis);
+                                                if let Ok((updated, safe_shas)) = db
+                                                    .purge_mission_hot_data(
+                                                        dir.mission_id,
+                                                        target_tier,
+                                                        dir.storage_epoch,
+                                                        None,
+                                                        dir.archive_size_bytes,
+                                                        None,
+                                                        cold_at,
+                                                    )
+                                                    .await
+                                                {
+                                                    let (freed, removed) = storage.delete_frames(&safe_shas).await;
+                                                    tracing::info!(
+                                                        "Car dropped hot data for mission {} (tier={}, epoch={}, removed {} frames / {} bytes)",
+                                                        dir.mission_id, target_tier, dir.storage_epoch, removed, freed
+                                                    );
+                                                    let seq = db.append_change(1, &dir.mission_id.to_string()).await.unwrap_or(0);
+                                                    let _ = change_tx.send(Change {
+                                                        seq,
+                                                        entity: Some(change::Entity::Mission(updated.to_proto())),
+                                                        frame_jpeg: Vec::new(),
+                                                        cleared_images: Vec::new(),
+                                                    });
+                                                }
+                                            } else if dir.directive == "RESTORE_AVAILABLE" && dir.storage_epoch > m.storage_epoch {
+                                                if let Ok(updated) = db
+                                                    .update_mission_storage_state(dir.mission_id, "HOT", dir.storage_epoch)
+                                                    .await
+                                                {
+                                                    tracing::info!(
+                                                        "Car marked mission {} HOT (epoch={}) after ATC restore",
+                                                        dir.mission_id, dir.storage_epoch
+                                                    );
+                                                    let seq = db.append_change(1, &dir.mission_id.to_string()).await.unwrap_or(0);
+                                                    let _ = change_tx.send(Change {
+                                                        seq,
+                                                        entity: Some(change::Entity::Mission(updated.to_proto())),
+                                                        frame_jpeg: Vec::new(),
+                                                        cleared_images: Vec::new(),
+                                                    });
+                                                }
                                             }
                                         }
                                     }

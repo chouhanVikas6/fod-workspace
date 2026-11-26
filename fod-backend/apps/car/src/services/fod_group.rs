@@ -106,6 +106,12 @@ impl FodGroupService for FodGroupServiceImpl {
         let mut results = Vec::with_capacity(req.resolutions.len());
 
         for res in req.resolutions {
+            if self.db.is_mission_cold_stored(res.mission_id).await.unwrap_or(false) {
+                return Err(Status::failed_precondition(format!(
+                    "Mission {} is cold-stored (frozen); restore it before modifying FOD groups",
+                    res.mission_id
+                )));
+            }
             let cmd_uuid = Uuid::parse_str(&res.command_id).unwrap_or_else(|_| Uuid::new_v4());
 
             // Check if already applied

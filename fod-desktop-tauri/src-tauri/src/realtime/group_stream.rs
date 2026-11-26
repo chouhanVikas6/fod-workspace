@@ -78,6 +78,20 @@ async fn connect_stream_client(
 }
 
 async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()> {
+    let skip_evicted: bool = sqlx::query_scalar(
+        r#"SELECT (COALESCE("localEvicted", 0) = 1 OR COALESCE("storageTier", 'HOT') = 'COLD_STORED') AND "status" != 'ACTIVE'
+           FROM "Mission" WHERE "id" = $1"#,
+    )
+    .bind(g.mission_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false);
+    if skip_evicted {
+        return Ok(());
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
     let gid = g.group_id as i32;
     let mission_id = g.mission_id;

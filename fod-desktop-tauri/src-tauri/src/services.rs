@@ -215,6 +215,16 @@ fn proto_ms_to_iso(ms: i64) -> String {
 }
 
 fn proto_mission_detail_to_json(m: &proto_defination::mission::MissionDetail) -> Value {
+    let storage_tier = if m.storage_tier.is_empty() {
+        "HOT"
+    } else {
+        m.storage_tier.as_str()
+    };
+    let storage_epoch = if m.storage_epoch <= 0 {
+        1
+    } else {
+        m.storage_epoch
+    };
     json!({
         "id": m.id,
         "displayId": m.display_id,
@@ -227,6 +237,10 @@ fn proto_mission_detail_to_json(m: &proto_defination::mission::MissionDetail) ->
         "updatedAt": proto_ms_to_iso(m.updated_at),
         "createdBy": m.created_by,
         "updatedBy": m.updated_by,
+        "storageTier": storage_tier,
+        "storageEpoch": storage_epoch,
+        "archiveSizeBytes": m.archive_size_bytes,
+        "coldStoredAt": m.cold_stored_at_ms.filter(|&ms| ms > 0).map(proto_ms_to_iso),
     })
 }
 
@@ -1080,6 +1094,316 @@ pub async fn fetch_fod_from_car(
         }
     )).await.ok()?;
     Some(res.into_inner())
+}
+
+// ---------------------------------------------------------------------------
+// Fleet Storage, Cold-Store & Archive gRPC Helpers (ATC-first)
+// ---------------------------------------------------------------------------
+
+async fn connect_mission_client_atc_first(
+    state: &AppState,
+    timeout_secs: u64,
+) -> Option<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        if let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) {
+            if let Ok(ch) = ep
+                .connect_timeout(Duration::from_millis(1500))
+                .timeout(Duration::from_secs(timeout_secs))
+                .connect()
+                .await
+            {
+                return Some(
+                    proto_defination::mission::mission_service_client::MissionServiceClient::new(ch)
+                        .max_decoding_message_size(64 * 1024 * 1024)
+                        .max_encoding_message_size(64 * 1024 * 1024),
+                );
+            }
+        }
+    }
+    None
+}
+
+async fn connect_mission_client_atc_only(
+    state: &AppState,
+    timeout_secs: u64,
+) -> anyhow::Result<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>> {
+    let ep = tonic::transport::Endpoint::from_shared(state.cfg.atc_backend_url.clone())?;
+    let ch = ep
+        .connect_timeout(Duration::from_millis(2000))
+        .timeout(Duration::from_secs(timeout_secs))
+        .connect()
+        .await?;
+    Ok(
+        proto_defination::mission::mission_service_client::MissionServiceClient::new(ch)
+            .max_decoding_message_size(64 * 1024 * 1024)
+            .max_encoding_message_size(64 * 1024 * 1024),
+    )
+}
+
+pub async fn atc_cold_store_mission(
+    state: &AppState,
+    mission_id: i64,
+    force_drop_car: bool,
+) -> anyhow::Result<proto_defination::mission::ColdStoreMissionResponse> {
+    let mut client = connect_mission_client_atc_only(state, 120).await?;
+    let resp = client
+        .cold_store_mission(tonic::Request::new(
+            proto_defination::mission::ColdStoreMissionRequest {
+                mission_id,
+                force_drop_car,
+            },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_restore_cold_mission(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<proto_defination::mission::RestoreColdMissionResponse> {
+    let mut client = connect_mission_client_atc_only(state, 120).await?;
+    let resp = client
+        .restore_cold_mission(tonic::Request::new(
+            proto_defination::mission::RestoreColdMissionRequest { mission_id },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_drop_car_hot_data(
+    state: &AppState,
+    mission_id: i64,
+    storage_epoch: i64,
+) -> anyhow::Result<proto_defination::mission::DropMissionHotDataResponse> {
+    let mut client = connect_mission_client_atc_only(state, 60).await?;
+    let resp = client
+        .drop_mission_hot_data(tonic::Request::new(
+            proto_defination::mission::DropMissionHotDataRequest {
+                mission_id,
+                target_tier: "CAR_DROPPED".to_string(),
+                storage_epoch,
+            },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_get_storage_overview(
+    state: &AppState,
+) -> anyhow::Result<proto_defination::mission::StorageOverviewResponse> {
+    let mut client = connect_mission_client_atc_only(state, 10).await?;
+    let resp = client
+        .get_storage_overview(tonic::Request::new(
+            proto_defination::mission::GetStorageOverviewRequest {},
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_update_storage_policy(
+    state: &AppState,
+    cfg: proto_defination::mission::StoragePolicyConfig,
+) -> anyhow::Result<proto_defination::mission::StoragePolicyConfig> {
+    let mut client = connect_mission_client_atc_only(state, 10).await?;
+    let resp = client
+        .update_storage_policy(tonic::Request::new(cfg))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn export_mission_archive_from_upstream(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<(String, Vec<u8>)> {
+    let mut client = connect_mission_client_atc_first(state, 120)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Neither ATC nor Car server is reachable"))?;
+    let mut stream = client
+        .export_mission_archive(tonic::Request::new(
+            proto_defination::mission::ExportMissionArchiveRequest { mission_id },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?
+        .into_inner();
+    let mut bytes = Vec::new();
+    let mut filename = format!("mission-{mission_id}.zoidpack");
+    while let Some(chunk) = stream.message().await? {
+        if !chunk.filename.is_empty() {
+            filename = chunk.filename;
+        }
+        bytes.extend_from_slice(&chunk.data);
+    }
+    Ok((filename, bytes))
+}
+
+pub async fn import_mission_archive_to_atc(
+    state: &AppState,
+    filename: String,
+    bytes: Vec<u8>,
+    import_to_fleet: bool,
+) -> anyhow::Result<proto_defination::mission::ImportMissionArchiveResponse> {
+    let mut client = connect_mission_client_atc_only(state, 120).await?;
+    let total_size = bytes.len() as i64;
+    let chunks: Vec<proto_defination::mission::ArchiveChunk> = bytes
+        .chunks(256 * 1024)
+        .map(|slice| proto_defination::mission::ArchiveChunk {
+            data: slice.to_vec(),
+            filename: filename.clone(),
+            total_size,
+            import_to_fleet,
+        })
+        .collect();
+    let resp = client
+        .import_mission_archive(tonic::Request::new(tokio_stream::iter(chunks)))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn fetch_all_groups_prefer_atc(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<Vec<proto_defination::fod_group::FodGroupEntity>> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) else {
+            continue;
+        };
+        let Ok(ch) = ep
+            .connect_timeout(Duration::from_millis(1200))
+            .timeout(Duration::from_secs(15))
+            .connect()
+            .await
+        else {
+            continue;
+        };
+        let mut client =
+            proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::new(ch);
+        let mut all = Vec::new();
+        let mut page = 1;
+        let mut ok_any = false;
+        loop {
+            let Ok(resp) = client
+                .list_groups(tonic::Request::new(
+                    proto_defination::fod_group::ListGroupsRequest {
+                        mission_id,
+                        pagination: Some(proto_defination::common::PaginationRequest {
+                            page,
+                            limit: 200,
+                        }),
+                        updated_since_ms: None,
+                    },
+                ))
+                .await
+            else {
+                break;
+            };
+            ok_any = true;
+            let inner = resp.into_inner();
+            let total_pages = inner.pagination.map(|p| p.total_pages).unwrap_or(1);
+            let len = inner.groups.len();
+            all.extend(inner.groups);
+            if page >= total_pages || len == 0 || page >= 200 {
+                break;
+            }
+            page += 1;
+        }
+        if ok_any && !all.is_empty() {
+            return Ok(all);
+        }
+    }
+    Ok(Vec::new())
+}
+
+pub async fn fetch_biggest_fods_prefer_atc(
+    state: &AppState,
+    mission_id: i64,
+) -> Vec<proto_defination::fod::FodEntity> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) else {
+            continue;
+        };
+        let Ok(ch) = ep
+            .connect_timeout(Duration::from_millis(1200))
+            .timeout(Duration::from_secs(20))
+            .connect()
+            .await
+        else {
+            continue;
+        };
+        let mut client = proto_defination::fod::fod_service_client::FodServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024);
+        if let Ok(resp) = client
+            .get_biggest_fod_per_group(tonic::Request::new(
+                proto_defination::fod::GetBiggestFodRequest { mission_id },
+            ))
+            .await
+        {
+            let fods = resp.into_inner().fods;
+            if !fods.is_empty() {
+                return fods;
+            }
+        }
+    }
+    Vec::new()
+}
+
+pub async fn fetch_cleared_fod_prefer_atc(
+    state: &AppState,
+    mission_id: i64,
+    group_id: i64,
+) -> Option<proto_defination::cleared_fod::ClearedFodEntity> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        if let Some(mut client) = connect_cleared_fod_client_for_url(url).await {
+            if let Ok(resp) = client
+                .find_cleared_fod(tonic::Request::new(
+                    proto_defination::cleared_fod::FindClearedFodRequest {
+                        mission_id,
+                        group_id,
+                    },
+                ))
+                .await
+            {
+                return Some(resp.into_inner());
+            }
+        }
+    }
+    None
+}
+
+pub async fn fetch_image_prefer_atc(
+    state: &AppState,
+    sha256: &str,
+) -> Option<Vec<u8>> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        let Some(mut client) = connect_image_client_for_url(url).await else {
+            continue;
+        };
+        let Ok(stream_res) = client
+            .download_image(tonic::Request::new(
+                proto_defination::image::ImageDownloadRequest {
+                    sha256: sha256.to_string(),
+                    thumbnail: false,
+                },
+            ))
+            .await
+        else {
+            continue;
+        };
+        let mut stream = stream_res.into_inner();
+        let mut all_bytes = Vec::new();
+        while let Ok(Some(chunk)) = stream.message().await {
+            all_bytes.extend_from_slice(&chunk.data);
+        }
+        if !all_bytes.is_empty() {
+            return Some(all_bytes);
+        }
+    }
+    fetch_image_from_car(state, sha256, false).await
 }
 
 async fn connect_user_client(url: &str) -> Option<proto_defination::user::user_service_client::UserServiceClient<tonic::transport::Channel>> {

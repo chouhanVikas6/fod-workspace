@@ -57,6 +57,12 @@ impl ClearedFodService for ClearedFodServiceImpl {
         request: Request<RecordClearedFodRequest>,
     ) -> Result<Response<ClearedFodEntity>, Status> {
         let req = request.into_inner();
+        if self.db.is_mission_cold_stored(req.mission_id).await.unwrap_or(false) {
+            return Err(Status::failed_precondition(format!(
+                "Mission {} is cold-stored (frozen); restore it before recording cleared FODs",
+                req.mission_id
+            )));
+        }
         let _ = self.db.ensure_mission_exists(req.mission_id).await;
 
         let status = proto_defination::common::ClearedFodStatus::try_from(req.status)

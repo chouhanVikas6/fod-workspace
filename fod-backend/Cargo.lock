@@ -2991,6 +2991,7 @@ dependencies = [
  "uuid",
  "zoid-core",
  "zoid-replication",
+ "zoid-storage",
 ]
 
 [[package]]
@@ -3007,7 +3008,11 @@ dependencies = [
 name = "zoid-storage"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "flate2",
  "image",
+ "serde",
+ "serde_json",
  "sha2",
  "tokio",
  "tracing",
