@@ -66,6 +66,9 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             "biggestFodSize" INTEGER,
             "dirty" BOOLEAN DEFAULT 0,
             "version" INTEGER DEFAULT 1,
+            "versionVector" TEXT DEFAULT '{}',
+            "decidedAtMs" INTEGER DEFAULT 0,
+            "updatedBy" TEXT DEFAULT '',
             "createdAt" DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
             "updatedAt" DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
             CONSTRAINT "FodGroup_missionId_fkey" FOREIGN KEY ("missionId") REFERENCES "Mission" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -170,6 +173,15 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Additive column migration for existing SQLite databases.
     let _ = sqlx::query(r#"ALTER TABLE "Mission" ADD COLUMN "displayId" INTEGER"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "FodGroup" ADD COLUMN "versionVector" TEXT DEFAULT '{}'"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "FodGroup" ADD COLUMN "decidedAtMs" INTEGER DEFAULT 0"#)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(r#"ALTER TABLE "FodGroup" ADD COLUMN "updatedBy" TEXT DEFAULT ''"#)
         .execute(pool)
         .await;
 

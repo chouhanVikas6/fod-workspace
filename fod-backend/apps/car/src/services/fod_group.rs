@@ -5,7 +5,7 @@ use proto_defination::fod_group::{
     ListGroupsRequest, ResolutionResult, ResolveGroupsRequest, ResolveGroupsResponse,
     StreamGroupsRequest,
 };
-use proto_defination::replication::CommandOutcome;
+use proto_defination::replication::{change, Change, CommandOutcome};
 use std::pin::Pin;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
@@ -17,12 +17,23 @@ use zoid_db::Db;
 pub struct FodGroupServiceImpl {
     db: Db,
     group_tx: broadcast::Sender<FodGroupEntity>,
+    change_tx: broadcast::Sender<Change>,
     node_id: String,
 }
 
 impl FodGroupServiceImpl {
-    pub fn new(db: Db, group_tx: broadcast::Sender<FodGroupEntity>, node_id: String) -> Self {
-        Self { db, group_tx, node_id }
+    pub fn new(
+        db: Db,
+        group_tx: broadcast::Sender<FodGroupEntity>,
+        change_tx: broadcast::Sender<Change>,
+        node_id: String,
+    ) -> Self {
+        Self {
+            db,
+            group_tx,
+            change_tx,
+            node_id,
+        }
     }
 }
 
@@ -40,10 +51,14 @@ impl FodGroupService for FodGroupServiceImpl {
         let page = pagination.page.max(1) as i64;
         let limit = pagination.limit.clamp(1, 200) as i64;
         let offset = (page - 1) * limit;
+        let updated_since = req
+            .updated_since_ms
+            .filter(|&ms| ms > 0)
+            .and_then(chrono::DateTime::from_timestamp_millis);
 
         let (groups, total_items) = self
             .db
-            .list_fod_groups(req.mission_id, limit, offset)
+            .list_fod_groups_since(req.mission_id, limit, offset, updated_since)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
@@ -166,15 +181,24 @@ impl FodGroupService for FodGroupServiceImpl {
                                     &res.command_id,
                                 )
                                 .await;
-                            let _ = self
+                            let new_seq = self
                                 .db
                                 .append_change(2, &format!("{}:{}", res.mission_id, res.group_id))
-                                .await;
+                                .await
+                                .unwrap_or(0);
                             let _ = self
                                 .db
                                 .record_applied_command(cmd_uuid, CommandOutcome::Applied as i16, ug.version)
                                 .await;
                             let _ = self.group_tx.send(proto_ug.clone());
+                            if new_seq > 0 {
+                                let _ = self.change_tx.send(Change {
+                                    seq: new_seq,
+                                    entity: Some(change::Entity::Group(proto_ug.clone())),
+                                    frame_jpeg: Vec::new(),
+                                    cleared_images: Vec::new(),
+                                });
+                            }
                             proto_ug
                         }
                         None => before.to_proto(),

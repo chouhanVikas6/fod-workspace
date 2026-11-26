@@ -1,14 +1,13 @@
 use proto_defination::common::{FodGroupStatus as ProtoGroupStatus, PaginationMeta};
 use proto_defination::fod_group::fod_group_service_server::FodGroupService;
 use proto_defination::fod_group::{
-    FodGroupEntity, FodGroupListResponse, GroupCountRequest, GroupCountResponse,
-    ListGroupsRequest, ResolutionResult, ResolveGroupsRequest, ResolveGroupsResponse,
-    StreamGroupsRequest,
+    FodGroupEntity, FodGroupListResponse, GroupCountRequest, GroupCountResponse, ListGroupsRequest,
+    ResolutionResult, ResolveGroupsRequest, ResolveGroupsResponse, StreamGroupsRequest,
 };
 use std::pin::Pin;
 use tokio::sync::{broadcast, mpsc};
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 use tonic::{Request, Response, Status};
 use zoid_db::Db;
 
@@ -42,17 +41,20 @@ impl FodGroupService for AtcFodGroupServiceImpl {
         request: Request<ListGroupsRequest>,
     ) -> Result<Response<FodGroupListResponse>, Status> {
         let req = request.into_inner();
-        let pagination = req.pagination.unwrap_or(proto_defination::common::PaginationRequest {
-            page: 1,
-            limit: 50,
-        });
+        let pagination = req
+            .pagination
+            .unwrap_or(proto_defination::common::PaginationRequest { page: 1, limit: 50 });
         let page = pagination.page.max(1) as i64;
         let limit = pagination.limit.clamp(1, 200) as i64;
         let offset = (page - 1) * limit;
+        let updated_since = req
+            .updated_since_ms
+            .filter(|&ms| ms > 0)
+            .and_then(chrono::DateTime::from_timestamp_millis);
 
         let (groups, total_items) = self
             .db
-            .list_fod_groups(req.mission_id, limit, offset)
+            .list_fod_groups_since(req.mission_id, limit, offset, updated_since)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
@@ -129,33 +131,40 @@ impl FodGroupService for AtcFodGroupServiceImpl {
                 decided_at_ms: 0,
                 updated_by: String::new(),
             };
-            let _ = self.db.insert_replicated_group_if_absent(&placeholder, false).await;
+            let _ = self
+                .db
+                .insert_replicated_group_if_absent(&placeholder, false)
+                .await;
 
-            let mutation = self.db.mutate_fod_group(res.mission_id, res.group_id, |current| {
-                let local = current.versioned();
-                let base_vv = if !res.base_version_vector.is_empty() {
-                    Some(zoid_replication::vv_from_map(&res.base_version_vector))
-                } else if res.base_version > 0 && local.vv.is_empty() {
-                    let mut b = std::collections::BTreeMap::new();
-                    b.insert("legacy".to_string(), res.base_version);
-                    Some(b)
-                } else {
-                    None
-                };
-                let (outcome, next_v) = zoid_replication::apply_local_decision(
-                    &local,
-                    desired_proto,
-                    base_vv.as_ref(),
-                    decided_at,
-                    &actor,
-                    &self.node_id,
-                );
-                let write = next_v.map(|st| zoid_db::models::GroupWrite {
-                    state: st,
-                    dirty: true,
-                });
-                (write, outcome)
-            }).await.map_err(|e| Status::internal(e.to_string()))?;
+            let mutation = self
+                .db
+                .mutate_fod_group(res.mission_id, res.group_id, |current| {
+                    let local = current.versioned();
+                    let base_vv = if !res.base_version_vector.is_empty() {
+                        Some(zoid_replication::vv_from_map(&res.base_version_vector))
+                    } else if res.base_version > 0 && local.vv.is_empty() {
+                        let mut b = std::collections::BTreeMap::new();
+                        b.insert("legacy".to_string(), res.base_version);
+                        Some(b)
+                    } else {
+                        None
+                    };
+                    let (outcome, next_v) = zoid_replication::apply_local_decision(
+                        &local,
+                        desired_proto,
+                        base_vv.as_ref(),
+                        decided_at,
+                        &actor,
+                        &self.node_id,
+                    );
+                    let write = next_v.map(|st| zoid_db::models::GroupWrite {
+                        state: st,
+                        dirty: true,
+                    });
+                    (write, outcome)
+                })
+                .await
+                .map_err(|e| Status::internal(e.to_string()))?;
 
             let (outcome_str, final_group) = match mutation {
                 None => ("NOT_FOUND".to_string(), None),

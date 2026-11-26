@@ -213,9 +213,10 @@ impl ReplicationService for ReplicationServiceImpl {
                         })),
                     };
 
-                    // Queue priority snapshot of recent missions + their groups & biggest FODs
-                    // so recent missions (e.g. 20, 19, 18) are populated on ATC immediately
-                    // without waiting behind historical change_log backlogs.
+                    // If this is a fresh replica (cursor == 0), send an initial snapshot of
+                    // recent missions + their groups & biggest FODs.
+                    // When cursor > 0, the replica already has the base data and only needs
+                    // incremental updated data from change_log (plus mission metadata & templates).
                     if let Ok((missions, _)) = db.list_missions(10, 0).await {
                         let mut m_changes = Vec::with_capacity(missions.len());
                         for m in &missions {
@@ -254,84 +255,86 @@ impl ReplicationService for ReplicationServiceImpl {
                             }
                         }
 
-                        for m in missions.iter().take(6) {
-                            if let Ok(fods) = db.get_biggest_fods_for_mission(m.id).await {
-                                let mut batch_changes: Vec<Change> = Vec::new();
-                                let mut batch_bytes: usize = 0;
-                                for f in fods {
-                                    let f_proto = f.to_proto();
-                                    let frame_jpeg = load_fod_frame(&storage, &f_proto).await;
-                                    batch_bytes += frame_jpeg.len();
-                                    batch_changes.push(Change {
-                                        seq: replica_cursor,
-                                        entity: Some(change::Entity::Fod(f_proto)),
-                                        frame_jpeg,
-                                        cleared_images: Vec::new(),
-                                    });
-                                    if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 100 {
-                                        priority_batches.push_back(ChangeBatch {
-                                            from_seq: replica_cursor,
-                                            to_seq: replica_cursor,
-                                            changes: std::mem::take(&mut batch_changes),
-                                        });
-                                        batch_bytes = 0;
-                                    }
-                                }
-                                if !batch_changes.is_empty() {
-                                    priority_batches.push_back(ChangeBatch {
-                                        from_seq: replica_cursor,
-                                        to_seq: replica_cursor,
-                                        changes: batch_changes,
-                                    });
-                                }
-                            }
-                            if let Ok((groups, _)) = db.list_fod_groups(m.id, 5000, 0).await {
-                                for chunk in groups.chunks(200) {
-                                    let changes: Vec<Change> = chunk
-                                        .iter()
-                                        .map(|g| Change {
+                        if replica_cursor == 0 {
+                            for m in missions.iter().take(6) {
+                                if let Ok(fods) = db.get_biggest_fods_for_mission(m.id).await {
+                                    let mut batch_changes: Vec<Change> = Vec::new();
+                                    let mut batch_bytes: usize = 0;
+                                    for f in fods {
+                                        let f_proto = f.to_proto();
+                                        let frame_jpeg = load_fod_frame(&storage, &f_proto).await;
+                                        batch_bytes += frame_jpeg.len();
+                                        batch_changes.push(Change {
                                             seq: replica_cursor,
-                                            entity: Some(change::Entity::Group(g.to_proto())),
-                                            frame_jpeg: Vec::new(),
+                                            entity: Some(change::Entity::Fod(f_proto)),
+                                            frame_jpeg,
                                             cleared_images: Vec::new(),
-                                        })
-                                        .collect();
-                                    priority_batches.push_back(ChangeBatch {
-                                        from_seq: replica_cursor,
-                                        to_seq: replica_cursor,
-                                        changes,
-                                    });
-                                }
-                            }
-                            if let Ok(cleared_list) = db.list_cleared_fods_for_mission(m.id).await {
-                                let mut batch_changes: Vec<Change> = Vec::new();
-                                let mut batch_bytes: usize = 0;
-                                for c in cleared_list {
-                                    let c_proto = c.to_proto();
-                                    let cleared_images = load_cleared_images(&storage, &c_proto).await;
-                                    let img_bytes: usize = cleared_images.iter().map(|b| b.len()).sum();
-                                    batch_bytes += img_bytes;
-                                    batch_changes.push(Change {
-                                        seq: replica_cursor,
-                                        entity: Some(change::Entity::Cleared(c_proto)),
-                                        frame_jpeg: Vec::new(),
-                                        cleared_images,
-                                    });
-                                    if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 50 {
+                                        });
+                                        if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 100 {
+                                            priority_batches.push_back(ChangeBatch {
+                                                from_seq: replica_cursor,
+                                                to_seq: replica_cursor,
+                                                changes: std::mem::take(&mut batch_changes),
+                                            });
+                                            batch_bytes = 0;
+                                        }
+                                    }
+                                    if !batch_changes.is_empty() {
                                         priority_batches.push_back(ChangeBatch {
                                             from_seq: replica_cursor,
                                             to_seq: replica_cursor,
-                                            changes: std::mem::take(&mut batch_changes),
+                                            changes: batch_changes,
                                         });
-                                        batch_bytes = 0;
                                     }
                                 }
-                                if !batch_changes.is_empty() {
-                                    priority_batches.push_back(ChangeBatch {
-                                        from_seq: replica_cursor,
-                                        to_seq: replica_cursor,
-                                        changes: batch_changes,
-                                    });
+                                if let Ok((groups, _)) = db.list_fod_groups(m.id, 5000, 0).await {
+                                    for chunk in groups.chunks(200) {
+                                        let changes: Vec<Change> = chunk
+                                            .iter()
+                                            .map(|g| Change {
+                                                seq: replica_cursor,
+                                                entity: Some(change::Entity::Group(g.to_proto())),
+                                                frame_jpeg: Vec::new(),
+                                                cleared_images: Vec::new(),
+                                            })
+                                            .collect();
+                                        priority_batches.push_back(ChangeBatch {
+                                            from_seq: replica_cursor,
+                                            to_seq: replica_cursor,
+                                            changes,
+                                        });
+                                    }
+                                }
+                                if let Ok(cleared_list) = db.list_cleared_fods_for_mission(m.id).await {
+                                    let mut batch_changes: Vec<Change> = Vec::new();
+                                    let mut batch_bytes: usize = 0;
+                                    for c in cleared_list {
+                                        let c_proto = c.to_proto();
+                                        let cleared_images = load_cleared_images(&storage, &c_proto).await;
+                                        let img_bytes: usize = cleared_images.iter().map(|b| b.len()).sum();
+                                        batch_bytes += img_bytes;
+                                        batch_changes.push(Change {
+                                            seq: replica_cursor,
+                                            entity: Some(change::Entity::Cleared(c_proto)),
+                                            frame_jpeg: Vec::new(),
+                                            cleared_images,
+                                        });
+                                        if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 50 {
+                                            priority_batches.push_back(ChangeBatch {
+                                                from_seq: replica_cursor,
+                                                to_seq: replica_cursor,
+                                                changes: std::mem::take(&mut batch_changes),
+                                            });
+                                            batch_bytes = 0;
+                                        }
+                                    }
+                                    if !batch_changes.is_empty() {
+                                        priority_batches.push_back(ChangeBatch {
+                                            from_seq: replica_cursor,
+                                            to_seq: replica_cursor,
+                                            changes: batch_changes,
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -579,24 +582,34 @@ impl ReplicationService for ReplicationServiceImpl {
                             }
                         }
 
-                        // 2. If priority batches are done, stream incremental change_log batches
-                        if priority_batches.is_empty() {
-                            let current_head = db.get_head_seq().await.unwrap_or(0);
-                            for _ in 0..2 {
-                                if replica_cursor >= current_head {
-                                    break;
-                                }
-                                let change_rows = db.get_changes_since(replica_cursor, 200).await.unwrap_or_default();
-                                if change_rows.is_empty() {
-                                    break;
-                                }
-                                let mut changes = Vec::with_capacity(change_rows.len());
-                                let mut batch_bytes: usize = 0;
-                                let mut last_seq = replica_cursor;
+                                if priority_batches.is_empty() {
+                                    let current_head = db.get_head_seq().await.unwrap_or(0);
+                                    for _ in 0..8 {
+                                        if replica_cursor >= current_head {
+                                            break;
+                                        }
+                                        let change_rows = db.get_changes_since(replica_cursor, 500).await.unwrap_or_default();
+                                        if change_rows.is_empty() {
+                                            break;
+                                        }
+                                        let mut changes = Vec::with_capacity(change_rows.len());
+                                        let mut batch_bytes: usize = 0;
+                                        let mut last_seq = replica_cursor;
 
-                                for row in change_rows {
-                                    last_seq = row.seq;
-                                    let c = match row.entity {
+                                        // Deduplicate identical (entity, entity_key) within the window so we only
+                                        // resolve and transmit the latest state once per entity.
+                                        let mut latest_seq_for_entity: std::collections::HashMap<(i16, String), i64> =
+                                            std::collections::HashMap::with_capacity(change_rows.len());
+                                        for row in &change_rows {
+                                            latest_seq_for_entity.insert((row.entity, row.entity_key.clone()), row.seq);
+                                        }
+
+                                        for row in change_rows {
+                                            last_seq = row.seq;
+                                            if latest_seq_for_entity.get(&(row.entity, row.entity_key.clone())).copied() != Some(row.seq) {
+                                                continue;
+                                            }
+                                            let c = match row.entity {
                                         1 => {
                                             if let Ok(id) = row.entity_key.parse::<i64>() {
                                                 db.get_mission(id).await.ok().flatten().map(|m| Change {

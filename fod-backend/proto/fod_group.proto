@@ -32,6 +32,7 @@ message FodGroupEntity {
 message ListGroupsRequest {
     int64 mission_id = 1;
     zoid.common.PaginationRequest pagination = 2;
+    optional int64 updated_since_ms = 3;
 }
 
 message FodGroupListResponse {

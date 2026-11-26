@@ -159,6 +159,12 @@ pub struct FodGroup {
     pub biggest_fod_size: Option<i32>,
     pub dirty: Option<bool>,
     pub version: Option<i64>,
+    #[sqlx(default)]
+    pub version_vector: Option<String>,
+    #[sqlx(default)]
+    pub decided_at_ms: Option<i64>,
+    #[sqlx(default)]
+    pub updated_by: Option<String>,
     #[serde(with = "iso_millis")]
     pub created_at: NaiveDateTime,
     #[serde(with = "iso_millis")]

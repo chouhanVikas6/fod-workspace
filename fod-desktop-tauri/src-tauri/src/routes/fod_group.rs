@@ -165,13 +165,15 @@ async fn update(method: Method,
         Some(st) if svc::FOD_GROUP_STATUS.contains(&st) => st.to_string(),
         _ => return err500("Failed to retrieve fod group"),
     };
+    let decided_at_ms = chrono::Utc::now().timestamp_millis();
     let updated: Result<Option<crate::models::FodGroup>, sqlx::Error> = sqlx::query_as(
-        "UPDATE \"FodGroup\" SET \"status\" = $1, \"dirty\" = true, \"updatedAt\" = $2 WHERE \"groupId\" = $3 AND \"missionId\" = $4 RETURNING *",
+        "UPDATE \"FodGroup\" SET \"status\" = $1, \"dirty\" = true, \"decidedAtMs\" = $5, \"updatedAt\" = $2 WHERE \"groupId\" = $3 AND \"missionId\" = $4 RETURNING *",
     )
     .bind(&status)
     .bind(svc::now_naive())
     .bind(group_id)
     .bind(mission_id)
+    .bind(decided_at_ms)
     .fetch_optional(&s.db)
     .await;
     match updated {

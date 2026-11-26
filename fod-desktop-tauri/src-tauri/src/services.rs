@@ -239,6 +239,9 @@ fn proto_fod_group_to_json(g: &proto_defination::fod_group::FodGroupEntity) -> V
         "biggestFod": g.biggest_fod,
         "biggestFodSize": g.biggest_fod_size,
         "version": g.version,
+        "versionVector": g.version_vector,
+        "decidedAtMs": g.decided_at_ms,
+        "updatedBy": g.updated_by,
         "createdAt": proto_ms_to_iso(g.created_at),
         "updatedAt": proto_ms_to_iso(g.updated_at),
         "primaryPacket": Value::Null,
@@ -767,6 +770,10 @@ pub async fn call_car_grpc(
             .and_then(|d| d.get("missionId").and_then(Value::as_i64))
             .or_else(|| endpoint.strip_prefix("/api/fod-group/all/").and_then(|s| s.parse::<i64>().ok()))
             .unwrap_or(1);
+        let updated_since_ms = data
+            .as_ref()
+            .and_then(|d| d.get("updatedSinceMs").and_then(Value::as_i64))
+            .filter(|&ms| ms > 0);
         let mut client = connect_fod_group_client(state).await?;
         let mut all_groups = Vec::new();
         let mut page = 1;
@@ -775,6 +782,7 @@ pub async fn call_car_grpc(
                 proto_defination::fod_group::ListGroupsRequest {
                     mission_id,
                     pagination: Some(proto_defination::common::PaginationRequest { page, limit: 200 }),
+                    updated_since_ms,
                 },
             )).await {
                 Ok(r) => r.into_inner(),
@@ -806,6 +814,23 @@ pub async fn call_car_grpc(
         let group_id = gid_str.parse::<i64>().ok()?;
         let mission_id = data.as_ref().and_then(|d| d.get("missionId").and_then(Value::as_i64)).unwrap_or(1);
         let status = data.as_ref().and_then(|d| d.get("status").and_then(Value::as_str)).unwrap_or("NEW");
+        let base_version = data.as_ref().and_then(|d| d.get("version").and_then(Value::as_i64)).unwrap_or(0);
+        let base_version_vector: std::collections::HashMap<String, i64> = data
+            .as_ref()
+            .and_then(|d| d.get("versionVector"))
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    serde_json::from_str(s).ok()
+                } else {
+                    serde_json::from_value(v.clone()).ok()
+                }
+            })
+            .unwrap_or_default();
+        let decided_at_ms = data
+            .as_ref()
+            .and_then(|d| d.get("decidedAtMs").and_then(Value::as_i64))
+            .filter(|&ms| ms > 0)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         let actor = data
             .as_ref()
             .and_then(|d| d.get("updatedBy").or_else(|| d.get("actor")).and_then(Value::as_str))
@@ -819,24 +844,27 @@ pub async fn call_car_grpc(
             mission_id,
             group_id,
             desired_status: proto_group_status_from_str(status),
-            base_version: 0,
-            base_version_vector: Default::default(),
-            decided_at_ms: chrono::Utc::now().timestamp_millis(),
+            base_version,
+            base_version_vector,
+            decided_at_ms,
             origin_node: actor,
         }];
         let res = client.resolve_groups(tonic::Request::new(
             proto_defination::fod_group::ResolveGroupsRequest { resolutions },
         )).await.ok()?.into_inner();
-        let resolved_version = res
-            .results
-            .first()
-            .and_then(|r| r.group.as_ref())
-            .map(|g| g.version);
+        let first_group = res.results.first().and_then(|r| r.group.as_ref());
+        let resolved_version = first_group.map(|g| g.version);
+        let resolved_vv = first_group.map(|g| &g.version_vector);
+        let resolved_decided_at = first_group.map(|g| g.decided_at_ms);
+        let resolved_updated_by = first_group.map(|g| g.updated_by.as_str());
         return Some(json!({
             "status": 200,
             "statusCode": 200,
             "message": "Updated",
             "version": resolved_version,
+            "versionVector": resolved_vv,
+            "decidedAtMs": resolved_decided_at,
+            "updatedBy": resolved_updated_by,
         }));
     }
 
@@ -951,14 +979,30 @@ pub async fn call_car_grpc(
                     }
                 }
 
+                let base_version_vector: std::collections::HashMap<String, i64> = item
+                    .get("versionVector")
+                    .and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            serde_json::from_str(s).ok()
+                        } else {
+                            serde_json::from_value(v.clone()).ok()
+                        }
+                    })
+                    .unwrap_or_default();
+                let decided_at_ms = item
+                    .get("decidedAtMs")
+                    .and_then(Value::as_i64)
+                    .filter(|&ms| ms > 0)
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
                 resolutions.push(proto_defination::fod_group::GroupResolution {
                     command_id: uuid::Uuid::new_v4().to_string(),
                     mission_id: mid,
                     group_id: gid,
                     desired_status: proto_group_status_from_str(st),
                     base_version,
-                    base_version_vector: Default::default(),
-                    decided_at_ms: chrono::Utc::now().timestamp_millis(),
+                    base_version_vector,
+                    decided_at_ms,
                     origin_node: actor,
                 });
             }
@@ -1837,16 +1881,18 @@ pub async fn create_cleared_fod_batch(
         qb.build().execute(&state.db).await?;
 
         // Then FodGroup → dirty + CLEARED (upsert to ensure row exists)
+        let decided_at_ms = chrono::Utc::now().timestamp_millis();
         let group: Option<crate::models::FodGroup> = sqlx::query_as(
-            r#"INSERT INTO "FodGroup" ("id", "groupId", "missionId", "dirty", "status", "createdAt", "updatedAt")
-               VALUES ($1, $2, $3, true, 'CLEARED', $4, $4)
-               ON CONFLICT ("groupId", "missionId") DO UPDATE SET "dirty" = true, "status" = 'CLEARED', "updatedAt" = $4
+            r#"INSERT INTO "FodGroup" ("id", "groupId", "missionId", "dirty", "status", "decidedAtMs", "createdAt", "updatedAt")
+               VALUES ($1, $2, $3, true, 'CLEARED', $5, $4, $4)
+               ON CONFLICT ("groupId", "missionId") DO UPDATE SET "dirty" = true, "status" = 'CLEARED', "decidedAtMs" = $5, "updatedAt" = $4
                RETURNING *"#,
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(group_id)
         .bind(row_mission_id)
         .bind(now)
+        .bind(decided_at_ms)
         .fetch_optional(&state.db)
         .await?;
         match group {

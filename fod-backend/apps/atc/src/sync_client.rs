@@ -3,7 +3,7 @@ use proto_defination::replication::primary_message::Msg as PrimaryMsg;
 use proto_defination::replication::replica_message::Msg as ReplicaMsg;
 use proto_defination::replication::replication_service_client::ReplicationServiceClient;
 use proto_defination::replication::{
-    change, Ack, ClearedFodPush, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage,
+    Ack, ClearedFodPush, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage, change,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,7 +59,14 @@ impl SyncClient {
             group_push_tx,
             cleared_push_tx,
         };
-        (client, cmd_rx, user_rx, template_rx, group_push_rx, cleared_push_rx)
+        (
+            client,
+            cmd_rx,
+            user_rx,
+            template_rx,
+            group_push_rx,
+            cleared_push_rx,
+        )
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
@@ -70,7 +77,9 @@ impl SyncClient {
         self.user_tx.clone()
     }
 
-    pub fn template_sender(&self) -> mpsc::Sender<proto_defination::mission::MissionTemplateEntity> {
+    pub fn template_sender(
+        &self,
+    ) -> mpsc::Sender<proto_defination::mission::MissionTemplateEntity> {
         self.template_tx.clone()
     }
 
@@ -228,7 +237,10 @@ impl SyncClient {
                     }
 
                     if let Ok(Some(active)) = self.db.get_active_mission().await {
-                        tracing::warn!("Car is down — terminating active mission {} on ATC replica", active.id);
+                        tracing::warn!(
+                            "Car is down — terminating active mission {} on ATC replica",
+                            active.id
+                        );
                         let _ = self.db.terminate_mission(active.id).await;
                     }
                 }
@@ -241,7 +253,10 @@ impl SyncClient {
                     );
 
                     if let Ok(Some(active)) = self.db.get_active_mission().await {
-                        tracing::warn!("Car is down — terminating active mission {} on ATC replica", active.id);
+                        tracing::warn!(
+                            "Car is down — terminating active mission {} on ATC replica",
+                            active.id
+                        );
                         let _ = self.db.terminate_mission(active.id).await;
                     }
                 }
@@ -306,17 +321,29 @@ impl SyncClient {
                             change::Entity::Group(g) => {
                                 self.ensure_mission_exists(g.mission_id).await?;
                                 let _ = self.db.insert_replicated_group_if_absent(&g, false).await;
-                                let _ = self.db.merge_group_biggest_fod(g.mission_id, g.group_id, g.biggest_fod.as_deref(), g.biggest_fod_size).await;
+                                let _ = self
+                                    .db
+                                    .merge_group_biggest_fod(
+                                        g.mission_id,
+                                        g.group_id,
+                                        g.biggest_fod.as_deref(),
+                                        g.biggest_fod_size,
+                                    )
+                                    .await;
                                 let incoming = zoid_db::models::versioned_from_proto(&g);
                                 let mut updated_group = None;
                                 let mut needs_push_back = false;
 
                                 if let Ok(Some((_before, after, dec))) = self.db.mutate_fod_group(g.mission_id, g.group_id, |current| {
                                     let local = current.versioned();
+                                    let order = zoid_replication::vv_compare(&incoming.vv, &local.vv);
                                     let dec = zoid_replication::merge_remote(&local, &incoming, &self.node_id);
                                     match dec {
                                         zoid_replication::MergeDecision::KeepLocal => {
-                                            let write = if !current.dirty {
+                                            // Only push back to Car if our local vector is strictly ahead of Car's
+                                            // (or local is already marked dirty). Never push back when vectors are Equal!
+                                            let ahead = order == zoid_replication::VvOrder::Less || current.dirty;
+                                            let write = if ahead && !current.dirty {
                                                 Some(zoid_db::models::GroupWrite {
                                                     state: local.clone(),
                                                     dirty: true,
@@ -324,14 +351,14 @@ impl SyncClient {
                                             } else {
                                                 None
                                             };
-                                            (write, zoid_replication::MergeDecision::KeepLocal)
+                                            (write, (zoid_replication::MergeDecision::KeepLocal, ahead))
                                         }
                                         zoid_replication::MergeDecision::TakeIncoming => {
                                             let write = zoid_db::models::GroupWrite {
                                                 state: incoming.clone(),
                                                 dirty: false,
                                             };
-                                            (Some(write), zoid_replication::MergeDecision::TakeIncoming)
+                                            (Some(write), (zoid_replication::MergeDecision::TakeIncoming, false))
                                         }
                                         zoid_replication::MergeDecision::Merged(merged_state) => {
                                             let merged_clone = merged_state.clone();
@@ -339,21 +366,21 @@ impl SyncClient {
                                                 state: merged_state,
                                                 dirty: true,
                                             };
-                                            (Some(write), zoid_replication::MergeDecision::Merged(merged_clone))
+                                            (Some(write), (zoid_replication::MergeDecision::Merged(merged_clone), true))
                                         }
                                     }
                                 }).await {
                                     match dec {
-                                        zoid_replication::MergeDecision::KeepLocal => {
-                                            needs_push_back = true;
+                                        (zoid_replication::MergeDecision::KeepLocal, ahead) => {
+                                            needs_push_back = ahead;
                                         }
-                                        zoid_replication::MergeDecision::TakeIncoming => {
+                                        (zoid_replication::MergeDecision::TakeIncoming, _) => {
                                             if let Some(a) = after {
                                                 let proto = a.to_proto();
                                                 let _ = self.group_tx.send(proto);
                                             }
                                         }
-                                        zoid_replication::MergeDecision::Merged(_) => {
+                                        (zoid_replication::MergeDecision::Merged(_), _) => {
                                             needs_push_back = true;
                                             if let Some(a) = after {
                                                 let proto = a.to_proto();
@@ -367,20 +394,34 @@ impl SyncClient {
                                 if needs_push_back {
                                     let push_entity = match updated_group {
                                         Some(eg) => Some(eg),
-                                        None => self.db.get_fod_group(g.mission_id, g.group_id).await.ok().flatten().map(|row| row.to_proto()),
+                                        None => self
+                                            .db
+                                            .get_fod_group(g.mission_id, g.group_id)
+                                            .await
+                                            .ok()
+                                            .flatten()
+                                            .map(|row| row.to_proto()),
                                     };
                                     if let Some(push_msg) = push_entity {
-                                        let _ = out_tx.send(ReplicaMessage {
-                                            msg: Some(ReplicaMsg::GroupPush(push_msg)),
-                                        }).await;
+                                        let _ = out_tx
+                                            .send(ReplicaMessage {
+                                                msg: Some(ReplicaMsg::GroupPush(push_msg)),
+                                            })
+                                            .await;
                                     }
                                 }
                             }
                             change::Entity::Fod(f) => {
                                 self.ensure_mission_exists(f.mission_id).await?;
                                 if !change.frame_jpeg.is_empty() {
-                                    if let Err(e) = self.storage.save_frame(&change.frame_jpeg).await {
-                                        tracing::warn!("Failed to save replicated FOD frame {}: {}", f.id, e);
+                                    if let Err(e) =
+                                        self.storage.save_frame(&change.frame_jpeg).await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to save replicated FOD frame {}: {}",
+                                            f.id,
+                                            e
+                                        );
                                     }
                                 }
                                 self.db.upsert_replicated_fod(&f).await?;
@@ -403,7 +444,9 @@ impl SyncClient {
                                     .before_image_sha256
                                     .iter()
                                     .chain(c.after_image_sha256.iter())
-                                    .filter(|sha| !sha.is_empty() && !self.storage.frame_path(sha).exists())
+                                    .filter(|sha| {
+                                        !sha.is_empty() && !self.storage.frame_path(sha).exists()
+                                    })
                                     .cloned()
                                     .collect();
                                 if !missing_shas.is_empty() {
@@ -441,11 +484,10 @@ impl SyncClient {
                                     .location
                                     .map(|l| (l.lat, l.lon, l.sd))
                                     .unwrap_or((0.0, 0.0, 0.0));
-                                let status = proto_defination::common::ClearedFodStatus::try_from(
-                                    c.status,
-                                )
-                                .map(zoid_db::models::ClearedFodStatus::from)
-                                .unwrap_or(zoid_db::models::ClearedFodStatus::Found);
+                                let status =
+                                    proto_defination::common::ClearedFodStatus::try_from(c.status)
+                                        .map(zoid_db::models::ClearedFodStatus::from)
+                                        .unwrap_or(zoid_db::models::ClearedFodStatus::Found);
 
                                 let row = zoid_db::models::ClearedFodRow {
                                     id: uuid::Uuid::parse_str(&c.id)
@@ -493,30 +535,58 @@ impl SyncClient {
                 let _ = out_tx.try_send(ack_msg);
             }
             Some(PrimaryMsg::GroupAck(ack)) => {
-                tracing::info!(
-                    "GroupAck received from Car: mission={}, group={}, outcome={}",
-                    ack.mission_id,
-                    ack.group_id,
-                    ack.outcome
-                );
+                if ack.outcome != "KEPT_PRIMARY" {
+                    tracing::info!(
+                        "GroupAck received from Car: mission={}, group={}, outcome={}",
+                        ack.mission_id,
+                        ack.group_id,
+                        ack.outcome
+                    );
+                } else {
+                    tracing::debug!(
+                        "GroupAck received from Car: mission={}, group={}, outcome={}",
+                        ack.mission_id,
+                        ack.group_id,
+                        ack.outcome
+                    );
+                }
                 if let Some(merged_g) = ack.merged {
                     let incoming = zoid_db::models::versioned_from_proto(&merged_g);
-                    let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |_current| {
-                        let write = zoid_db::models::GroupWrite {
-                            state: incoming.clone(),
-                            dirty: false,
-                        };
-                        (Some(write), ())
-                    }).await;
-                    let _ = self.group_tx.send(merged_g);
+                    let mut changed = false;
+                    let _ = self
+                        .db
+                        .mutate_fod_group(ack.mission_id, ack.group_id, |current| {
+                            let local = current.versioned();
+                            changed = local != incoming;
+                            let write = if changed || current.dirty {
+                                Some(zoid_db::models::GroupWrite {
+                                    state: incoming.clone(),
+                                    dirty: false,
+                                })
+                            } else {
+                                None
+                            };
+                            (write, ())
+                        })
+                        .await;
+                    if changed {
+                        let _ = self.group_tx.send(merged_g);
+                    }
                 } else {
-                    let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |current| {
-                        let write = zoid_db::models::GroupWrite {
-                            state: current.versioned(),
-                            dirty: false,
-                        };
-                        (Some(write), ())
-                    }).await;
+                    let _ = self
+                        .db
+                        .mutate_fod_group(ack.mission_id, ack.group_id, |current| {
+                            let write = if current.dirty {
+                                Some(zoid_db::models::GroupWrite {
+                                    state: current.versioned(),
+                                    dirty: false,
+                                })
+                            } else {
+                                None
+                            };
+                            (write, ())
+                        })
+                        .await;
                 }
             }
             Some(PrimaryMsg::Result(res)) => {

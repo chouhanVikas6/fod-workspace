@@ -193,23 +193,59 @@ impl Db {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<FodGroupRow>, i64)> {
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
+        self.list_fod_groups_since(mission_id, limit, offset, None)
+            .await
+    }
+
+    pub async fn list_fod_groups_since(
+        &self,
+        mission_id: i64,
+        limit: i64,
+        offset: i64,
+        updated_since: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(Vec<FodGroupRow>, i64)> {
+        if let Some(since) = updated_since {
+            let total: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1 AND updated_at > $2",
+            )
             .bind(mission_id)
+            .bind(since)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| ZoidError::Database(e.to_string()))?;
 
-        let rows = sqlx::query_as::<_, FodGroupRow>(
-            "SELECT * FROM fod_groups WHERE mission_id = $1 ORDER BY group_id ASC LIMIT $2 OFFSET $3",
-        )
-        .bind(mission_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| ZoidError::Database(e.to_string()))?;
+            let rows = sqlx::query_as::<_, FodGroupRow>(
+                "SELECT * FROM fod_groups WHERE mission_id = $1 AND updated_at > $2 ORDER BY updated_at ASC, group_id ASC LIMIT $3 OFFSET $4",
+            )
+            .bind(mission_id)
+            .bind(since)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
 
-        Ok((rows, total.0))
+            Ok((rows, total.0))
+        } else {
+            let total: (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
+                    .bind(mission_id)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+            let rows = sqlx::query_as::<_, FodGroupRow>(
+                "SELECT * FROM fod_groups WHERE mission_id = $1 ORDER BY group_id ASC LIMIT $2 OFFSET $3",
+            )
+            .bind(mission_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+            Ok((rows, total.0))
+        }
     }
 
     pub async fn upsert_fod_group(
