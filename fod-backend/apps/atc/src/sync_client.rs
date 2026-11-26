@@ -3,7 +3,7 @@ use proto_defination::replication::primary_message::Msg as PrimaryMsg;
 use proto_defination::replication::replica_message::Msg as ReplicaMsg;
 use proto_defination::replication::replication_service_client::ReplicationServiceClient;
 use proto_defination::replication::{
-    Ack, ClearedFodPush, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage, change,
+    change, Ack, ClearedFodPush, Command, Hello, NodeRole, Ping, PrimaryMessage, ReplicaMessage,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,14 +59,7 @@ impl SyncClient {
             group_push_tx,
             cleared_push_tx,
         };
-        (
-            client,
-            cmd_rx,
-            user_rx,
-            template_rx,
-            group_push_rx,
-            cleared_push_rx,
-        )
+        (client, cmd_rx, user_rx, template_rx, group_push_rx, cleared_push_rx)
     }
 
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
@@ -77,9 +70,7 @@ impl SyncClient {
         self.user_tx.clone()
     }
 
-    pub fn template_sender(
-        &self,
-    ) -> mpsc::Sender<proto_defination::mission::MissionTemplateEntity> {
+    pub fn template_sender(&self) -> mpsc::Sender<proto_defination::mission::MissionTemplateEntity> {
         self.template_tx.clone()
     }
 
@@ -237,10 +228,7 @@ impl SyncClient {
                     }
 
                     if let Ok(Some(active)) = self.db.get_active_mission().await {
-                        tracing::warn!(
-                            "Car is down — terminating active mission {} on ATC replica",
-                            active.id
-                        );
+                        tracing::warn!("Car is down — terminating active mission {} on ATC replica", active.id);
                         let _ = self.db.terminate_mission(active.id).await;
                     }
                 }
@@ -253,10 +241,7 @@ impl SyncClient {
                     );
 
                     if let Ok(Some(active)) = self.db.get_active_mission().await {
-                        tracing::warn!(
-                            "Car is down — terminating active mission {} on ATC replica",
-                            active.id
-                        );
+                        tracing::warn!("Car is down — terminating active mission {} on ATC replica", active.id);
                         let _ = self.db.terminate_mission(active.id).await;
                     }
                 }
@@ -321,15 +306,7 @@ impl SyncClient {
                             change::Entity::Group(g) => {
                                 self.ensure_mission_exists(g.mission_id).await?;
                                 let _ = self.db.insert_replicated_group_if_absent(&g, false).await;
-                                let _ = self
-                                    .db
-                                    .merge_group_biggest_fod(
-                                        g.mission_id,
-                                        g.group_id,
-                                        g.biggest_fod.as_deref(),
-                                        g.biggest_fod_size,
-                                    )
-                                    .await;
+                                let _ = self.db.merge_group_biggest_fod(g.mission_id, g.group_id, g.biggest_fod.as_deref(), g.biggest_fod_size).await;
                                 let incoming = zoid_db::models::versioned_from_proto(&g);
                                 let mut updated_group = None;
                                 let mut needs_push_back = false;
@@ -394,34 +371,20 @@ impl SyncClient {
                                 if needs_push_back {
                                     let push_entity = match updated_group {
                                         Some(eg) => Some(eg),
-                                        None => self
-                                            .db
-                                            .get_fod_group(g.mission_id, g.group_id)
-                                            .await
-                                            .ok()
-                                            .flatten()
-                                            .map(|row| row.to_proto()),
+                                        None => self.db.get_fod_group(g.mission_id, g.group_id).await.ok().flatten().map(|row| row.to_proto()),
                                     };
                                     if let Some(push_msg) = push_entity {
-                                        let _ = out_tx
-                                            .send(ReplicaMessage {
-                                                msg: Some(ReplicaMsg::GroupPush(push_msg)),
-                                            })
-                                            .await;
+                                        let _ = out_tx.send(ReplicaMessage {
+                                            msg: Some(ReplicaMsg::GroupPush(push_msg)),
+                                        }).await;
                                     }
                                 }
                             }
                             change::Entity::Fod(f) => {
                                 self.ensure_mission_exists(f.mission_id).await?;
                                 if !change.frame_jpeg.is_empty() {
-                                    if let Err(e) =
-                                        self.storage.save_frame(&change.frame_jpeg).await
-                                    {
-                                        tracing::warn!(
-                                            "Failed to save replicated FOD frame {}: {}",
-                                            f.id,
-                                            e
-                                        );
+                                    if let Err(e) = self.storage.save_frame(&change.frame_jpeg).await {
+                                        tracing::warn!("Failed to save replicated FOD frame {}: {}", f.id, e);
                                     }
                                 }
                                 self.db.upsert_replicated_fod(&f).await?;
@@ -444,9 +407,7 @@ impl SyncClient {
                                     .before_image_sha256
                                     .iter()
                                     .chain(c.after_image_sha256.iter())
-                                    .filter(|sha| {
-                                        !sha.is_empty() && !self.storage.frame_path(sha).exists()
-                                    })
+                                    .filter(|sha| !sha.is_empty() && !self.storage.frame_path(sha).exists())
                                     .cloned()
                                     .collect();
                                 if !missing_shas.is_empty() {
@@ -484,10 +445,11 @@ impl SyncClient {
                                     .location
                                     .map(|l| (l.lat, l.lon, l.sd))
                                     .unwrap_or((0.0, 0.0, 0.0));
-                                let status =
-                                    proto_defination::common::ClearedFodStatus::try_from(c.status)
-                                        .map(zoid_db::models::ClearedFodStatus::from)
-                                        .unwrap_or(zoid_db::models::ClearedFodStatus::Found);
+                                let status = proto_defination::common::ClearedFodStatus::try_from(
+                                    c.status,
+                                )
+                                .map(zoid_db::models::ClearedFodStatus::from)
+                                .unwrap_or(zoid_db::models::ClearedFodStatus::Found);
 
                                 let row = zoid_db::models::ClearedFodRow {
                                     id: uuid::Uuid::parse_str(&c.id)
@@ -553,40 +515,34 @@ impl SyncClient {
                 if let Some(merged_g) = ack.merged {
                     let incoming = zoid_db::models::versioned_from_proto(&merged_g);
                     let mut changed = false;
-                    let _ = self
-                        .db
-                        .mutate_fod_group(ack.mission_id, ack.group_id, |current| {
-                            let local = current.versioned();
-                            changed = local != incoming;
-                            let write = if changed || current.dirty {
-                                Some(zoid_db::models::GroupWrite {
-                                    state: incoming.clone(),
-                                    dirty: false,
-                                })
-                            } else {
-                                None
-                            };
-                            (write, ())
-                        })
-                        .await;
+                    let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |current| {
+                        let local = current.versioned();
+                        changed = local != incoming;
+                        let write = if changed || current.dirty {
+                            Some(zoid_db::models::GroupWrite {
+                                state: incoming.clone(),
+                                dirty: false,
+                            })
+                        } else {
+                            None
+                        };
+                        (write, ())
+                    }).await;
                     if changed {
                         let _ = self.group_tx.send(merged_g);
                     }
                 } else {
-                    let _ = self
-                        .db
-                        .mutate_fod_group(ack.mission_id, ack.group_id, |current| {
-                            let write = if current.dirty {
-                                Some(zoid_db::models::GroupWrite {
-                                    state: current.versioned(),
-                                    dirty: false,
-                                })
-                            } else {
-                                None
-                            };
-                            (write, ())
-                        })
-                        .await;
+                    let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |current| {
+                        let write = if current.dirty {
+                            Some(zoid_db::models::GroupWrite {
+                                state: current.versioned(),
+                                dirty: false,
+                            })
+                        } else {
+                            None
+                        };
+                        (write, ())
+                    }).await;
                 }
             }
             Some(PrimaryMsg::Result(res)) => {

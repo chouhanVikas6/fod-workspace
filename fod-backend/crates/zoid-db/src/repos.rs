@@ -193,8 +193,7 @@ impl Db {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<FodGroupRow>, i64)> {
-        self.list_fod_groups_since(mission_id, limit, offset, None)
-            .await
+        self.list_fod_groups_since(mission_id, limit, offset, None).await
     }
 
     pub async fn list_fod_groups_since(
