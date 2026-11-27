@@ -56,6 +56,57 @@ pub struct MissionRow {
     pub created_by: Option<String>,
     pub updated_by: Option<String>,
     pub display_id: Option<i64>,
+    #[sqlx(default)]
+    pub storage_tier: String,
+    #[sqlx(default)]
+    pub storage_epoch: i64,
+    #[sqlx(default)]
+    pub archive_path: Option<String>,
+    #[sqlx(default)]
+    pub archive_size_bytes: Option<i64>,
+    #[sqlx(default)]
+    pub archive_sha256: Option<String>,
+    #[sqlx(default)]
+    pub cold_stored_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FodGroupActionRow {
+    pub id: i64,
+    pub mission_id: i64,
+    pub group_id: i64,
+    pub from_status: String,
+    pub to_status: String,
+    pub actor: String,
+    pub decided_at_ms: i64,
+    pub command_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FleetStoragePolicy {
+    pub auto_cold_store_enabled: bool,
+    pub atc_keep_hot_missions: u32,
+    pub atc_max_disk_percent: u32,
+    pub auto_drop_car_on_cold_store: bool,
+    pub auto_drop_car_when_backed_up: bool,
+    pub car_keep_hot_missions: u32,
+    pub car_max_disk_percent: u32,
+}
+
+impl Default for FleetStoragePolicy {
+    fn default() -> Self {
+        Self {
+            auto_cold_store_enabled: false,
+            atc_keep_hot_missions: 30,
+            atc_max_disk_percent: 85,
+            auto_drop_car_on_cold_store: true,
+            auto_drop_car_when_backed_up: false,
+            car_keep_hot_missions: 15,
+            car_max_disk_percent: 80,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -237,6 +288,16 @@ impl From<proto_defination::common::ClearedFodStatus> for ClearedFodStatus {
 
 impl MissionRow {
     pub fn to_proto(&self) -> proto_defination::mission::MissionDetail {
+        let storage_tier = if self.storage_tier.is_empty() {
+            "HOT".to_string()
+        } else {
+            self.storage_tier.clone()
+        };
+        let storage_epoch = if self.storage_epoch <= 0 {
+            1
+        } else {
+            self.storage_epoch
+        };
         proto_defination::mission::MissionDetail {
             id: self.id,
             status: proto_defination::common::MissionStatus::from(self.status.clone()) as i32,
@@ -249,6 +310,11 @@ impl MissionRow {
             created_by: self.created_by.clone(),
             updated_by: self.updated_by.clone(),
             display_id: self.display_id,
+            storage_tier,
+            storage_epoch,
+            archive_size_bytes: self.archive_size_bytes,
+            cold_stored_at_ms: self.cold_stored_at.map(|dt| dt.timestamp_millis()),
+            storage_bytes: None,
         }
     }
 }
@@ -375,6 +441,45 @@ impl UserRow {
             password_hash: self.password_hash.clone(),
             is_active: self.is_active,
             role,
+            created_at_ms: self.created_at.timestamp_millis(),
+            updated_at_ms: self.updated_at.timestamp_millis(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MissionTemplateRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub template_type: String,
+    pub speed: i32,
+    pub pass: i32,
+    pub overlap: i32,
+    pub direction: String,
+    pub reverse: bool,
+    pub boundary_points_json: String,
+    pub is_custom: bool,
+    pub is_deleted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl MissionTemplateRow {
+    pub fn to_proto(&self) -> proto_defination::mission::MissionTemplateEntity {
+        proto_defination::mission::MissionTemplateEntity {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            description: self.description.clone(),
+            template_type: self.template_type.clone(),
+            speed: self.speed,
+            pass: self.pass,
+            overlap: self.overlap,
+            direction: self.direction.clone(),
+            reverse: self.reverse,
+            boundary_points_json: self.boundary_points_json.clone(),
+            is_custom: self.is_custom,
+            is_deleted: self.is_deleted,
             created_at_ms: self.created_at.timestamp_millis(),
             updated_at_ms: self.updated_at.timestamp_millis(),
         }

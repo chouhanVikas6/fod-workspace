@@ -9,6 +9,8 @@ const RestPath={
    LOADMISSIONWITHID:(id:number)=>'/api/mission/load/'+id,
    JOINMISSIONWITHID:(id:number)=>'/api/mission/join/'+id,
    RESTARTMISSIONWITHID:(id:number)=>'/api/mission/restart/'+id,
+   MISSION_TEMPLATES:'/api/mission/templates',
+   DELETE_MISSION_TEMPLATE:(id:string)=>'/api/mission/templates/'+encodeURIComponent(id),
    HEALTH_DATA:'/api/health-data'
 }
 export default RestPath;

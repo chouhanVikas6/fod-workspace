@@ -1,7 +1,8 @@
 use crate::Db;
 use crate::models::{
-    AppliedCommandRow, ChangeLogRow, ClearedFodRow, FodGroupRow, FodGroupStatus, FodRow,
-    GroupWrite, MissionRow, MissionScanStatus, MissionStatus, UserRole, UserRow,
+    AppliedCommandRow, ChangeLogRow, ClearedFodRow, FleetStoragePolicy, FodGroupActionRow,
+    FodGroupRow, FodGroupStatus, FodRow, GroupWrite, MissionRow, MissionScanStatus, MissionStatus,
+    MissionTemplateRow, UserRole, UserRow,
 };
 use uuid::Uuid;
 use zoid_core::{Result, ZoidError};
@@ -192,23 +193,58 @@ impl Db {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<FodGroupRow>, i64)> {
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
+        self.list_fod_groups_since(mission_id, limit, offset, None).await
+    }
+
+    pub async fn list_fod_groups_since(
+        &self,
+        mission_id: i64,
+        limit: i64,
+        offset: i64,
+        updated_since: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(Vec<FodGroupRow>, i64)> {
+        if let Some(since) = updated_since {
+            let total: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1 AND updated_at > $2",
+            )
             .bind(mission_id)
+            .bind(since)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| ZoidError::Database(e.to_string()))?;
 
-        let rows = sqlx::query_as::<_, FodGroupRow>(
-            "SELECT * FROM fod_groups WHERE mission_id = $1 ORDER BY group_id ASC LIMIT $2 OFFSET $3",
-        )
-        .bind(mission_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| ZoidError::Database(e.to_string()))?;
+            let rows = sqlx::query_as::<_, FodGroupRow>(
+                "SELECT * FROM fod_groups WHERE mission_id = $1 AND updated_at > $2 ORDER BY updated_at ASC, group_id ASC LIMIT $3 OFFSET $4",
+            )
+            .bind(mission_id)
+            .bind(since)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
 
-        Ok((rows, total.0))
+            Ok((rows, total.0))
+        } else {
+            let total: (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1")
+                    .bind(mission_id)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+            let rows = sqlx::query_as::<_, FodGroupRow>(
+                "SELECT * FROM fod_groups WHERE mission_id = $1 ORDER BY group_id ASC LIMIT $2 OFFSET $3",
+            )
+            .bind(mission_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+            Ok((rows, total.0))
+        }
     }
 
     pub async fn upsert_fod_group(
@@ -806,15 +842,45 @@ impl Db {
         let scan = proto_defination::common::MissionScanStatus::try_from(m.scan_status)
             .map(MissionScanStatus::from)
             .unwrap_or(MissionScanStatus::Pause);
+        let storage_tier = if m.storage_tier.is_empty() {
+            "HOT"
+        } else {
+            m.storage_tier.as_str()
+        };
+        let storage_epoch = if m.storage_epoch <= 0 {
+            1
+        } else {
+            m.storage_epoch
+        };
+        let cold_stored_at = m
+            .cold_stored_at_ms
+            .filter(|&ms| ms > 0)
+            .and_then(chrono::DateTime::from_timestamp_millis);
 
         sqlx::query(
             r#"
-            INSERT INTO missions (id, status, scan_status, timer, speed, pass, display_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO missions (id, status, scan_status, timer, speed, pass, display_id,
+                                  storage_tier, storage_epoch, archive_size_bytes, cold_stored_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE
             SET status = EXCLUDED.status, scan_status = EXCLUDED.scan_status,
                 timer = EXCLUDED.timer, speed = EXCLUDED.speed, pass = EXCLUDED.pass,
                 display_id = COALESCE(EXCLUDED.display_id, missions.display_id),
+                storage_tier = CASE
+                    WHEN EXCLUDED.storage_epoch > missions.storage_epoch THEN EXCLUDED.storage_tier
+                    WHEN EXCLUDED.storage_epoch = missions.storage_epoch AND missions.storage_tier = 'COLD_STORED' THEN 'COLD_STORED'
+                    WHEN EXCLUDED.storage_epoch = missions.storage_epoch AND EXCLUDED.storage_tier = 'COLD_STORED' THEN 'COLD_STORED'
+                    ELSE missions.storage_tier
+                END,
+                storage_epoch = GREATEST(missions.storage_epoch, EXCLUDED.storage_epoch),
+                archive_size_bytes = CASE
+                    WHEN EXCLUDED.storage_epoch >= missions.storage_epoch THEN COALESCE(EXCLUDED.archive_size_bytes, missions.archive_size_bytes)
+                    ELSE missions.archive_size_bytes
+                END,
+                cold_stored_at = CASE
+                    WHEN EXCLUDED.storage_epoch >= missions.storage_epoch THEN COALESCE(EXCLUDED.cold_stored_at, missions.cold_stored_at)
+                    ELSE missions.cold_stored_at
+                END,
                 updated_at = now()
             "#,
         )
@@ -825,6 +891,10 @@ impl Db {
         .bind(m.speed)
         .bind(m.pass)
         .bind(m.display_id)
+        .bind(storage_tier)
+        .bind(storage_epoch)
+        .bind(m.archive_size_bytes)
+        .bind(cold_stored_at)
         .execute(&self.pool)
         .await
         .map_err(|e| ZoidError::Database(e.to_string()))?;
@@ -1013,6 +1083,109 @@ impl Db {
         }
     }
 
+    // ----------------- Mission Template Queries -----------------
+
+    pub async fn get_mission_template_by_id(&self, id: &str) -> Result<Option<MissionTemplateRow>> {
+        sqlx::query_as::<_, MissionTemplateRow>("SELECT * FROM mission_templates WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_all_mission_templates(&self) -> Result<Vec<MissionTemplateRow>> {
+        sqlx::query_as::<_, MissionTemplateRow>(
+            "SELECT * FROM mission_templates ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_mission_templates_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<MissionTemplateRow>> {
+        sqlx::query_as::<_, MissionTemplateRow>(
+            "SELECT * FROM mission_templates WHERE updated_at >= $1 ORDER BY updated_at ASC",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn upsert_replicated_mission_template(
+        &self,
+        t: &proto_defination::mission::MissionTemplateEntity,
+    ) -> Result<MissionTemplateRow> {
+        let created_at = if t.created_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(t.created_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::Utc::now()
+        };
+        let updated_at = if t.updated_at_ms > 0 {
+            chrono::DateTime::from_timestamp_millis(t.updated_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::Utc::now()
+        };
+
+        let row = sqlx::query_as::<_, MissionTemplateRow>(
+            r#"
+            INSERT INTO mission_templates (
+                id, name, description, template_type, speed, pass, overlap,
+                direction, reverse, boundary_points_json, is_custom, is_deleted,
+                created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (id) DO UPDATE
+            SET name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                template_type = EXCLUDED.template_type,
+                speed = EXCLUDED.speed,
+                pass = EXCLUDED.pass,
+                overlap = EXCLUDED.overlap,
+                direction = EXCLUDED.direction,
+                reverse = EXCLUDED.reverse,
+                boundary_points_json = EXCLUDED.boundary_points_json,
+                is_custom = EXCLUDED.is_custom,
+                is_deleted = EXCLUDED.is_deleted,
+                updated_at = EXCLUDED.updated_at
+            WHERE mission_templates.updated_at <= EXCLUDED.updated_at
+            RETURNING *
+            "#,
+        )
+        .bind(&t.id)
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind(&t.template_type)
+        .bind(t.speed)
+        .bind(t.pass)
+        .bind(t.overlap)
+        .bind(&t.direction)
+        .bind(t.reverse)
+        .bind(&t.boundary_points_json)
+        .bind(t.is_custom)
+        .bind(t.is_deleted)
+        .bind(created_at)
+        .bind(updated_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))?;
+
+        if let Some(r) = row {
+            Ok(r)
+        } else {
+            self.get_mission_template_by_id(&t.id)
+                .await?
+                .ok_or_else(|| {
+                    ZoidError::Database("Mission template not found after upsert".to_string())
+                })
+        }
+    }
+
     pub async fn delete_user_by_username(&self, username: &str) -> Result<bool> {
         let res =
             sqlx::query("DELETE FROM users WHERE username = $1 OR LOWER(username) = LOWER($1)")
@@ -1021,5 +1194,575 @@ impl Db {
                 .await
                 .map_err(|e| ZoidError::Database(e.to_string()))?;
         Ok(res.rows_affected() > 0)
+    }
+
+    // ----------------- Mission Storage Lifecycle & Backup -----------------
+
+    pub async fn is_mission_cold_stored(&self, mission_id: i64) -> Result<bool> {
+        let tier: Option<String> =
+            sqlx::query_scalar("SELECT storage_tier FROM missions WHERE id = $1")
+                .bind(mission_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_err)?;
+        Ok(tier.as_deref() == Some("COLD_STORED"))
+    }
+
+    pub async fn count_dirty_groups_for_mission(&self, mission_id: i64) -> Result<i64> {
+        let cnt: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM fod_groups WHERE mission_id = $1 AND dirty = true",
+        )
+        .bind(mission_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(cnt.0)
+    }
+
+    /// Returns `(group_count, fod_count, cleared_count, dirty_group_count, hot_image_bytes)`.
+    pub async fn get_mission_storage_summary(
+        &self,
+        mission_id: i64,
+    ) -> Result<(i64, i64, i64, i64, i64)> {
+        let (group_count, dirty_count): (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN dirty THEN 1 ELSE 0 END), 0)
+            FROM fod_groups WHERE mission_id = $1
+            "#,
+        )
+        .bind(mission_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+
+        let (fod_count, fod_bytes): (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*),
+                   COALESCE(SUM(COALESCE(image_size, 0)::BIGINT), 0)
+            FROM fods WHERE mission_id = $1
+            "#,
+        )
+        .bind(mission_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+
+        let cleared_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM cleared_fods WHERE mission_id = $1")
+                .bind(mission_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db_err)?;
+
+        Ok((group_count, fod_count, cleared_count.0, dirty_count, fod_bytes))
+    }
+
+    pub async fn list_all_fod_groups_for_mission(
+        &self,
+        mission_id: i64,
+    ) -> Result<Vec<FodGroupRow>> {
+        sqlx::query_as::<_, FodGroupRow>(
+            "SELECT * FROM fod_groups WHERE mission_id = $1 ORDER BY group_id ASC",
+        )
+        .bind(mission_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    pub async fn list_all_fods_for_mission(&self, mission_id: i64) -> Result<Vec<FodRow>> {
+        sqlx::query_as::<_, FodRow>(
+            "SELECT * FROM fods WHERE mission_id = $1 ORDER BY captured_at ASC",
+        )
+        .bind(mission_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    pub async fn list_group_actions_for_mission(
+        &self,
+        mission_id: i64,
+    ) -> Result<Vec<FodGroupActionRow>> {
+        sqlx::query_as::<_, FodGroupActionRow>(
+            "SELECT * FROM fod_group_actions WHERE mission_id = $1 ORDER BY id ASC",
+        )
+        .bind(mission_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    pub async fn collect_mission_frame_shas(&self, mission_id: i64) -> Result<Vec<String>> {
+        let fod_shas: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT image_sha256 FROM fods WHERE mission_id = $1 AND image_sha256 IS NOT NULL AND image_sha256 != ''",
+        )
+        .bind(mission_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+
+        let cleared_rows = self.list_cleared_fods_for_mission(mission_id).await?;
+        let mut set: std::collections::BTreeSet<String> = fod_shas.into_iter().collect();
+        for c in cleared_rows {
+            for s in c
+                .before_image_sha256
+                .into_iter()
+                .chain(c.after_image_sha256.into_iter())
+            {
+                if !s.is_empty() {
+                    set.insert(s);
+                }
+            }
+        }
+        Ok(set.into_iter().collect())
+    }
+
+    /// Purges hot DB rows (`fods`, `fod_groups`, `cleared_fods`, `fod_group_actions`) for `mission_id`,
+    /// updates `missions` storage metadata, and returns frame SHA-256 hashes that are NO LONGER
+    /// referenced by any remaining mission (safe to delete from `FrameStorage`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn purge_mission_hot_data(
+        &self,
+        mission_id: i64,
+        new_tier: &str,
+        new_epoch: i64,
+        archive_path: Option<&str>,
+        archive_size: Option<i64>,
+        archive_sha256: Option<&str>,
+        cold_stored_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(MissionRow, Vec<String>)> {
+        let candidate_shas = self.collect_mission_frame_shas(mission_id).await?;
+
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        sqlx::query("DELETE FROM fods WHERE mission_id = $1")
+            .bind(mission_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM fod_groups WHERE mission_id = $1")
+            .bind(mission_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM cleared_fods WHERE mission_id = $1")
+            .bind(mission_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM fod_group_actions WHERE mission_id = $1")
+            .bind(mission_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+        let updated_mission = sqlx::query_as::<_, MissionRow>(
+            r#"
+            UPDATE missions
+            SET storage_tier = $2,
+                storage_epoch = $3,
+                archive_path = COALESCE($4, archive_path),
+                archive_size_bytes = COALESCE($5, archive_size_bytes),
+                archive_sha256 = COALESCE($6, archive_sha256),
+                cold_stored_at = COALESCE($7, cold_stored_at),
+                updated_at = now()
+            WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(mission_id)
+        .bind(new_tier)
+        .bind(new_epoch)
+        .bind(archive_path)
+        .bind(archive_size)
+        .bind(archive_sha256)
+        .bind(cold_stored_at)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+
+        // Reference-checked GC: only delete frames not referenced by any remaining mission.
+        let mut safe_to_delete = Vec::new();
+        if !candidate_shas.is_empty() {
+            let still_in_fods: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT image_sha256 FROM fods WHERE image_sha256 = ANY($1)",
+            )
+            .bind(&candidate_shas)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+            let still_in_cleared: Vec<String> = sqlx::query_scalar(
+                r#"
+                SELECT DISTINCT sha FROM (
+                    SELECT unnest(before_image_sha256) AS sha FROM cleared_fods
+                    UNION
+                    SELECT unnest(after_image_sha256) AS sha FROM cleared_fods
+                ) sub WHERE sha = ANY($1)
+                "#,
+            )
+            .bind(&candidate_shas)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+            let kept: std::collections::HashSet<String> = still_in_fods
+                .into_iter()
+                .chain(still_in_cleared.into_iter())
+                .collect();
+
+            for sha in candidate_shas {
+                if !kept.contains(&sha) {
+                    safe_to_delete.push(sha);
+                }
+            }
+        }
+
+        tx.commit().await.map_err(db_err)?;
+        Ok((updated_mission, safe_to_delete))
+    }
+
+    pub async fn update_mission_storage_state(
+        &self,
+        mission_id: i64,
+        new_tier: &str,
+        new_epoch: i64,
+    ) -> Result<MissionRow> {
+        sqlx::query_as::<_, MissionRow>(
+            r#"
+            UPDATE missions
+            SET storage_tier = $2,
+                storage_epoch = $3,
+                cold_stored_at = CASE WHEN $2 = 'HOT' THEN NULL ELSE cold_stored_at END,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(mission_id)
+        .bind(new_tier)
+        .bind(new_epoch)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    pub async fn restore_mission_bundle(
+        &self,
+        mission: &MissionRow,
+        groups: &[FodGroupRow],
+        fods: &[FodRow],
+        cleared: &[ClearedFodRow],
+        actions: &[FodGroupActionRow],
+        new_epoch: i64,
+    ) -> Result<MissionRow> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+
+        // Never restore an archived mission as ACTIVE
+        let restored_status = if mission.status == MissionStatus::Active {
+            MissionStatus::Terminated
+        } else {
+            mission.status.clone()
+        };
+
+        let restored_mission = sqlx::query_as::<_, MissionRow>(
+            r#"
+            INSERT INTO missions (
+                id, status, timer, scan_status, speed, pass,
+                created_at, updated_at, created_by, updated_by, display_id,
+                storage_tier, storage_epoch, archive_path, archive_size_bytes, archive_sha256, cold_stored_at
+            )
+            VALUES ($1, $2, $3, 'PAUSE', $4, $5, $6, now(), $7, $8, $9, 'HOT', $10, $11, $12, $13, NULL)
+            ON CONFLICT (id) DO UPDATE SET
+                status = CASE WHEN missions.status = 'ACTIVE' THEN 'ACTIVE'::mission_status ELSE EXCLUDED.status END,
+                timer = GREATEST(missions.timer, EXCLUDED.timer),
+                speed = COALESCE(EXCLUDED.speed, missions.speed),
+                pass = COALESCE(EXCLUDED.pass, missions.pass),
+                display_id = COALESCE(EXCLUDED.display_id, missions.display_id),
+                storage_tier = 'HOT',
+                storage_epoch = GREATEST(missions.storage_epoch + 1, EXCLUDED.storage_epoch),
+                cold_stored_at = NULL,
+                updated_at = now()
+            RETURNING *
+            "#,
+        )
+        .bind(mission.id)
+        .bind(restored_status)
+        .bind(mission.timer)
+        .bind(mission.speed)
+        .bind(mission.pass)
+        .bind(mission.created_at)
+        .bind(&mission.created_by)
+        .bind(&mission.updated_by)
+        .bind(mission.display_id)
+        .bind(new_epoch)
+        .bind(&mission.archive_path)
+        .bind(mission.archive_size_bytes)
+        .bind(&mission.archive_sha256)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+
+        for g in groups {
+            sqlx::query(
+                r#"
+                INSERT INTO fod_groups (
+                    mission_id, group_id, status, version, biggest_fod, biggest_fod_size,
+                    created_at, updated_at, vv, decided_at_ms, updated_by, dirty
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false)
+                ON CONFLICT (mission_id, group_id) DO NOTHING
+                "#,
+            )
+            .bind(mission.id)
+            .bind(g.group_id)
+            .bind(&g.status)
+            .bind(g.version)
+            .bind(g.biggest_fod)
+            .bind(g.biggest_fod_size)
+            .bind(g.created_at)
+            .bind(g.updated_at)
+            .bind(sqlx::types::Json(&g.vv.0))
+            .bind(g.decided_at_ms)
+            .bind(&g.updated_by)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+
+        for f in fods {
+            sqlx::query(
+                r#"
+                INSERT INTO fods (
+                    id, mission_id, group_id, sysid, cam_id,
+                    lat, lon, sd, confidence, class,
+                    velocity, size, image_sha256, image_size,
+                    frame_missing, captured_at, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(f.id)
+            .bind(mission.id)
+            .bind(f.group_id)
+            .bind(&f.sysid)
+            .bind(&f.cam_id)
+            .bind(f.lat)
+            .bind(f.lon)
+            .bind(f.sd)
+            .bind(f.confidence)
+            .bind(&f.class)
+            .bind(f.velocity)
+            .bind(f.size)
+            .bind(&f.image_sha256)
+            .bind(f.image_size)
+            .bind(f.frame_missing)
+            .bind(f.captured_at)
+            .bind(f.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+
+        for c in cleared {
+            sqlx::query(
+                r#"
+                INSERT INTO cleared_fods (
+                    id, mission_id, group_id, status,
+                    before_image_sha256, after_image_sha256,
+                    lat, lon, sd, created_at, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(c.id)
+            .bind(mission.id)
+            .bind(c.group_id)
+            .bind(&c.status)
+            .bind(&c.before_image_sha256)
+            .bind(&c.after_image_sha256)
+            .bind(c.lat)
+            .bind(c.lon)
+            .bind(c.sd)
+            .bind(c.created_at)
+            .bind(&c.created_by)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+
+        for a in actions {
+            sqlx::query(
+                r#"
+                INSERT INTO fod_group_actions (
+                    mission_id, group_id, from_status, to_status,
+                    actor, decided_at_ms, command_id, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "#,
+            )
+            .bind(mission.id)
+            .bind(a.group_id)
+            .bind(&a.from_status)
+            .bind(&a.to_status)
+            .bind(&a.actor)
+            .bind(a.decided_at_ms)
+            .bind(&a.command_id)
+            .bind(a.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+
+        tx.commit().await.map_err(db_err)?;
+        Ok(restored_mission)
+    }
+
+    pub async fn list_missions_with_non_default_storage(&self) -> Result<Vec<MissionRow>> {
+        sqlx::query_as::<_, MissionRow>(
+            "SELECT * FROM missions WHERE storage_tier != 'HOT' OR storage_epoch > 1 ORDER BY id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    pub async fn list_all_missions_unpaginated(&self) -> Result<Vec<MissionRow>> {
+        sqlx::query_as::<_, MissionRow>("SELECT * FROM missions ORDER BY created_at DESC, id DESC")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)
+    }
+
+    pub async fn get_storage_policy(&self, key: &str) -> Result<FleetStoragePolicy> {
+        let json_val: Option<sqlx::types::Json<FleetStoragePolicy>> =
+            sqlx::query_scalar("SELECT policy_json FROM storage_policies WHERE key = $1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_err)?;
+        Ok(json_val.map(|j| j.0).unwrap_or_default())
+    }
+
+    pub async fn save_storage_policy(&self, key: &str, policy: &FleetStoragePolicy) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO storage_policies (key, policy_json, updated_at)
+            VALUES ($1, $2, now())
+            ON CONFLICT (key) DO UPDATE
+            SET policy_json = EXCLUDED.policy_json, updated_at = now()
+            "#,
+        )
+        .bind(key)
+        .bind(sqlx::types::Json(policy))
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    pub async fn build_mission_archive_bundle(
+        &self,
+        storage: &zoid_storage::FrameStorage,
+        mission_id: i64,
+        origin_node: &str,
+    ) -> Result<zoid_storage::archive::MissionArchiveBundle> {
+        let mission = self
+            .get_mission(mission_id)
+            .await?
+            .ok_or_else(|| ZoidError::NotFound(format!("Mission {mission_id} not found")))?;
+        let groups = self.list_all_fod_groups_for_mission(mission_id).await?;
+        let fods = self.list_all_fods_for_mission(mission_id).await?;
+        let cleared = self.list_cleared_fods_for_mission(mission_id).await?;
+        let actions = self.list_group_actions_for_mission(mission_id).await?;
+        let shas = self.collect_mission_frame_shas(mission_id).await?;
+
+        let mut frames = std::collections::BTreeMap::new();
+        let mut frame_bytes = 0u64;
+        for sha in shas {
+            if let Ok(bytes) = storage.read_frame(&sha, false).await {
+                frame_bytes += bytes.len() as u64;
+                frames.insert(sha, bytes);
+            }
+        }
+
+        let mission_json = serde_json::to_vec_pretty(&mission)
+            .map_err(|e| ZoidError::Storage(e.to_string()))?;
+        let fod_groups_json = serde_json::to_vec_pretty(&groups)
+            .map_err(|e| ZoidError::Storage(e.to_string()))?;
+        let fods_json = serde_json::to_vec_pretty(&fods)
+            .map_err(|e| ZoidError::Storage(e.to_string()))?;
+        let cleared_fods_json = serde_json::to_vec_pretty(&cleared)
+            .map_err(|e| ZoidError::Storage(e.to_string()))?;
+        let group_actions_json = serde_json::to_vec_pretty(&actions)
+            .map_err(|e| ZoidError::Storage(e.to_string()))?;
+
+        let bundle_sha256 = zoid_storage::archive::compute_bundle_sha256(
+            &mission_json,
+            &fod_groups_json,
+            &fods_json,
+            &cleared_fods_json,
+            &group_actions_json,
+            &frames,
+        );
+
+        let manifest = zoid_storage::archive::ArchiveManifest {
+            format_version: zoid_storage::archive::ARCHIVE_FORMAT_VERSION,
+            mission_id: mission.id,
+            display_id: mission.display_id,
+            exported_at_ms: chrono::Utc::now().timestamp_millis(),
+            origin_node: origin_node.to_string(),
+            group_count: groups.len(),
+            fod_count: fods.len(),
+            cleared_count: cleared.len(),
+            action_count: actions.len(),
+            frame_count: frames.len(),
+            frame_bytes,
+            bundle_sha256,
+        };
+
+        Ok(zoid_storage::archive::MissionArchiveBundle {
+            manifest,
+            mission_json,
+            fod_groups_json,
+            fods_json,
+            cleared_fods_json,
+            group_actions_json,
+            frames,
+        })
+    }
+
+    pub async fn restore_mission_archive_bundle(
+        &self,
+        storage: &zoid_storage::FrameStorage,
+        bundle: &zoid_storage::archive::MissionArchiveBundle,
+        new_epoch: i64,
+    ) -> Result<(MissionRow, usize, usize, usize)> {
+        let mission: MissionRow = serde_json::from_slice(&bundle.mission_json)
+            .map_err(|e| ZoidError::Storage(format!("Invalid mission.json: {e}")))?;
+        let groups: Vec<FodGroupRow> = serde_json::from_slice(&bundle.fod_groups_json)
+            .map_err(|e| ZoidError::Storage(format!("Invalid fod_groups.json: {e}")))?;
+        let fods: Vec<FodRow> = serde_json::from_slice(&bundle.fods_json)
+            .map_err(|e| ZoidError::Storage(format!("Invalid fods.json: {e}")))?;
+        let cleared: Vec<ClearedFodRow> = serde_json::from_slice(&bundle.cleared_fods_json)
+            .map_err(|e| ZoidError::Storage(format!("Invalid cleared_fods.json: {e}")))?;
+        let actions: Vec<FodGroupActionRow> = serde_json::from_slice(&bundle.group_actions_json)
+            .unwrap_or_default();
+
+        let mut restored_frames = 0usize;
+        for bytes in bundle.frames.values() {
+            if storage.save_frame(bytes).await.is_ok() {
+                restored_frames += 1;
+            }
+        }
+
+        let restored_mission = self
+            .restore_mission_bundle(&mission, &groups, &fods, &cleared, &actions, new_epoch)
+            .await?;
+
+        Ok((restored_mission, groups.len(), fods.len(), restored_frames))
     }
 }

@@ -145,6 +145,17 @@ pub struct Mission {
     #[serde(with = "iso_millis_opt")]
     pub previous_time: Option<NaiveDateTime>,
     pub display_id: Option<i64>,
+    #[sqlx(default)]
+    pub local_evicted: bool,
+    #[sqlx(default)]
+    pub storage_tier: Option<String>,
+    #[sqlx(default)]
+    pub storage_epoch: Option<i64>,
+    #[sqlx(default)]
+    pub archive_size_bytes: Option<i64>,
+    #[sqlx(default)]
+    #[serde(with = "iso_millis_opt")]
+    pub cold_stored_at: Option<NaiveDateTime>,
 }
 
 #[derive(sqlx::FromRow, Serialize, Clone, Debug)]
@@ -159,6 +170,12 @@ pub struct FodGroup {
     pub biggest_fod_size: Option<i32>,
     pub dirty: Option<bool>,
     pub version: Option<i64>,
+    #[sqlx(default)]
+    pub version_vector: Option<String>,
+    #[sqlx(default)]
+    pub decided_at_ms: Option<i64>,
+    #[sqlx(default)]
+    pub updated_by: Option<String>,
     #[serde(with = "iso_millis")]
     pub created_at: NaiveDateTime,
     #[serde(with = "iso_millis")]
@@ -223,6 +240,31 @@ pub struct User {
     pub password: String,
     pub is_active: bool,
     pub role: Role,
+    pub dirty: Option<bool>,
+    #[serde(with = "iso_millis")]
+    pub created_at: NaiveDateTime,
+    #[serde(with = "iso_millis")]
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(sqlx::FromRow, Serialize, Clone, Debug)]
+#[sqlx(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub struct MissionTemplate {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    #[sqlx(rename = "type")]
+    #[serde(rename = "type")]
+    pub template_type: String,
+    pub speed: i32,
+    pub pass: i32,
+    pub overlap: i32,
+    pub direction: String,
+    pub reverse: bool,
+    pub boundary_points: String,
+    pub is_custom: bool,
+    pub is_deleted: bool,
     pub dirty: Option<bool>,
     #[serde(with = "iso_millis")]
     pub created_at: NaiveDateTime,

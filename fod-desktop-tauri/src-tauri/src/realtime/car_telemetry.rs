@@ -19,9 +19,11 @@ pub fn spawn(state: AppState) {
 
             let endpoint = match tonic::transport::Endpoint::from_shared(endpoint_str.clone()) {
                 Ok(ep) => ep
-                    .connect_timeout(Duration::from_millis(1500))
-                    .tcp_keepalive(Some(Duration::from_secs(5)))
-                    .http2_keep_alive_interval(Duration::from_secs(2))
+                    .connect_timeout(Duration::from_millis(3000))
+                    .tcp_nodelay(true)
+                    .tcp_keepalive(Some(Duration::from_secs(10)))
+                    .http2_keep_alive_interval(Duration::from_secs(10))
+                    .keep_alive_timeout(Duration::from_secs(20))
                     .keep_alive_while_idle(true),
                 Err(e) => {
                     tracing::warn!("Invalid car endpoint: {e}");
@@ -51,23 +53,31 @@ pub fn spawn(state: AppState) {
 
                     let mut poll_interval = tokio::time::interval(Duration::from_millis(1000));
                     poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    let mut consecutive_failures: u32 = 0;
 
                     loop {
                         tokio::select! {
                             _ = poll_interval.tick() => {
                                 let t0 = std::time::Instant::now();
-                                match tokio::time::timeout(Duration::from_secs(2), client.get_bite_state(Request::new(GetBiteStateRequest {}))).await {
+                                match tokio::time::timeout(Duration::from_secs(5), client.get_bite_state(Request::new(GetBiteStateRequest {}))).await {
                                     Ok(Ok(resp)) => {
+                                        consecutive_failures = 0;
                                         let ping_ms = t0.elapsed().as_millis() as u32;
                                         apply_bite_state(&state, resp.into_inner(), ping_ms).await;
                                     }
                                     Ok(Err(e)) => {
-                                        tracing::warn!(error = %e, "Car gRPC get_bite_state poll failed");
-                                        break;
+                                        consecutive_failures += 1;
+                                        tracing::warn!(error = %e, consecutive_failures, "Car gRPC get_bite_state poll failed");
+                                        if consecutive_failures >= 3 {
+                                            break;
+                                        }
                                     }
                                     Err(_) => {
-                                        tracing::warn!("Car gRPC get_bite_state poll timed out");
-                                        break;
+                                        consecutive_failures += 1;
+                                        tracing::warn!(consecutive_failures, "Car gRPC get_bite_state poll timed out (5s)");
+                                        if consecutive_failures >= 3 {
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -79,6 +89,7 @@ pub fn spawn(state: AppState) {
                             } => {
                                 match item {
                                     Some(Ok(bite)) => {
+                                        consecutive_failures = 0;
                                         apply_bite_state(&state, bite, 0).await;
                                     }
                                     Some(Err(e)) => {
@@ -93,21 +104,14 @@ pub fn spawn(state: AppState) {
                         }
                     }
 
-                    {
-                        let mut h = state.health.write().await;
-                        h.latency.connected = false;
-                        h.available_communication.clear();
-                    }
-                    crate::services::terminate_active_mission_if_car_down(&state).await;
+                    // Do not instantly kill the active mission on a reconnect cycle;
+                    // evict the stale channel so fallback works if Car is truly down,
+                    // and let socketio.rs's 15s grace window handle sustained disconnects.
+                    crate::services::evict_grpc_channel(&endpoint_str).await;
+                    tracing::warn!("Car BiteService loop exited after consecutive failures; reconnecting...");
                 }
                 Err(e) => {
                     tracing::debug!(error = %e, endpoint = %endpoint_str, "Car gRPC connection failed (will retry)");
-                    {
-                        let mut h = state.health.write().await;
-                        h.latency.connected = false;
-                        h.available_communication.clear();
-                    }
-                    crate::services::terminate_active_mission_if_car_down(&state).await;
                 }
             }
 

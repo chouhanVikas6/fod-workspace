@@ -53,6 +53,18 @@ pub fn router() -> Router<AppState> {
         .route("/scan-status", any(scan_status))
         .route("/terminate/{id}", any(terminate))
         .route("/update/{id}", any(update_mission))
+        .route("/templates", any(mission_templates))
+        .route("/templates/{id}", any(mission_template_by_id))
+        .route("/storage-overview", any(storage_overview))
+        .route("/storage-policy", any(storage_policy))
+        .route("/local-free/{id}", any(local_free))
+        .route("/local-free-batch", any(local_free_batch))
+        .route("/local-reimport/{id}", any(local_reimport))
+        .route("/atc/cold-store/{id}", any(atc_cold_store))
+        .route("/atc/restore/{id}", any(atc_restore))
+        .route("/car/drop/{id}", any(car_drop))
+        .route("/archive/export/{id}", any(archive_export))
+        .route("/archive/import", any(archive_import))
 }
 
 /// Node 405: `res.status(405).end(\`Method ${req.method} Not Allowed\`)` —
@@ -94,8 +106,17 @@ async fn list_missions(method: Method, State(s): State<AppState>) -> Response {
     }
     let upstream = svc::api_to_main(&s, reqwest::Method::GET, "/mission", Some(json!({})), None).await;
     match upstream {
+        Some(Value::Array(arr)) => {
+            let filtered: Vec<Value> = arr
+                .into_iter()
+                .filter(|m| m.get("storageTier").and_then(Value::as_str) != Some("COLD_STORED"))
+                .collect();
+            (StatusCode::OK, Json(filtered)).into_response()
+        }
         Some(v) if svc::js_truthy(&v) => (StatusCode::OK, Json(v)).into_response(),
-        _ => match sqlx::query_as::<_, Mission>("SELECT * FROM \"Mission\"")
+        _ => match sqlx::query_as::<_, Mission>(
+            r#"SELECT * FROM "Mission" WHERE COALESCE("storageTier", 'HOT') != 'COLD_STORED'"#,
+        )
             .fetch_all(&s.db)
             .await
         {
@@ -191,12 +212,14 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
          COUNT(CASE WHEN fg.status = 'REJECTED' THEN 1 END) AS "rejected",
          COUNT(CASE WHEN fg.status = 'CLEARED' THEN 1 END) AS "cleared",
          COUNT(CASE WHEN fg.status = 'NEW' THEN 1 END) AS "newFodGroups",
+         COUNT(CASE WHEN COALESCE(fg."dirty", 0) = 1 THEN 1 END) AS "dirtyCount",
          COUNT(fg.id) AS "total",
          (SELECT fg2."groupId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestGroupId",
          (SELECT fg2."biggestFodId" FROM "FodGroup" fg2 WHERE fg2."missionId" = m.id AND fg2."biggestFodId" IS NOT NULL ORDER BY COALESCE(fg2."biggestFodSize", 0) DESC, fg2."groupId" DESC LIMIT 1) AS "biggestFodId",
          (SELECT MAX(f."timestamp") FROM "Fod" f WHERE f."missionId" = m.id) AS "lastFodAt"
        FROM "Mission" m
        LEFT JOIN "FodGroup" fg ON m.id = fg."missionId"
+       WHERE COALESCE(m."storageTier", 'HOT') != 'COLD_STORED'
        GROUP BY m.id
        ORDER BY m.id DESC
      "#;
@@ -241,10 +264,13 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
 
         let mut v = svc::to_value(&mission);
         let o = v.as_object_mut().unwrap();
-        for key in ["accepted", "rejected", "cleared", "newFodGroups", "total"] {
+        for key in ["accepted", "rejected", "cleared", "newFodGroups", "dirtyCount", "total"] {
             let n: i64 = row.try_get(key).unwrap_or(0);
             o.insert(key.to_string(), json!(n));
         }
+        let img_dir = std::path::Path::new("fod-images/mission").join(mission.id.to_string());
+        let local_size_bytes = crate::archive::dir_size_bytes(&img_dir).await;
+        o.insert("localSizeBytes".to_string(), json!(local_size_bytes));
         if let (Ok(Some(bgid)), Ok(Some(bfid))) = (
             row.try_get::<Option<i32>, _>("biggestGroupId"),
             row.try_get::<Option<String>, _>("biggestFodId"),
@@ -1112,4 +1138,1369 @@ async fn update_mission(method: Method,
     .await;
     // Node res.json(mission) — null body when upstream failed.
     (StatusCode::OK, Json(v.unwrap_or(Value::Null))).into_response()
+}
+
+fn mission_template_to_json(t: &crate::models::MissionTemplate) -> Value {
+    let boundary_points: Value =
+        serde_json::from_str(&t.boundary_points).unwrap_or_else(|_| json!([]));
+    json!({
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "type": t.template_type,
+        "speed": t.speed,
+        "pass": t.pass,
+        "overlap": t.overlap,
+        "direction": t.direction,
+        "reverse": t.reverse,
+        "boundaryPoints": boundary_points,
+        "isCustom": t.is_custom,
+        "createdAt": t.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        "updatedAt": t.updated_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GET / POST /api/mission/templates
+// ---------------------------------------------------------------------------
+async fn mission_templates(
+    method: Method,
+    State(s): State<AppState>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method == Method::GET {
+        match sqlx::query_as::<_, crate::models::MissionTemplate>(
+            r#"SELECT * FROM "MissionTemplate"
+               WHERE COALESCE("isDeleted", false) = false
+               ORDER BY "createdAt" DESC"#,
+        )
+        .fetch_all(&s.db)
+        .await
+        {
+            Ok(rows) => {
+                let list: Vec<Value> = rows.iter().map(mission_template_to_json).collect();
+                (StatusCode::OK, Json(list)).into_response()
+            }
+            Err(e) => {
+                tracing::error!("Failed to list mission templates: {e}");
+                err500("Failed to retrieve mission templates")
+            }
+        }
+    } else if method == Method::POST {
+        let body = parse_body(&bytes);
+        let id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("tmpl-custom-{}", chrono::Utc::now().timestamp_millis()));
+        let name = body
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or("Custom Scan Template")
+            .to_string();
+        let description = body
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let template_type = body
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("CUSTOM")
+            .to_string();
+        let speed = body.get("speed").and_then(Value::as_i64).unwrap_or(20) as i32;
+        let pass = body.get("pass").and_then(Value::as_i64).unwrap_or(1) as i32;
+        let overlap = body.get("overlap").and_then(Value::as_i64).unwrap_or(20) as i32;
+        let direction = body
+            .get("direction")
+            .and_then(Value::as_str)
+            .unwrap_or("LENGTHWISE")
+            .to_string();
+        let reverse = body.get("reverse").and_then(Value::as_bool).unwrap_or(false);
+        let boundary_points = match body.get("boundaryPoints") {
+            Some(Value::String(s)) => s.clone(),
+            Some(v) => serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string()),
+            None => "[]".to_string(),
+        };
+        let is_custom = body.get("isCustom").and_then(Value::as_bool).unwrap_or(true);
+        let now = svc::now_naive();
+
+        let row = match sqlx::query_as::<_, crate::models::MissionTemplate>(
+            r#"INSERT INTO "MissionTemplate" (
+                   "id", "name", "description", "type", "speed", "pass", "overlap",
+                   "direction", "reverse", "boundaryPoints", "isCustom", "isDeleted",
+                   "dirty", "createdAt", "updatedAt"
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, true, $12, $12)
+               ON CONFLICT ("id") DO UPDATE SET
+                   "name" = EXCLUDED."name",
+                   "description" = EXCLUDED."description",
+                   "type" = EXCLUDED."type",
+                   "speed" = EXCLUDED."speed",
+                   "pass" = EXCLUDED."pass",
+                   "overlap" = EXCLUDED."overlap",
+                   "direction" = EXCLUDED."direction",
+                   "reverse" = EXCLUDED."reverse",
+                   "boundaryPoints" = EXCLUDED."boundaryPoints",
+                   "isCustom" = EXCLUDED."isCustom",
+                   "isDeleted" = false,
+                   "dirty" = true,
+                   "updatedAt" = EXCLUDED."updatedAt"
+               RETURNING *"#,
+        )
+        .bind(&id)
+        .bind(&name)
+        .bind(&description)
+        .bind(&template_type)
+        .bind(speed)
+        .bind(pass)
+        .bind(overlap)
+        .bind(&direction)
+        .bind(reverse)
+        .bind(&boundary_points)
+        .bind(is_custom)
+        .bind(now)
+        .fetch_one(&s.db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to save mission template: {e}");
+                return err500("Failed to save mission template");
+            }
+        };
+
+        // Best-effort immediate push to Car/ATC; background scheduler will retry if offline
+        if svc::push_mission_template_to_upstream(&s, &row).await {
+            let _ = sqlx::query(r#"UPDATE "MissionTemplate" SET "dirty" = false WHERE "id" = $1"#)
+                .bind(&row.id)
+                .execute(&s.db)
+                .await;
+        }
+
+        (StatusCode::OK, Json(mission_template_to_json(&row))).into_response()
+    } else {
+        mna(&method, Some("GET, POST"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/mission/templates/{id}
+// ---------------------------------------------------------------------------
+async fn mission_template_by_id(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if method != Method::DELETE {
+        return mna(&method, Some("DELETE"));
+    }
+    let now = svc::now_naive();
+    let updated = sqlx::query_as::<_, crate::models::MissionTemplate>(
+        r#"UPDATE "MissionTemplate"
+           SET "isDeleted" = true, "dirty" = true, "updatedAt" = $2
+           WHERE "id" = $1
+           RETURNING *"#,
+    )
+    .bind(&id)
+    .bind(now)
+    .fetch_optional(&s.db)
+    .await;
+
+    match updated {
+        Ok(Some(row)) => {
+            if svc::push_mission_template_to_upstream(&s, &row).await {
+                let _ = sqlx::query(
+                    r#"UPDATE "MissionTemplate" SET "dirty" = false WHERE "id" = $1"#,
+                )
+                .bind(&row.id)
+                .execute(&s.db)
+                .await;
+            }
+            (StatusCode::OK, Json(json!({ "success": true, "id": id }))).into_response()
+        }
+        Ok(None) => (StatusCode::OK, Json(json!({ "success": true, "id": id }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete mission template {id}: {e}");
+            err500("Failed to delete mission template")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Storage Lifecycle, Local Eviction/Re-import, ATC Cold Store & Archives
+// ---------------------------------------------------------------------------
+
+async fn storage_overview(method: Method, State(s): State<AppState>) -> Response {
+    if method != Method::GET {
+        return mna(&method, Some("GET"));
+    }
+
+    let (total_bytes, used_bytes, free_bytes, usage_percent) =
+        crate::archive::disk_usage_for_path(std::path::Path::new("fod-images/mission")).await;
+    let cache_bytes = crate::archive::dir_size_bytes(std::path::Path::new("fod-images/mission")).await;
+    let local_stored_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM "Mission" WHERE COALESCE("localEvicted", 0) = 0"#,
+    )
+    .fetch_one(&s.db)
+    .await
+    .unwrap_or(0);
+    let local_evicted_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM "Mission" WHERE COALESCE("localEvicted", 0) = 1"#,
+    )
+    .fetch_one(&s.db)
+    .await
+    .unwrap_or(0);
+    let desktop_policy = crate::scheduler::get_desktop_storage_policy(&s).await;
+
+    let fleet = match svc::atc_get_storage_overview(&s).await {
+        Ok(ov) => {
+            let atc_disk = ov.atc_disk.map(|d| {
+                json!({
+                    "nodeId": d.node_id,
+                    "online": d.online,
+                    "totalBytes": d.total_bytes,
+                    "usedBytes": d.used_bytes,
+                    "freeBytes": d.free_bytes,
+                    "usagePercent": d.usage_percent,
+                    "framesBytes": d.frames_bytes,
+                    "archivesBytes": d.archives_bytes,
+                    "hotMissionCount": d.hot_mission_count,
+                    "coldMissionCount": d.cold_mission_count,
+                })
+            });
+            let car_disk = ov.car_disk.map(|d| {
+                json!({
+                    "nodeId": d.node_id,
+                    "online": d.online,
+                    "totalBytes": d.total_bytes,
+                    "usedBytes": d.used_bytes,
+                    "freeBytes": d.free_bytes,
+                    "usagePercent": d.usage_percent,
+                    "framesBytes": d.frames_bytes,
+                    "archivesBytes": d.archives_bytes,
+                    "hotMissionCount": d.hot_mission_count,
+                    "coldMissionCount": d.cold_mission_count,
+                })
+            });
+            let missions: Vec<Value> = ov
+                .missions
+                .into_iter()
+                .map(|entry| {
+                    let m = entry.mission;
+                    json!({
+                        "id": m.as_ref().map(|x| x.id).unwrap_or(0),
+                        "displayId": m.as_ref().and_then(|x| x.display_id),
+                        "status": m.as_ref().map(|x| match x.status { 1 => "ACTIVE", 3 => "TERMINATED", _ => "INACTIVE" }).unwrap_or("INACTIVE"),
+                        "createdAt": m.as_ref().map(|x| x.created_at).unwrap_or(0),
+                        "storageTier": m.as_ref().map(|x| x.storage_tier.as_str()).unwrap_or("HOT"),
+                        "storageEpoch": m.as_ref().map(|x| x.storage_epoch).unwrap_or(1),
+                        "archiveSizeBytes": m.as_ref().and_then(|x| x.archive_size_bytes),
+                        "coldStoredAtMs": m.as_ref().and_then(|x| x.cold_stored_at_ms),
+                        "totalFodGroups": entry.total_fod_groups,
+                        "totalFods": entry.total_fods,
+                        "clearedCount": entry.cleared_count,
+                        "dirtyGroupCount": entry.dirty_group_count,
+                        "hotBytes": entry.hot_bytes,
+                        "archiveBytes": entry.archive_bytes,
+                        "presentHotOnAtc": entry.present_hot_on_atc,
+                        "presentColdOnAtc": entry.present_cold_on_atc,
+                        "presentHotOnCar": entry.present_hot_on_car,
+                        "carStorageTier": entry.car_storage_tier,
+                    })
+                })
+                .collect();
+            let fleet_policy = ov.policy.map(|p| {
+                json!({
+                    "autoColdStoreEnabled": p.auto_cold_store_enabled,
+                    "atcKeepHotMissions": p.atc_keep_hot_missions,
+                    "atcMaxDiskPercent": p.atc_max_disk_percent,
+                    "autoDropCarOnColdStore": p.auto_drop_car_on_cold_store,
+                    "autoDropCarWhenBackedUp": p.auto_drop_car_when_backed_up,
+                    "carKeepHotMissions": p.car_keep_hot_missions,
+                    "carMaxDiskPercent": p.car_max_disk_percent,
+                })
+            });
+            json!({
+                "atcOnline": true,
+                "atcDisk": atc_disk,
+                "carDisk": car_disk,
+                "missions": missions,
+                "fleetPolicy": fleet_policy,
+            })
+        }
+        Err(e) => {
+            json!({
+                "atcOnline": false,
+                "error": e.to_string(),
+                "atcDisk": Value::Null,
+                "carDisk": Value::Null,
+                "missions": [],
+                "fleetPolicy": Value::Null,
+            })
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "desktop": {
+                "totalBytes": total_bytes,
+                "usedBytes": used_bytes,
+                "freeBytes": free_bytes,
+                "usagePercent": usage_percent,
+                "cacheBytes": cache_bytes,
+                "storedMissions": local_stored_count,
+                "freedMissions": local_evicted_count,
+                "policy": desktop_policy,
+            },
+            "fleet": fleet,
+        })),
+    )
+        .into_response()
+}
+
+async fn storage_policy(
+    method: Method,
+    State(s): State<AppState>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let body = parse_body(&bytes);
+
+    let mut saved_desktop = None;
+    if let Some(dp) = body.get("desktop") {
+        if let Ok(policy) = serde_json::from_value::<crate::scheduler::DesktopStoragePolicy>(dp.clone()) {
+            if let Err(e) = crate::scheduler::save_desktop_storage_policy(&s, &policy).await {
+                return err500(&format!("Failed to save desktop policy: {e}"));
+            }
+            saved_desktop = Some(policy);
+        }
+    }
+
+    let mut saved_fleet = None;
+    if let Some(fp) = body.get("fleet") {
+        let cfg = proto_defination::mission::StoragePolicyConfig {
+            auto_cold_store_enabled: fp.get("autoColdStoreEnabled").and_then(Value::as_bool).unwrap_or(false),
+            atc_keep_hot_missions: fp.get("atcKeepHotMissions").and_then(Value::as_u64).unwrap_or(30) as u32,
+            atc_max_disk_percent: fp.get("atcMaxDiskPercent").and_then(Value::as_u64).unwrap_or(85) as u32,
+            auto_drop_car_on_cold_store: fp.get("autoDropCarOnColdStore").and_then(Value::as_bool).unwrap_or(true),
+            auto_drop_car_when_backed_up: fp.get("autoDropCarWhenBackedUp").and_then(Value::as_bool).unwrap_or(false),
+            car_keep_hot_missions: fp.get("carKeepHotMissions").and_then(Value::as_u64).unwrap_or(15) as u32,
+            car_max_disk_percent: fp.get("carMaxDiskPercent").and_then(Value::as_u64).unwrap_or(80) as u32,
+        };
+        match svc::atc_update_storage_policy(&s, cfg).await {
+            Ok(res) => {
+                saved_fleet = Some(json!({
+                    "autoColdStoreEnabled": res.auto_cold_store_enabled,
+                    "atcKeepHotMissions": res.atc_keep_hot_missions,
+                    "atcMaxDiskPercent": res.atc_max_disk_percent,
+                    "autoDropCarOnColdStore": res.auto_drop_car_on_cold_store,
+                    "autoDropCarWhenBackedUp": res.auto_drop_car_when_backed_up,
+                    "carKeepHotMissions": res.car_keep_hot_missions,
+                    "carMaxDiskPercent": res.car_max_disk_percent,
+                }));
+            }
+            Err(e) => {
+                return err_json(
+                    StatusCode::BAD_GATEWAY,
+                    json!({ "error": format!("Failed to update ATC fleet policy: {e}") }),
+                );
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "desktop": saved_desktop,
+            "fleet": saved_fleet,
+        })),
+    )
+        .into_response()
+}
+
+async fn local_free(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+
+    // Best-effort flush of any dirty decisions before freeing local data
+    let _ = crate::scheduler::resolve_fod_group(&s).await;
+
+    match crate::scheduler::purge_local_mission_data(&s, mission_id, false).await {
+        Ok((bytes_freed, rows_removed)) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "missionId": mission_id,
+                "bytesFreed": bytes_freed,
+                "rowsRemoved": rows_removed,
+            })),
+        )
+            .into_response(),
+        Err(e) => err_json(StatusCode::CONFLICT, json!({ "error": e.to_string() })),
+    }
+}
+
+async fn local_free_batch(
+    method: Method,
+    State(s): State<AppState>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let body = parse_body(&bytes);
+    let ids: Vec<i64> = body
+        .get("missionIds")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(svc::json_integer).collect())
+        .unwrap_or_default();
+
+    let _ = crate::scheduler::resolve_fod_group(&s).await;
+
+    let mut freed_total = 0u64;
+    let mut freed_ids = Vec::new();
+    let mut errors = Vec::new();
+
+    for mid in ids {
+        match crate::scheduler::purge_local_mission_data(&s, mid, false).await {
+            Ok((b, _)) => {
+                freed_total += b;
+                freed_ids.push(mid);
+            }
+            Err(e) => errors.push(json!({ "missionId": mid, "error": e.to_string() })),
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": errors.is_empty(),
+            "freedMissionIds": freed_ids,
+            "bytesFreed": freed_total,
+            "errors": errors,
+        })),
+    )
+        .into_response()
+}
+
+async fn reimport_mission_locally(s: &AppState, mission_id: i64) -> anyhow::Result<Value> {
+    let existing_row: Option<(String,)> = sqlx::query_as(
+        r#"SELECT COALESCE("storageTier", 'HOT') FROM "Mission" WHERE "id" = $1"#,
+    )
+    .bind(mission_id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some((ref tier,)) = existing_row {
+        if tier == "COLD_STORED" {
+            anyhow::bail!("Mission {mission_id} is cold-stored on ATC. Restore it from Cold Storage first.");
+        }
+    } else {
+        // Mission row was previously dropped locally — fetch metadata from ATC/Car and insert it
+        let detail = svc::api_to_main(
+            s,
+            reqwest::Method::GET,
+            &format!("/mission/details/{mission_id}"),
+            None,
+            Some(5000),
+        )
+        .await;
+        let data = detail.as_ref().and_then(|v| v.get("data")).unwrap_or(&Value::Null);
+        if data.is_null() {
+            anyhow::bail!("Mission {mission_id} not found on ATC or Car");
+        }
+        let tier = data.get("storageTier").and_then(Value::as_str).unwrap_or("HOT");
+        if tier == "COLD_STORED" {
+            anyhow::bail!("Mission {mission_id} is cold-stored on ATC. Restore it from Cold Storage first.");
+        }
+        let now = svc::now_naive();
+        let display_id = data.get("displayId").and_then(Value::as_i64);
+        let timer = data.get("timer").and_then(Value::as_f64).unwrap_or(0.0);
+        let pass = data.get("pass").and_then(Value::as_i64).map(|v| v as i32);
+        let speed = data.get("speed").and_then(Value::as_i64).map(|v| v as i32);
+        let epoch = data.get("storageEpoch").and_then(Value::as_i64).unwrap_or(1);
+        let created_at = data
+            .get("createdAt")
+            .and_then(svc::parse_js_date)
+            .unwrap_or(now);
+        sqlx::query(
+            r#"INSERT INTO "Mission" ("id","displayId","status","timer","scanStatus","pass","speed","localEvicted","storageTier","storageEpoch","createdAt","updatedAt")
+               VALUES ($1,$2,'TERMINATED',$3,'PAUSE',$4,$5,0,'HOT',$6,$7,$8)
+               ON CONFLICT ("id") DO UPDATE SET "localEvicted" = 0, "storageTier" = 'HOT', "storageEpoch" = MAX(COALESCE("Mission"."storageEpoch", 1), EXCLUDED."storageEpoch"), "updatedAt" = EXCLUDED."updatedAt""#,
+        )
+        .bind(mission_id)
+        .bind(display_id)
+        .bind(timer)
+        .bind(pass)
+        .bind(speed)
+        .bind(epoch)
+        .bind(created_at)
+        .bind(now)
+        .execute(&s.db)
+        .await?;
+    }
+
+    sqlx::query(
+        r#"UPDATE "Mission" SET "localEvicted" = 0, "updatedAt" = $2 WHERE "id" = $1"#,
+    )
+    .bind(mission_id)
+    .bind(svc::now_naive())
+    .execute(&s.db)
+    .await?;
+
+    crate::scheduler::clear_mission_sync_cursor(mission_id);
+
+    let groups = svc::fetch_all_groups_prefer_atc(s, mission_id).await?;
+    let now = svc::now_naive();
+    let mut cleared_group_ids = Vec::new();
+
+    for g in &groups {
+        let st = svc::proto_group_status_str(g.status);
+        if st == "CLEARED" {
+            cleared_group_ids.push(g.group_id);
+        }
+        let vv_str = serde_json::to_string(&g.version_vector).unwrap_or_else(|_| "{}".to_string());
+        let created = chrono::DateTime::from_timestamp_millis(g.created_at)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or(now);
+        let id = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query(
+            r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","versionVector","decidedAtMs","updatedBy","biggestFodId","biggestFodSize","createdAt","updatedAt")
+               VALUES ($1,$2,$3,false,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+               ON CONFLICT ("missionId","groupId") DO UPDATE SET
+                 "status" = EXCLUDED."status",
+                 "version" = EXCLUDED."version",
+                 "versionVector" = EXCLUDED."versionVector",
+                 "decidedAtMs" = EXCLUDED."decidedAtMs",
+                 "updatedBy" = EXCLUDED."updatedBy",
+                 "biggestFodId" = COALESCE(EXCLUDED."biggestFodId", "FodGroup"."biggestFodId"),
+                 "biggestFodSize" = COALESCE(EXCLUDED."biggestFodSize", "FodGroup"."biggestFodSize"),
+                 "dirty" = false,
+                 "updatedAt" = EXCLUDED."updatedAt""#,
+        )
+        .bind(id)
+        .bind(g.group_id as i32)
+        .bind(mission_id)
+        .bind(st)
+        .bind(g.version)
+        .bind(&vv_str)
+        .bind(g.decided_at_ms)
+        .bind(&g.updated_by)
+        .bind(g.biggest_fod.as_deref())
+        .bind(g.biggest_fod_size.map(|v| v as i32))
+        .bind(created)
+        .bind(now)
+        .execute(&s.db)
+        .await;
+    }
+
+    let fods = svc::fetch_biggest_fods_prefer_atc(s, mission_id).await;
+    let mut restored_frames = 0usize;
+    for f in &fods {
+        let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
+        let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
+        let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
+        let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
+        let ts = chrono::DateTime::from_timestamp_millis(f.timestamp)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or(now);
+        let created = chrono::DateTime::from_timestamp_millis(f.created_at)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or(ts);
+
+        let _ = sqlx::query(
+            r#"INSERT INTO "Fod" (
+                "id", "missionId", "groupId", "sysid", "location", "confidence",
+                "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false)
+            ON CONFLICT ("id") DO UPDATE SET
+                "location" = EXCLUDED."location",
+                "confidence" = EXCLUDED."confidence",
+                "class" = EXCLUDED."class",
+                "velocity" = EXCLUDED."velocity",
+                "size" = EXCLUDED."size",
+                "updatedAt" = $12"#,
+        )
+        .bind(&f.id)
+        .bind(f.mission_id)
+        .bind(f.group_id as i32)
+        .bind(if f.sysid.is_empty() { None } else { Some(&f.sysid) })
+        .bind(loc)
+        .bind(f.confidence)
+        .bind(if f.class_name.is_empty() { None } else { Some(&f.class_name) })
+        .bind(f.velocity)
+        .bind(f.size)
+        .bind(ts)
+        .bind(created)
+        .bind(now)
+        .execute(&s.db)
+        .await;
+
+        let m_str = f.mission_id.to_string();
+        let g_str = f.group_id.to_string();
+        if !f.frame_jpeg.is_empty() {
+            if crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await.is_ok() {
+                restored_frames += 1;
+            }
+        } else if !f.image_sha256.is_empty() {
+            if let Some(bytes) = svc::fetch_image_prefer_atc(s, &f.image_sha256).await {
+                if crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &bytes).await.is_ok() {
+                    restored_frames += 1;
+                }
+            }
+        }
+    }
+
+    let mut restored_cleared = 0usize;
+    for gid in cleared_group_ids {
+        if let Some(cf) = svc::fetch_cleared_fod_prefer_atc(s, mission_id, gid).await {
+            let status_str = match proto_defination::common::ClearedFodStatus::try_from(cf.status) {
+                Ok(proto_defination::common::ClearedFodStatus::NotFound) => "not_found",
+                Ok(proto_defination::common::ClearedFodStatus::FalsePositive) => "false_positive",
+                _ => "found",
+            };
+            let loc = cf
+                .location
+                .map(|l| json!({ "lat": l.lat, "lon": l.lon, "sd": l.sd }))
+                .unwrap_or_else(|| json!({}));
+            let created = chrono::DateTime::from_timestamp_millis(cf.created_at)
+                .map(|dt| dt.naive_utc())
+                .unwrap_or(now);
+            let _ = sqlx::query(
+                r#"INSERT INTO "ClearedFod"
+                   ("id","status","beforeClearImg","afterClearImg","location","groupId","missionId","createdAt","updatedAt","createdBy","updatedBy","dirty")
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false)
+                   ON CONFLICT ("groupId","missionId") DO NOTHING"#,
+            )
+            .bind(&cf.id)
+            .bind(status_str)
+            .bind(sqlx::types::Json(&cf.before_image_sha256))
+            .bind(sqlx::types::Json(&cf.after_image_sha256))
+            .bind(loc)
+            .bind(cf.group_id as i32)
+            .bind(cf.mission_id)
+            .bind(created)
+            .bind(now)
+            .bind(cf.created_by.as_deref())
+            .bind(cf.created_by.as_deref())
+            .execute(&s.db)
+            .await;
+
+            for sha in cf.before_image_sha256.iter().chain(cf.after_image_sha256.iter()) {
+                if !sha.is_empty() {
+                    let cached = std::path::Path::new("fod-images/mission").join(format!("{sha}.jpg"));
+                    if !cached.exists() {
+                        if let Some(bytes) = svc::fetch_image_prefer_atc(s, sha).await {
+                            if let Some(parent) = cached.parent() {
+                                let _ = tokio::fs::create_dir_all(parent).await;
+                            }
+                            let _ = tokio::fs::write(&cached, &bytes).await;
+                        }
+                    }
+                }
+            }
+            restored_cleared += 1;
+        }
+    }
+
+    Ok(json!({
+        "success": true,
+        "missionId": mission_id,
+        "restoredGroups": groups.len(),
+        "restoredFods": fods.len(),
+        "restoredCleared": restored_cleared,
+        "restoredFrames": restored_frames,
+    }))
+}
+
+async fn local_reimport(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+
+    match reimport_mission_locally(&s, mission_id).await {
+        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Err(e) => err_json(StatusCode::CONFLICT, json!({ "error": e.to_string() })),
+    }
+}
+
+async fn atc_cold_store(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+    let body = parse_body(&bytes);
+    let force_drop_car = body
+        .get("forceDropCar")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    // Push any local dirty changes to Car/ATC first
+    let _ = crate::scheduler::resolve_fod_group(&s).await;
+
+    match svc::atc_cold_store_mission(&s, mission_id, force_drop_car).await {
+        Ok(res) => {
+            // Completely drop the cold-stored mission from this desktop instance as well
+            let _ = crate::scheduler::drop_cold_stored_mission_locally(&s, mission_id).await;
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": res.success,
+                    "message": res.message,
+                    "archiveSizeBytes": res.archive_size_bytes,
+                    "archiveSha256": res.archive_sha256,
+                    "bytesFreed": res.bytes_freed,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => err_json(StatusCode::CONFLICT, json!({ "error": e.to_string() })),
+    }
+}
+
+async fn atc_restore(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+    let body = parse_body(&bytes);
+    let reimport_local = body
+        .get("reimportLocal")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    match svc::atc_restore_cold_mission(&s, mission_id).await {
+        Ok(res) => {
+            let new_epoch = res.mission.as_ref().map(|m| m.storage_epoch).unwrap_or(2);
+            let display_id = res.mission.as_ref().and_then(|m| m.display_id);
+            let timer = res.mission.as_ref().map(|m| m.timer as f64).unwrap_or(0.0);
+            let speed = res.mission.as_ref().and_then(|m| m.speed);
+            let pass = res.mission.as_ref().and_then(|m| m.pass);
+            let created_at = res
+                .mission
+                .as_ref()
+                .and_then(|m| chrono::DateTime::from_timestamp_millis(m.created_at))
+                .map(|dt| dt.naive_utc())
+                .unwrap_or_else(svc::now_naive);
+
+            let _ = sqlx::query(
+                r#"INSERT INTO "Mission" ("id","displayId","status","timer","scanStatus","speed","pass","localEvicted","storageTier","storageEpoch","coldStoredAt","createdAt","updatedAt")
+                   VALUES ($1,$2,'TERMINATED',$3,'PAUSE',$4,$5,$6,'HOT',$7,NULL,$8,$9)
+                   ON CONFLICT ("id") DO UPDATE SET
+                       "storageTier" = 'HOT',
+                       "storageEpoch" = MAX(COALESCE("Mission"."storageEpoch", 1), EXCLUDED."storageEpoch"),
+                       "coldStoredAt" = NULL,
+                       "updatedAt" = EXCLUDED."updatedAt""#,
+            )
+            .bind(mission_id)
+            .bind(display_id)
+            .bind(timer)
+            .bind(speed)
+            .bind(pass)
+            .bind(!reimport_local)
+            .bind(new_epoch)
+            .bind(created_at)
+            .bind(svc::now_naive())
+            .execute(&s.db)
+            .await;
+
+            let local_res = if reimport_local {
+                reimport_mission_locally(&s, mission_id).await.ok()
+            } else {
+                None
+            };
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": res.success,
+                    "message": res.message,
+                    "restoredGroups": res.restored_groups,
+                    "restoredFods": res.restored_fods,
+                    "restoredFrames": res.restored_frames,
+                    "localReimport": local_res,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => err_json(StatusCode::CONFLICT, json!({ "error": e.to_string() })),
+    }
+}
+
+async fn car_drop(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+    let epoch: i64 = sqlx::query_scalar(
+        r#"SELECT COALESCE("storageEpoch", 1) FROM "Mission" WHERE "id" = $1"#,
+    )
+    .bind(mission_id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(1);
+
+    match svc::atc_drop_car_hot_data(&s, mission_id, epoch + 1).await {
+        Ok(res) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": res.success,
+                "message": res.message,
+                "bytesFreed": res.bytes_freed,
+                "framesRemoved": res.frames_removed,
+            })),
+        )
+            .into_response(),
+        Err(e) => err_json(StatusCode::CONFLICT, json!({ "error": e.to_string() })),
+    }
+}
+
+async fn build_local_archive_bytes(s: &AppState, mission_id: i64) -> anyhow::Result<Vec<u8>> {
+    let mission: Mission = sqlx::query_as(r#"SELECT * FROM "Mission" WHERE "id" = $1"#)
+        .bind(mission_id)
+        .fetch_optional(&s.db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Mission {mission_id} not found locally"))?;
+
+    let groups: Vec<FodGroup> =
+        sqlx::query_as(r#"SELECT * FROM "FodGroup" WHERE "missionId" = $1"#)
+            .bind(mission_id)
+            .fetch_all(&s.db)
+            .await?;
+    let fods: Vec<Fod> = sqlx::query_as(r#"SELECT * FROM "Fod" WHERE "missionId" = $1"#)
+        .bind(mission_id)
+        .fetch_all(&s.db)
+        .await?;
+    let cleared: Vec<ClearedFod> =
+        sqlx::query_as(r#"SELECT * FROM "ClearedFod" WHERE "missionId" = $1"#)
+            .bind(mission_id)
+            .fetch_all(&s.db)
+            .await?;
+
+    let mut frames = std::collections::BTreeMap::new();
+    let mut frame_bytes = 0u64;
+    for f in &fods {
+        let p = std::path::Path::new("fod-images/mission")
+            .join(mission_id.to_string())
+            .join(f.group_id.to_string())
+            .join(format!("{}.jpg", f.id));
+        if let Ok(bytes) = tokio::fs::read(&p).await {
+            let sha = crate::archive::sha256_hex(&bytes);
+            frame_bytes += bytes.len() as u64;
+            frames.insert(sha, bytes);
+        }
+    }
+    for c in &cleared {
+        for sha in c.before_clear_img.iter().chain(c.after_clear_img.iter()) {
+            if !sha.is_empty() && !frames.contains_key(sha) {
+                let p = std::path::Path::new("fod-images/mission").join(format!("{sha}.jpg"));
+                if let Ok(bytes) = tokio::fs::read(&p).await {
+                    frame_bytes += bytes.len() as u64;
+                    frames.insert(sha.clone(), bytes);
+                }
+            }
+        }
+    }
+
+    // Serialize into backend-compatible JSON shapes
+    let mission_json = serde_json::to_vec_pretty(&json!({
+        "id": mission.id,
+        "status": mission.status,
+        "timer": mission.timer.round() as i64,
+        "scan_status": mission.scan_status,
+        "speed": mission.speed,
+        "pass": mission.pass,
+        "created_at": format!("{}Z", mission.created_at.format("%Y-%m-%dT%H:%M:%S%.3f")),
+        "updated_at": format!("{}Z", mission.updated_at.format("%Y-%m-%dT%H:%M:%S%.3f")),
+        "created_by": mission.created_by,
+        "updated_by": mission.updated_by,
+        "display_id": mission.display_id,
+        "storage_tier": "HOT",
+        "storage_epoch": mission.storage_epoch.unwrap_or(1),
+    }))?;
+
+    let groups_val: Vec<Value> = groups
+        .iter()
+        .map(|g| {
+            let vv: Value = g
+                .version_vector
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| json!({}));
+            json!({
+                "id": 0,
+                "mission_id": g.mission_id,
+                "group_id": g.group_id as i64,
+                "status": g.status,
+                "version": g.version.unwrap_or(0),
+                "biggest_fod": g.biggest_fod_id,
+                "biggest_fod_size": g.biggest_fod_size.map(|v| v as f64),
+                "created_at": format!("{}Z", g.created_at.format("%Y-%m-%dT%H:%M:%S%.3f")),
+                "updated_at": format!("{}Z", g.updated_at.format("%Y-%m-%dT%H:%M:%S%.3f")),
+                "vv": vv,
+                "decided_at_ms": g.decided_at_ms.unwrap_or(0),
+                "updated_by": g.updated_by.as_deref().unwrap_or(""),
+                "dirty": false,
+            })
+        })
+        .collect();
+    let fod_groups_json = serde_json::to_vec_pretty(&groups_val)?;
+
+    let fods_val: Vec<Value> = fods
+        .iter()
+        .map(|f| {
+            let p = std::path::Path::new("fod-images/mission")
+                .join(mission_id.to_string())
+                .join(f.group_id.to_string())
+                .join(format!("{}.jpg", f.id));
+            let img_meta = std::fs::read(&p).ok().map(|b| (crate::archive::sha256_hex(&b), b.len() as i32));
+            let loc = &f.location;
+            let lat = loc.get("lat").and_then(Value::as_f64).unwrap_or(0.0);
+            let lon = loc.get("lon").and_then(Value::as_f64).unwrap_or(0.0);
+            let sd = loc.get("sd").and_then(Value::as_f64).unwrap_or(0.0);
+            json!({
+                "id": f.id,
+                "mission_id": f.mission_id,
+                "group_id": f.group_id as i64,
+                "sysid": f.sysid,
+                "cam_id": Value::Null,
+                "lat": lat,
+                "lon": lon,
+                "sd": sd,
+                "confidence": f.confidence,
+                "class": f.class,
+                "velocity": f.velocity,
+                "size": f.size,
+                "image_sha256": img_meta.as_ref().map(|x| x.0.clone()),
+                "image_size": img_meta.as_ref().map(|x| x.1),
+                "frame_missing": img_meta.is_none(),
+                "captured_at": format!("{}Z", f.timestamp.format("%Y-%m-%dT%H:%M:%S%.3f")),
+                "created_at": format!("{}Z", f.created_at.format("%Y-%m-%dT%H:%M:%S%.3f")),
+            })
+        })
+        .collect();
+    let fods_json = serde_json::to_vec_pretty(&fods_val)?;
+
+    let cleared_val: Vec<Value> = cleared
+        .iter()
+        .map(|c| {
+            let lat = c.location.get("lat").and_then(Value::as_f64).unwrap_or(0.0);
+            let lon = c.location.get("lon").and_then(Value::as_f64).unwrap_or(0.0);
+            let sd = c.location.get("sd").and_then(Value::as_f64).unwrap_or(0.0);
+            json!({
+                "id": c.id,
+                "mission_id": c.mission_id,
+                "group_id": c.group_id as i64,
+                "status": c.status,
+                "before_image_sha256": c.before_clear_img,
+                "after_image_sha256": c.after_clear_img,
+                "lat": lat,
+                "lon": lon,
+                "sd": sd,
+                "created_at": format!("{}Z", c.created_at.format("%Y-%m-%dT%H:%M:%S%.3f")),
+                "created_by": c.created_by,
+            })
+        })
+        .collect();
+    let cleared_fods_json = serde_json::to_vec_pretty(&cleared_val)?;
+    let group_actions_json = b"[]".to_vec();
+
+    let bundle_sha256 = crate::archive::compute_bundle_sha256(
+        &mission_json,
+        &fod_groups_json,
+        &fods_json,
+        &cleared_fods_json,
+        &group_actions_json,
+        &frames,
+    );
+
+    let bundle = crate::archive::MissionArchiveBundle {
+        manifest: crate::archive::ArchiveManifest {
+            format_version: crate::archive::ARCHIVE_FORMAT_VERSION,
+            mission_id: mission.id,
+            display_id: mission.display_id,
+            exported_at_ms: chrono::Utc::now().timestamp_millis(),
+            origin_node: "desktop-local".to_string(),
+            group_count: groups.len(),
+            fod_count: fods.len(),
+            cleared_count: cleared.len(),
+            action_count: 0,
+            frame_count: frames.len(),
+            frame_bytes,
+            bundle_sha256,
+        },
+        mission_json,
+        fod_groups_json,
+        fods_json,
+        cleared_fods_json,
+        group_actions_json,
+        frames,
+    };
+
+    tokio::task::spawn_blocking(move || crate::archive::encode_archive_bytes(&bundle)).await?
+}
+
+async fn archive_export(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+    let body = parse_body(&bytes);
+    let dest_path = body
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    let source = body
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("atc");
+
+    let archive_bytes = if source == "local" {
+        match build_local_archive_bytes(&s, mission_id).await {
+            Ok(b) => b,
+            Err(e) => return err_json(StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })),
+        }
+    } else {
+        match svc::export_mission_archive_from_upstream(&s, mission_id).await {
+            Ok((_fname, b)) => b,
+            Err(upstream_err) => match build_local_archive_bytes(&s, mission_id).await {
+                Ok(b) => b,
+                Err(_) => {
+                    return err_json(
+                        StatusCode::BAD_GATEWAY,
+                        json!({ "error": format!("Archive export failed: {upstream_err}") }),
+                    );
+                }
+            },
+        }
+    };
+
+    let target = match dest_path {
+        Some(p) => p,
+        None => {
+            let dir = std::path::PathBuf::from("fod-images/exports");
+            let _ = tokio::fs::create_dir_all(&dir).await;
+            dir.join(format!("mission-{mission_id}.zoidpack"))
+        }
+    };
+
+    if let Some(parent) = target.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Err(e) = tokio::fs::write(&target, &archive_bytes).await {
+        return err500(&format!("Failed to write archive to disk: {e}"));
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "missionId": mission_id,
+            "path": target.to_string_lossy(),
+            "sizeBytes": archive_bytes.len(),
+        })),
+    )
+        .into_response()
+}
+
+async fn archive_import(
+    method: Method,
+    State(s): State<AppState>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let body = parse_body(&bytes);
+    let Some(path_str) = body.get("path").and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Archive file path is required" }));
+    };
+    let target = body
+        .get("target")
+        .and_then(Value::as_str)
+        .unwrap_or("atc");
+    let import_local_after_atc = body
+        .get("reimportLocal")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    let file_path = std::path::PathBuf::from(path_str);
+    let raw = match tokio::fs::read(&file_path).await {
+        Ok(b) => b,
+        Err(e) => return err_json(StatusCode::BAD_REQUEST, json!({ "error": format!("Failed to read archive file: {e}") })),
+    };
+
+    if target == "local" {
+        let bundle = match tokio::task::spawn_blocking(move || crate::archive::decode_archive_bytes(&raw)).await {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => return err_json(StatusCode::BAD_REQUEST, json!({ "error": format!("Invalid archive: {e}") })),
+            Err(e) => return err500(&e.to_string()),
+        };
+        let mission_val: Value = match serde_json::from_slice(&bundle.mission_json) {
+            Ok(v) => v,
+            Err(e) => return err_json(StatusCode::BAD_REQUEST, json!({ "error": format!("Invalid mission.json: {e}") })),
+        };
+        let groups_val: Vec<Value> = serde_json::from_slice(&bundle.fod_groups_json).unwrap_or_default();
+        let fods_val: Vec<Value> = serde_json::from_slice(&bundle.fods_json).unwrap_or_default();
+        let cleared_val: Vec<Value> = serde_json::from_slice(&bundle.cleared_fods_json).unwrap_or_default();
+
+        let mission_id = bundle.manifest.mission_id;
+        let now = svc::now_naive();
+        let created_at = mission_val
+            .get("created_at")
+            .or_else(|| mission_val.get("createdAt"))
+            .and_then(svc::parse_js_date)
+            .unwrap_or(now);
+        let timer = mission_val.get("timer").and_then(Value::as_f64).unwrap_or(0.0);
+        let speed = mission_val.get("speed").and_then(Value::as_i64).map(|v| v as i32);
+        let pass = mission_val.get("pass").and_then(Value::as_i64).map(|v| v as i32);
+        let display_id = mission_val
+            .get("display_id")
+            .or_else(|| mission_val.get("displayId"))
+            .and_then(Value::as_i64)
+            .or(bundle.manifest.display_id);
+
+        let _ = sqlx::query(
+            r#"INSERT INTO "Mission" ("id","displayId","status","timer","scanStatus","speed","pass","localEvicted","storageTier","createdAt","updatedAt")
+               VALUES ($1,$2,'TERMINATED',$3,'PAUSE',$4,$5,0,'HOT',$6,$7)
+               ON CONFLICT ("id") DO UPDATE SET
+                 "localEvicted" = 0,
+                 "storageTier" = 'HOT',
+                 "displayId" = COALESCE(EXCLUDED."displayId", "Mission"."displayId"),
+                 "updatedAt" = EXCLUDED."updatedAt""#,
+        )
+        .bind(mission_id)
+        .bind(display_id)
+        .bind(timer)
+        .bind(speed)
+        .bind(pass)
+        .bind(created_at)
+        .bind(now)
+        .execute(&s.db)
+        .await;
+
+        for g in &groups_val {
+            let gid = g.get("group_id").or_else(|| g.get("groupId")).and_then(Value::as_i64).unwrap_or(0) as i32;
+            let st = g.get("status").and_then(Value::as_str).unwrap_or("NEW");
+            let ver = g.get("version").and_then(Value::as_i64).unwrap_or(0);
+            let vv = g.get("vv").or_else(|| g.get("versionVector")).map(|v| v.to_string()).unwrap_or_else(|| "{}".to_string());
+            let decided_at = g.get("decided_at_ms").or_else(|| g.get("decidedAtMs")).and_then(Value::as_i64).unwrap_or(0);
+            let updated_by = g.get("updated_by").or_else(|| g.get("updatedBy")).and_then(Value::as_str).unwrap_or("");
+            let bfod = g.get("biggest_fod").or_else(|| g.get("biggestFodId")).and_then(Value::as_str);
+            let bsize = g.get("biggest_fod_size").or_else(|| g.get("biggestFodSize")).and_then(Value::as_f64).map(|v| v as i32);
+            let _ = sqlx::query(
+                r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","versionVector","decidedAtMs","updatedBy","biggestFodId","biggestFodSize","createdAt","updatedAt")
+                   VALUES ($1,$2,$3,false,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+                   ON CONFLICT ("missionId","groupId") DO NOTHING"#,
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(gid)
+            .bind(mission_id)
+            .bind(st)
+            .bind(ver)
+            .bind(&vv)
+            .bind(decided_at)
+            .bind(updated_by)
+            .bind(bfod)
+            .bind(bsize)
+            .bind(now)
+            .execute(&s.db)
+            .await;
+        }
+
+        let mut restored_frames = 0usize;
+        for f in &fods_val {
+            let fid = f.get("id").and_then(Value::as_str).unwrap_or("");
+            if fid.is_empty() {
+                continue;
+            }
+            let gid = f.get("group_id").or_else(|| f.get("groupId")).and_then(Value::as_i64).unwrap_or(0) as i32;
+            let lat = f.get("lat").and_then(Value::as_f64).unwrap_or(0.0);
+            let lon = f.get("lon").and_then(Value::as_f64).unwrap_or(0.0);
+            let sd = f.get("sd").and_then(Value::as_f64).unwrap_or(0.0);
+            let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
+            let ts = f.get("captured_at").or_else(|| f.get("timestamp")).and_then(svc::parse_js_date).unwrap_or(now);
+            let _ = sqlx::query(
+                r#"INSERT INTO "Fod" ("id","missionId","groupId","sysid","location","confidence","class","velocity","size","timestamp","createdAt","updatedAt","dirty")
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,false)
+                   ON CONFLICT ("id") DO NOTHING"#,
+            )
+            .bind(fid)
+            .bind(mission_id)
+            .bind(gid)
+            .bind(f.get("sysid").and_then(Value::as_str))
+            .bind(loc)
+            .bind(f.get("confidence").and_then(Value::as_f64))
+            .bind(f.get("class").and_then(Value::as_str))
+            .bind(f.get("velocity").and_then(Value::as_f64).unwrap_or(0.0))
+            .bind(f.get("size").and_then(Value::as_f64).unwrap_or(0.0))
+            .bind(ts)
+            .bind(now)
+            .execute(&s.db)
+            .await;
+
+            if let Some(sha) = f.get("image_sha256").and_then(Value::as_str) {
+                if let Some(img_bytes) = bundle.frames.get(sha) {
+                    if crate::imagewriter::write_fod_jpeg(&mission_id.to_string(), &gid.to_string(), fid, img_bytes).await.is_ok() {
+                        restored_frames += 1;
+                    }
+                }
+            }
+        }
+
+        for c in &cleared_val {
+            let cid = c.get("id").and_then(Value::as_str).unwrap_or("");
+            let gid = c.get("group_id").or_else(|| c.get("groupId")).and_then(Value::as_i64).unwrap_or(0) as i32;
+            let st = c.get("status").and_then(Value::as_str).unwrap_or("found");
+            let before: Vec<String> = c.get("before_image_sha256").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            let after: Vec<String> = c.get("after_image_sha256").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            let lat = c.get("lat").and_then(Value::as_f64).unwrap_or(0.0);
+            let lon = c.get("lon").and_then(Value::as_f64).unwrap_or(0.0);
+            let sd = c.get("sd").and_then(Value::as_f64).unwrap_or(0.0);
+            let _ = sqlx::query(
+                r#"INSERT INTO "ClearedFod" ("id","status","beforeClearImg","afterClearImg","location","groupId","missionId","createdAt","updatedAt","dirty")
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,false)
+                   ON CONFLICT ("groupId","missionId") DO NOTHING"#,
+            )
+            .bind(cid)
+            .bind(st)
+            .bind(sqlx::types::Json(&before))
+            .bind(sqlx::types::Json(&after))
+            .bind(json!({ "lat": lat, "lon": lon, "sd": sd }))
+            .bind(gid)
+            .bind(mission_id)
+            .bind(now)
+            .execute(&s.db)
+            .await;
+
+            for sha in before.iter().chain(after.iter()) {
+                if let Some(img_bytes) = bundle.frames.get(sha) {
+                    let cached = std::path::Path::new("fod-images/mission").join(format!("{sha}.jpg"));
+                    if let Some(parent) = cached.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    let _ = tokio::fs::write(&cached, img_bytes).await;
+                }
+            }
+        }
+
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "target": "local",
+                "missionId": mission_id,
+                "restoredGroups": groups_val.len(),
+                "restoredFods": fods_val.len(),
+                "restoredFrames": restored_frames,
+                "message": format!("Imported mission #{} locally from archive", display_id.unwrap_or(mission_id)),
+            })),
+        )
+            .into_response();
+    }
+
+    // Default target: import onto ATC and distribute to fleet
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("mission.zoidpack")
+        .to_string();
+    match svc::import_mission_archive_to_atc(&s, filename, raw, true).await {
+        Ok(res) => {
+            if let Some(ref m) = res.mission {
+                let _ = sqlx::query(
+                    r#"INSERT INTO "Mission" ("id","displayId","status","timer","scanStatus","localEvicted","storageTier","storageEpoch","createdAt","updatedAt")
+                       VALUES ($1,$2,'TERMINATED',$3,'PAUSE',0,'HOT',$4,$5,$5)
+                       ON CONFLICT ("id") DO UPDATE SET
+                         "storageTier" = 'HOT',
+                         "storageEpoch" = MAX(COALESCE("Mission"."storageEpoch", 1), EXCLUDED."storageEpoch"),
+                         "coldStoredAt" = NULL,
+                         "updatedAt" = EXCLUDED."updatedAt""#,
+                )
+                .bind(m.id)
+                .bind(m.display_id)
+                .bind(m.timer as f64)
+                .bind(m.storage_epoch)
+                .bind(svc::now_naive())
+                .execute(&s.db)
+                .await;
+
+                if import_local_after_atc {
+                    let _ = reimport_mission_locally(&s, m.id).await;
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": res.success,
+                    "target": "atc",
+                    "missionId": res.mission.as_ref().map(|m| m.id),
+                    "restoredGroups": res.restored_groups,
+                    "restoredFods": res.restored_fods,
+                    "restoredFrames": res.restored_frames,
+                    "message": res.message,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => err_json(StatusCode::BAD_GATEWAY, json!({ "error": e.to_string() })),
+    }
 }

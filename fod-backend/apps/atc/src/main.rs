@@ -45,6 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let frames_dir = std::env::var("FRAMES_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("./data/atc_frames"));
+    let archives_dir = std::env::var("ARCHIVES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./data/cold_archives"));
     let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| "atc-tower-01".to_string());
 
     tracing::info!("Initializing ATC daemon on {}", addr);
@@ -73,7 +76,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (group_tx, _) = broadcast::channel(1000);
 
     // Start Replication Sync Client in background
-    let (sync_client, cmd_rx, user_rx, group_push_rx, cleared_push_rx) = SyncClient::new(
+    let (
+        sync_client,
+        cmd_rx,
+        user_rx,
+        template_rx,
+        group_push_rx,
+        cleared_push_rx,
+        storage_directive_rx,
+    ) = SyncClient::new(
         car_url.clone(),
         db.clone(),
         storage.clone(),
@@ -83,25 +94,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let group_push_tx = sync_client.group_push_sender();
     let cleared_push_tx = sync_client.cleared_push_sender();
     let user_tx = sync_client.user_sender();
+    let template_tx = sync_client.template_sender();
+    let storage_directive_tx = sync_client.storage_directive_sender();
     let sync_client_arc = Arc::new(sync_client);
 
     tokio::spawn(async move {
         sync_client_arc
-            .run_replication_loop(cmd_rx, user_rx, group_push_rx, cleared_push_rx)
+            .run_replication_loop(
+                cmd_rx,
+                user_rx,
+                template_rx,
+                group_push_rx,
+                cleared_push_rx,
+                storage_directive_rx,
+            )
             .await;
     });
 
     // BITE Health Aggregator (ATC host + replicated Car health)
     let bite = Arc::new(BiteAggregator::new());
-    spawn_health_collector(car_url, bite.clone());
+    spawn_health_collector(car_url.clone(), bite.clone());
 
     // Instantiate gRPC Services
     let bite_svc = AtcBiteServiceImpl::new(bite);
-    let fod_group_svc = AtcFodGroupServiceImpl::new(db.clone(), node_id, group_push_tx, group_tx);
+    let fod_group_svc = AtcFodGroupServiceImpl::new(
+        db.clone(),
+        node_id.clone(),
+        group_push_tx,
+        group_tx,
+    );
     let fod_svc = AtcFodServiceImpl::new(db.clone(), storage.clone());
     let cleared_fod_svc =
         AtcClearedFodServiceImpl::new(db.clone(), storage.clone(), cleared_push_tx);
-    let mission_svc = AtcMissionServiceImpl::new(db.clone());
+    let mission_svc_arc = Arc::new(AtcMissionServiceImpl::new(
+        db.clone(),
+        storage.clone(),
+        archives_dir,
+        car_url,
+        node_id,
+        template_tx,
+        storage_directive_tx,
+    ));
+    services::mission::spawn_atc_auto_storage_daemon(mission_svc_arc.clone());
     let image_svc = AtcImageServiceImpl::new(storage);
     let user_svc = AtcUserServiceImpl::new(db.clone(), user_tx);
 
@@ -144,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .max_encoding_message_size(32 * 1024 * 1024),
         )
         .add_service(ClearedFodServiceServer::new(cleared_fod_svc))
-        .add_service(MissionServiceServer::new(mission_svc))
+        .add_service(MissionServiceServer::from_arc(mission_svc_arc))
         .add_service(
             ImageServiceServer::new(image_svc)
                 .max_decoding_message_size(32 * 1024 * 1024)

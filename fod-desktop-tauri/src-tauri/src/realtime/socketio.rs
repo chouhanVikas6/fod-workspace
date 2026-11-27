@@ -83,14 +83,13 @@ fn epoch_ms(v: Option<&Value>) -> Option<i64> {
     }
 }
 
-/// Port of filterRecentCommunications (socket.ts:104-119): drop entries older
-/// than 5 s, then latency.connected = any live entry with type == "car"
-/// (the Kafka `availableDevice` heartbeat from the car backend).
+/// Drop communication entries older than 15 s (grace window for heavy Car load),
+/// then latency.connected = any live entry with type == "car".
 pub(crate) fn filter_recent_communications(h: &mut SystemHealthStat) {
-    let five_ago = chrono::Utc::now().timestamp_millis() - 5000;
+    let grace_cutoff = chrono::Utc::now().timestamp_millis() - 15_000;
     h.available_communication.retain(|comm| {
         let t = epoch_ms(comm.get("timestamp")).or_else(|| epoch_ms(comm.get("updatedAt")));
-        t.is_some_and(|ts| ts >= five_ago)
+        t.is_some_and(|ts| ts >= grace_cutoff)
     });
     h.latency.connected = h.available_communication.iter().any(|comm| {
         let t = comm.get("type").and_then(Value::as_str).unwrap_or("");

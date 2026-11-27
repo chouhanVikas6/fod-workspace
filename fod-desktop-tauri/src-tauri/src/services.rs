@@ -74,6 +74,16 @@ pub fn json_i32(v: &Value) -> Option<i32> {
     json_integer(v).and_then(|n| i32::try_from(n).ok())
 }
 
+/// Coerce a JSON number (integer or floating-point FOD size in mm) to rounded `i32`.
+fn json_size_i32(v: &Value) -> Option<i32> {
+    if let Some(i) = v.as_i64().and_then(|n| i32::try_from(n).ok()) {
+        return Some(i);
+    }
+    v.as_f64()
+        .filter(|f| f.is_finite() && *f >= i32::MIN as f64 && *f <= i32::MAX as f64)
+        .map(|f| f.round() as i32)
+}
+
 /// JS template-literal segment: `${x}` for path building (number → "5",
 /// string kept, missing → "undefined", null → "null").
 pub fn js_seg(v: Option<&Value>) -> String {
@@ -205,6 +215,16 @@ fn proto_ms_to_iso(ms: i64) -> String {
 }
 
 fn proto_mission_detail_to_json(m: &proto_defination::mission::MissionDetail) -> Value {
+    let storage_tier = if m.storage_tier.is_empty() {
+        "HOT"
+    } else {
+        m.storage_tier.as_str()
+    };
+    let storage_epoch = if m.storage_epoch <= 0 {
+        1
+    } else {
+        m.storage_epoch
+    };
     json!({
         "id": m.id,
         "displayId": m.display_id,
@@ -217,6 +237,10 @@ fn proto_mission_detail_to_json(m: &proto_defination::mission::MissionDetail) ->
         "updatedAt": proto_ms_to_iso(m.updated_at),
         "createdBy": m.created_by,
         "updatedBy": m.updated_by,
+        "storageTier": storage_tier,
+        "storageEpoch": storage_epoch,
+        "archiveSizeBytes": m.archive_size_bytes,
+        "coldStoredAt": m.cold_stored_at_ms.filter(|&ms| ms > 0).map(proto_ms_to_iso),
     })
 }
 
@@ -229,6 +253,9 @@ fn proto_fod_group_to_json(g: &proto_defination::fod_group::FodGroupEntity) -> V
         "biggestFod": g.biggest_fod,
         "biggestFodSize": g.biggest_fod_size,
         "version": g.version,
+        "versionVector": g.version_vector,
+        "decidedAtMs": g.decided_at_ms,
+        "updatedBy": g.updated_by,
         "createdAt": proto_ms_to_iso(g.created_at),
         "updatedAt": proto_ms_to_iso(g.updated_at),
         "primaryPacket": Value::Null,
@@ -266,14 +293,51 @@ fn proto_fod_entity_to_json(f: &proto_defination::fod::FodEntity) -> Value {
     })
 }
 
-async fn connect_channel_with_fallback(primary: &str, secondary: &str) -> Option<tonic::transport::Channel> {
-    if let Ok(endpoint) = tonic::transport::Endpoint::from_shared(primary.to_string()) {
-        if let Ok(ch) = endpoint.connect_timeout(Duration::from_millis(600)).timeout(Duration::from_secs(5)).connect().await {
-            return Some(ch);
-        }
+fn grpc_channel_cache(
+) -> &'static tokio::sync::RwLock<std::collections::HashMap<String, tonic::transport::Channel>> {
+    static CACHE: std::sync::OnceLock<
+        tokio::sync::RwLock<std::collections::HashMap<String, tonic::transport::Channel>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| tokio::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Returns a cached, multiplexed HTTP/2 gRPC channel for `url`, establishing it if needed.
+/// Reusing a single persistent channel avoids opening dozens of TCP connections per second
+/// under heavy load and prevents spurious fallback to ATC.
+pub async fn get_grpc_channel(url: &str) -> Option<tonic::transport::Channel> {
+    if let Some(ch) = grpc_channel_cache().read().await.get(url).cloned() {
+        return Some(ch);
     }
-    if let Ok(endpoint) = tonic::transport::Endpoint::from_shared(secondary.to_string()) {
-        if let Ok(ch) = endpoint.connect_timeout(Duration::from_millis(600)).timeout(Duration::from_secs(5)).connect().await {
+    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
+    let ch = endpoint
+        .connect_timeout(Duration::from_millis(2500))
+        .timeout(Duration::from_secs(10))
+        .tcp_nodelay(true)
+        .tcp_keepalive(Some(Duration::from_secs(10)))
+        .http2_keep_alive_interval(Duration::from_secs(10))
+        .keep_alive_timeout(Duration::from_secs(20))
+        .keep_alive_while_idle(true)
+        .connect()
+        .await
+        .ok()?;
+    grpc_channel_cache()
+        .write()
+        .await
+        .insert(url.to_string(), ch.clone());
+    Some(ch)
+}
+
+/// Evict a cached gRPC channel (e.g. after sustained disconnect) so fallback to ATC works cleanly.
+pub async fn evict_grpc_channel(url: &str) {
+    grpc_channel_cache().write().await.remove(url);
+}
+
+async fn connect_channel_with_fallback(primary: &str, secondary: &str) -> Option<tonic::transport::Channel> {
+    if let Some(ch) = get_grpc_channel(primary).await {
+        return Some(ch);
+    }
+    if secondary != primary {
+        if let Some(ch) = get_grpc_channel(secondary).await {
             return Some(ch);
         }
     }
@@ -720,6 +784,10 @@ pub async fn call_car_grpc(
             .and_then(|d| d.get("missionId").and_then(Value::as_i64))
             .or_else(|| endpoint.strip_prefix("/api/fod-group/all/").and_then(|s| s.parse::<i64>().ok()))
             .unwrap_or(1);
+        let updated_since_ms = data
+            .as_ref()
+            .and_then(|d| d.get("updatedSinceMs").and_then(Value::as_i64))
+            .filter(|&ms| ms > 0);
         let mut client = connect_fod_group_client(state).await?;
         let mut all_groups = Vec::new();
         let mut page = 1;
@@ -728,6 +796,7 @@ pub async fn call_car_grpc(
                 proto_defination::fod_group::ListGroupsRequest {
                     mission_id,
                     pagination: Some(proto_defination::common::PaginationRequest { page, limit: 200 }),
+                    updated_since_ms,
                 },
             )).await {
                 Ok(r) => r.into_inner(),
@@ -759,6 +828,23 @@ pub async fn call_car_grpc(
         let group_id = gid_str.parse::<i64>().ok()?;
         let mission_id = data.as_ref().and_then(|d| d.get("missionId").and_then(Value::as_i64)).unwrap_or(1);
         let status = data.as_ref().and_then(|d| d.get("status").and_then(Value::as_str)).unwrap_or("NEW");
+        let base_version = data.as_ref().and_then(|d| d.get("version").and_then(Value::as_i64)).unwrap_or(0);
+        let base_version_vector: std::collections::HashMap<String, i64> = data
+            .as_ref()
+            .and_then(|d| d.get("versionVector"))
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    serde_json::from_str(s).ok()
+                } else {
+                    serde_json::from_value(v.clone()).ok()
+                }
+            })
+            .unwrap_or_default();
+        let decided_at_ms = data
+            .as_ref()
+            .and_then(|d| d.get("decidedAtMs").and_then(Value::as_i64))
+            .filter(|&ms| ms > 0)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         let actor = data
             .as_ref()
             .and_then(|d| d.get("updatedBy").or_else(|| d.get("actor")).and_then(Value::as_str))
@@ -772,24 +858,27 @@ pub async fn call_car_grpc(
             mission_id,
             group_id,
             desired_status: proto_group_status_from_str(status),
-            base_version: 0,
-            base_version_vector: Default::default(),
-            decided_at_ms: chrono::Utc::now().timestamp_millis(),
+            base_version,
+            base_version_vector,
+            decided_at_ms,
             origin_node: actor,
         }];
         let res = client.resolve_groups(tonic::Request::new(
             proto_defination::fod_group::ResolveGroupsRequest { resolutions },
         )).await.ok()?.into_inner();
-        let resolved_version = res
-            .results
-            .first()
-            .and_then(|r| r.group.as_ref())
-            .map(|g| g.version);
+        let first_group = res.results.first().and_then(|r| r.group.as_ref());
+        let resolved_version = first_group.map(|g| g.version);
+        let resolved_vv = first_group.map(|g| &g.version_vector);
+        let resolved_decided_at = first_group.map(|g| g.decided_at_ms);
+        let resolved_updated_by = first_group.map(|g| g.updated_by.as_str());
         return Some(json!({
             "status": 200,
             "statusCode": 200,
             "message": "Updated",
             "version": resolved_version,
+            "versionVector": resolved_vv,
+            "decidedAtMs": resolved_decided_at,
+            "updatedBy": resolved_updated_by,
         }));
     }
 
@@ -904,14 +993,30 @@ pub async fn call_car_grpc(
                     }
                 }
 
+                let base_version_vector: std::collections::HashMap<String, i64> = item
+                    .get("versionVector")
+                    .and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            serde_json::from_str(s).ok()
+                        } else {
+                            serde_json::from_value(v.clone()).ok()
+                        }
+                    })
+                    .unwrap_or_default();
+                let decided_at_ms = item
+                    .get("decidedAtMs")
+                    .and_then(Value::as_i64)
+                    .filter(|&ms| ms > 0)
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
                 resolutions.push(proto_defination::fod_group::GroupResolution {
                     command_id: uuid::Uuid::new_v4().to_string(),
                     mission_id: mid,
                     group_id: gid,
                     desired_status: proto_group_status_from_str(st),
                     base_version,
-                    base_version_vector: Default::default(),
-                    decided_at_ms: chrono::Utc::now().timestamp_millis(),
+                    base_version_vector,
+                    decided_at_ms,
                     origin_node: actor,
                 });
             }
@@ -989,6 +1094,316 @@ pub async fn fetch_fod_from_car(
         }
     )).await.ok()?;
     Some(res.into_inner())
+}
+
+// ---------------------------------------------------------------------------
+// Fleet Storage, Cold-Store & Archive gRPC Helpers (ATC-first)
+// ---------------------------------------------------------------------------
+
+async fn connect_mission_client_atc_first(
+    state: &AppState,
+    timeout_secs: u64,
+) -> Option<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        if let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) {
+            if let Ok(ch) = ep
+                .connect_timeout(Duration::from_millis(1500))
+                .timeout(Duration::from_secs(timeout_secs))
+                .connect()
+                .await
+            {
+                return Some(
+                    proto_defination::mission::mission_service_client::MissionServiceClient::new(ch)
+                        .max_decoding_message_size(64 * 1024 * 1024)
+                        .max_encoding_message_size(64 * 1024 * 1024),
+                );
+            }
+        }
+    }
+    None
+}
+
+async fn connect_mission_client_atc_only(
+    state: &AppState,
+    timeout_secs: u64,
+) -> anyhow::Result<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>> {
+    let ep = tonic::transport::Endpoint::from_shared(state.cfg.atc_backend_url.clone())?;
+    let ch = ep
+        .connect_timeout(Duration::from_millis(2000))
+        .timeout(Duration::from_secs(timeout_secs))
+        .connect()
+        .await?;
+    Ok(
+        proto_defination::mission::mission_service_client::MissionServiceClient::new(ch)
+            .max_decoding_message_size(64 * 1024 * 1024)
+            .max_encoding_message_size(64 * 1024 * 1024),
+    )
+}
+
+pub async fn atc_cold_store_mission(
+    state: &AppState,
+    mission_id: i64,
+    force_drop_car: bool,
+) -> anyhow::Result<proto_defination::mission::ColdStoreMissionResponse> {
+    let mut client = connect_mission_client_atc_only(state, 120).await?;
+    let resp = client
+        .cold_store_mission(tonic::Request::new(
+            proto_defination::mission::ColdStoreMissionRequest {
+                mission_id,
+                force_drop_car,
+            },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_restore_cold_mission(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<proto_defination::mission::RestoreColdMissionResponse> {
+    let mut client = connect_mission_client_atc_only(state, 120).await?;
+    let resp = client
+        .restore_cold_mission(tonic::Request::new(
+            proto_defination::mission::RestoreColdMissionRequest { mission_id },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_drop_car_hot_data(
+    state: &AppState,
+    mission_id: i64,
+    storage_epoch: i64,
+) -> anyhow::Result<proto_defination::mission::DropMissionHotDataResponse> {
+    let mut client = connect_mission_client_atc_only(state, 60).await?;
+    let resp = client
+        .drop_mission_hot_data(tonic::Request::new(
+            proto_defination::mission::DropMissionHotDataRequest {
+                mission_id,
+                target_tier: "CAR_DROPPED".to_string(),
+                storage_epoch,
+            },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_get_storage_overview(
+    state: &AppState,
+) -> anyhow::Result<proto_defination::mission::StorageOverviewResponse> {
+    let mut client = connect_mission_client_atc_only(state, 10).await?;
+    let resp = client
+        .get_storage_overview(tonic::Request::new(
+            proto_defination::mission::GetStorageOverviewRequest {},
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn atc_update_storage_policy(
+    state: &AppState,
+    cfg: proto_defination::mission::StoragePolicyConfig,
+) -> anyhow::Result<proto_defination::mission::StoragePolicyConfig> {
+    let mut client = connect_mission_client_atc_only(state, 10).await?;
+    let resp = client
+        .update_storage_policy(tonic::Request::new(cfg))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn export_mission_archive_from_upstream(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<(String, Vec<u8>)> {
+    let mut client = connect_mission_client_atc_first(state, 120)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Neither ATC nor Car server is reachable"))?;
+    let mut stream = client
+        .export_mission_archive(tonic::Request::new(
+            proto_defination::mission::ExportMissionArchiveRequest { mission_id },
+        ))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?
+        .into_inner();
+    let mut bytes = Vec::new();
+    let mut filename = format!("mission-{mission_id}.zoidpack");
+    while let Some(chunk) = stream.message().await? {
+        if !chunk.filename.is_empty() {
+            filename = chunk.filename;
+        }
+        bytes.extend_from_slice(&chunk.data);
+    }
+    Ok((filename, bytes))
+}
+
+pub async fn import_mission_archive_to_atc(
+    state: &AppState,
+    filename: String,
+    bytes: Vec<u8>,
+    import_to_fleet: bool,
+) -> anyhow::Result<proto_defination::mission::ImportMissionArchiveResponse> {
+    let mut client = connect_mission_client_atc_only(state, 120).await?;
+    let total_size = bytes.len() as i64;
+    let chunks: Vec<proto_defination::mission::ArchiveChunk> = bytes
+        .chunks(256 * 1024)
+        .map(|slice| proto_defination::mission::ArchiveChunk {
+            data: slice.to_vec(),
+            filename: filename.clone(),
+            total_size,
+            import_to_fleet,
+        })
+        .collect();
+    let resp = client
+        .import_mission_archive(tonic::Request::new(tokio_stream::iter(chunks)))
+        .await
+        .map_err(|s| anyhow::anyhow!(s.message().to_string()))?;
+    Ok(resp.into_inner())
+}
+
+pub async fn fetch_all_groups_prefer_atc(
+    state: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<Vec<proto_defination::fod_group::FodGroupEntity>> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) else {
+            continue;
+        };
+        let Ok(ch) = ep
+            .connect_timeout(Duration::from_millis(1200))
+            .timeout(Duration::from_secs(15))
+            .connect()
+            .await
+        else {
+            continue;
+        };
+        let mut client =
+            proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::new(ch);
+        let mut all = Vec::new();
+        let mut page = 1;
+        let mut ok_any = false;
+        loop {
+            let Ok(resp) = client
+                .list_groups(tonic::Request::new(
+                    proto_defination::fod_group::ListGroupsRequest {
+                        mission_id,
+                        pagination: Some(proto_defination::common::PaginationRequest {
+                            page,
+                            limit: 200,
+                        }),
+                        updated_since_ms: None,
+                    },
+                ))
+                .await
+            else {
+                break;
+            };
+            ok_any = true;
+            let inner = resp.into_inner();
+            let total_pages = inner.pagination.map(|p| p.total_pages).unwrap_or(1);
+            let len = inner.groups.len();
+            all.extend(inner.groups);
+            if page >= total_pages || len == 0 || page >= 200 {
+                break;
+            }
+            page += 1;
+        }
+        if ok_any && !all.is_empty() {
+            return Ok(all);
+        }
+    }
+    Ok(Vec::new())
+}
+
+pub async fn fetch_biggest_fods_prefer_atc(
+    state: &AppState,
+    mission_id: i64,
+) -> Vec<proto_defination::fod::FodEntity> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) else {
+            continue;
+        };
+        let Ok(ch) = ep
+            .connect_timeout(Duration::from_millis(1200))
+            .timeout(Duration::from_secs(20))
+            .connect()
+            .await
+        else {
+            continue;
+        };
+        let mut client = proto_defination::fod::fod_service_client::FodServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024);
+        if let Ok(resp) = client
+            .get_biggest_fod_per_group(tonic::Request::new(
+                proto_defination::fod::GetBiggestFodRequest { mission_id },
+            ))
+            .await
+        {
+            let fods = resp.into_inner().fods;
+            if !fods.is_empty() {
+                return fods;
+            }
+        }
+    }
+    Vec::new()
+}
+
+pub async fn fetch_cleared_fod_prefer_atc(
+    state: &AppState,
+    mission_id: i64,
+    group_id: i64,
+) -> Option<proto_defination::cleared_fod::ClearedFodEntity> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        if let Some(mut client) = connect_cleared_fod_client_for_url(url).await {
+            if let Ok(resp) = client
+                .find_cleared_fod(tonic::Request::new(
+                    proto_defination::cleared_fod::FindClearedFodRequest {
+                        mission_id,
+                        group_id,
+                    },
+                ))
+                .await
+            {
+                return Some(resp.into_inner());
+            }
+        }
+    }
+    None
+}
+
+pub async fn fetch_image_prefer_atc(
+    state: &AppState,
+    sha256: &str,
+) -> Option<Vec<u8>> {
+    for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
+        let Some(mut client) = connect_image_client_for_url(url).await else {
+            continue;
+        };
+        let Ok(stream_res) = client
+            .download_image(tonic::Request::new(
+                proto_defination::image::ImageDownloadRequest {
+                    sha256: sha256.to_string(),
+                    thumbnail: false,
+                },
+            ))
+            .await
+        else {
+            continue;
+        };
+        let mut stream = stream_res.into_inner();
+        let mut all_bytes = Vec::new();
+        while let Ok(Some(chunk)) = stream.message().await {
+            all_bytes.extend_from_slice(&chunk.data);
+        }
+        if !all_bytes.is_empty() {
+            return Some(all_bytes);
+        }
+    }
+    fetch_image_from_car(state, sha256, false).await
 }
 
 async fn connect_user_client(url: &str) -> Option<proto_defination::user::user_service_client::UserServiceClient<tonic::transport::Channel>> {
@@ -1117,6 +1532,105 @@ pub async fn pull_users_from_upstream(
         }
     }
     PulledUsers::default()
+}
+
+async fn connect_mission_client_url(
+    url: &str,
+) -> Option<proto_defination::mission::mission_service_client::MissionServiceClient<tonic::transport::Channel>>
+{
+    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
+    let ch = endpoint
+        .connect_timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_secs(5))
+        .connect()
+        .await
+        .ok()?;
+    Some(proto_defination::mission::mission_service_client::MissionServiceClient::new(ch))
+}
+
+pub async fn push_mission_template_to_upstream(
+    state: &AppState,
+    tmpl: &crate::models::MissionTemplate,
+) -> bool {
+    let entity = proto_defination::mission::MissionTemplateEntity {
+        id: tmpl.id.clone(),
+        name: tmpl.name.clone(),
+        description: tmpl.description.clone(),
+        template_type: tmpl.template_type.clone(),
+        speed: tmpl.speed,
+        pass: tmpl.pass,
+        overlap: tmpl.overlap,
+        direction: tmpl.direction.clone(),
+        reverse: tmpl.reverse,
+        boundary_points_json: tmpl.boundary_points.clone(),
+        is_custom: tmpl.is_custom,
+        is_deleted: tmpl.is_deleted,
+        created_at_ms: tmpl.created_at.and_utc().timestamp_millis(),
+        updated_at_ms: tmpl.updated_at.and_utc().timestamp_millis(),
+    };
+
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    for url in urls {
+        if let Some(mut client) = connect_mission_client_url(&url).await {
+            match client
+                .upsert_mission_template(tonic::Request::new(entity.clone()))
+                .await
+            {
+                Ok(res) => {
+                    if res.into_inner().success {
+                        tracing::info!(
+                            "MissionTemplate '{}' pushed successfully to upstream at {}",
+                            tmpl.id,
+                            url
+                        );
+                        return true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed upsert_mission_template on upstream {url}: {e}");
+                }
+            }
+        }
+    }
+    false
+}
+
+pub async fn pull_mission_templates_from_upstream(
+    state: &AppState,
+    since_ms: i64,
+    full_reconcile: bool,
+) -> Vec<proto_defination::mission::MissionTemplateEntity> {
+    let urls = [
+        state.cfg.car_backend_url.clone(),
+        state.cfg.atc_backend_url.clone(),
+    ];
+
+    for url in urls {
+        if let Some(mut client) = connect_mission_client_url(&url).await {
+            if full_reconcile || since_ms == 0 {
+                if let Ok(res) = client
+                    .list_mission_templates(tonic::Request::new(
+                        proto_defination::mission::ListMissionTemplatesRequest {},
+                    ))
+                    .await
+                {
+                    return res.into_inner().templates;
+                }
+            } else if let Ok(res) = client
+                .sync_mission_templates(tonic::Request::new(
+                    proto_defination::mission::SyncMissionTemplatesRequest { since_ms },
+                ))
+                .await
+            {
+                return res.into_inner().templates;
+            }
+        }
+    }
+    Vec::new()
 }
 
 pub async fn fetch_image_from_car(
@@ -1506,8 +2020,8 @@ pub async fn upsert_group_data(state: &AppState, data: Value) -> anyhow::Result<
         Some(Value::Null) => cols.push(("biggestFodSize", Bind::OptI32(None))),
         Some(v) => cols.push((
             "biggestFodSize",
-            Bind::OptI32(Some(json_i32(v).ok_or_else(|| {
-                anyhow::anyhow!("Argument biggestFodSize: not an Int")
+            Bind::OptI32(Some(json_size_i32(v).ok_or_else(|| {
+                anyhow::anyhow!("Argument biggestFodSize: not a valid number")
             })?)),
         )),
     }
@@ -1592,8 +2106,8 @@ pub async fn upsert_group_batch(
             Some(Value::Null) => cols.push(("biggestFodSize", Bind::OptI32(None))),
             Some(v) => cols.push((
                 "biggestFodSize",
-                Bind::OptI32(Some(json_i32(v).ok_or_else(|| {
-                    anyhow::anyhow!("Argument biggestFodSize: not an Int")
+                Bind::OptI32(Some(json_size_i32(v).ok_or_else(|| {
+                    anyhow::anyhow!("Argument biggestFodSize: not a valid number")
                 })?)),
             )),
         }
@@ -1691,16 +2205,18 @@ pub async fn create_cleared_fod_batch(
         qb.build().execute(&state.db).await?;
 
         // Then FodGroup → dirty + CLEARED (upsert to ensure row exists)
+        let decided_at_ms = chrono::Utc::now().timestamp_millis();
         let group: Option<crate::models::FodGroup> = sqlx::query_as(
-            r#"INSERT INTO "FodGroup" ("id", "groupId", "missionId", "dirty", "status", "createdAt", "updatedAt")
-               VALUES ($1, $2, $3, true, 'CLEARED', $4, $4)
-               ON CONFLICT ("groupId", "missionId") DO UPDATE SET "dirty" = true, "status" = 'CLEARED', "updatedAt" = $4
+            r#"INSERT INTO "FodGroup" ("id", "groupId", "missionId", "dirty", "status", "decidedAtMs", "createdAt", "updatedAt")
+               VALUES ($1, $2, $3, true, 'CLEARED', $5, $4, $4)
+               ON CONFLICT ("groupId", "missionId") DO UPDATE SET "dirty" = true, "status" = 'CLEARED', "decidedAtMs" = $5, "updatedAt" = $4
                RETURNING *"#,
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(group_id)
         .bind(row_mission_id)
         .bind(now)
+        .bind(decided_at_ms)
         .fetch_optional(&state.db)
         .await?;
         match group {
@@ -1823,19 +2339,17 @@ async fn create_fod_inner(state: &AppState, fod: &Value) -> anyhow::Result<()> {
     let group_biggest_size: Option<i32> = match &existing_group {
         Some(g) => g.biggest_fod_size,
         None => {
+            let size_i32 = size.round() as i32;
             let data = json!({
                 "groupId": group_id,
                 "missionId": mission_id,
                 "createdAt": timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
                 "biggestFodId": id,
-                "biggestFodSize": size,
+                "biggestFodSize": size_i32,
                 "status": status,
             });
             upsert_group_data(state, data).await?;
-            Some(
-                json_i32(&json!(size))
-                    .ok_or_else(|| anyhow::anyhow!("Argument biggestFodSize: not an Int"))?,
-            )
+            Some(size_i32)
         }
     };
 
@@ -1893,8 +2407,7 @@ async fn create_fod_inner(state: &AppState, fod: &Value) -> anyhow::Result<()> {
             Some(b) => (b as f64) < size,
         };
         if needs_update {
-            let biggest = json_i32(&json!(size))
-                .ok_or_else(|| anyhow::anyhow!("Argument biggestFodSize: not an Int"))?;
+            let biggest = size.round() as i32;
             update_fod_group_biggest(state, group_id, mission_id, &id, biggest, &status).await?;
         }
     }

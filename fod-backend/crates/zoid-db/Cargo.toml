@@ -14,3 +14,4 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 proto-defination = { workspace = true }
 zoid-replication = { workspace = true }
+zoid-storage = { workspace = true }

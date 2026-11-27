@@ -49,10 +49,14 @@ impl FodGroupService for AtcFodGroupServiceImpl {
         let page = pagination.page.max(1) as i64;
         let limit = pagination.limit.clamp(1, 200) as i64;
         let offset = (page - 1) * limit;
+        let updated_since = req
+            .updated_since_ms
+            .filter(|&ms| ms > 0)
+            .and_then(chrono::DateTime::from_timestamp_millis);
 
         let (groups, total_items) = self
             .db
-            .list_fod_groups(req.mission_id, limit, offset)
+            .list_fod_groups_since(req.mission_id, limit, offset, updated_since)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
@@ -100,6 +104,12 @@ impl FodGroupService for AtcFodGroupServiceImpl {
         let mut results = Vec::with_capacity(req.resolutions.len());
 
         for res in req.resolutions {
+            if self.db.is_mission_cold_stored(res.mission_id).await.unwrap_or(false) {
+                return Err(Status::failed_precondition(format!(
+                    "Mission {} is cold-stored (frozen); restore it before modifying FOD groups",
+                    res.mission_id
+                )));
+            }
             let desired_proto = ProtoGroupStatus::try_from(res.desired_status)
                 .unwrap_or(ProtoGroupStatus::GroupStatusUnspecified);
             let decided_at = if res.decided_at_ms > 0 {

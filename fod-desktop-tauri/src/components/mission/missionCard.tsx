@@ -106,9 +106,16 @@ const MissionCard = ({ missionData, active, setMission, selectedMission, index, 
         >
             {/* Left stats info */}
             <div className="flex-1 min-w-0 pr-1">
-                <h4 className="text-[13px] font-bold text-slate-800 dark:text-white tracking-tight truncate" title={mission_id ? `ID: ${mission_id}` : undefined}>
-                    Mission #{missionLabel}
-                </h4>
+                <div className="flex items-center gap-1.5 min-w-0">
+                    <h4 className="text-[13px] font-bold text-slate-800 dark:text-white tracking-tight truncate" title={mission_id ? `ID: ${mission_id}` : undefined}>
+                        Mission #{missionLabel}
+                    </h4>
+                    {missionData?.localEvicted ? (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
+                            On ATC
+                        </span>
+                    ) : null}
+                </div>
 
                 <div className="flex items-center gap-5 mt-2">
                     <div>

@@ -123,12 +123,9 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
     let mut atc_bite_opt: Option<proto_defination::bite::BiteState> = None;
 
     if state.cfg.atc_backend_url != state.cfg.car_backend_url {
-        if let Ok(mut atc_client) =
-            proto_defination::bite::bite_service_client::BiteServiceClient::connect(
-                state.cfg.atc_backend_url.clone(),
-            )
-            .await
-        {
+        if let Some(ch) = crate::services::get_grpc_channel(&state.cfg.atc_backend_url).await {
+            let mut atc_client =
+                proto_defination::bite::bite_service_client::BiteServiceClient::new(ch);
             if let Ok(resp) = atc_client
                 .get_bite_state(tonic::Request::new(
                     proto_defination::bite::GetBiteStateRequest {},
@@ -150,22 +147,20 @@ pub(crate) async fn fetch_bite_state(state: &AppState, url: &str) -> Option<Valu
         }
     }
 
-    let car_bite_opt = if let Ok(mut client) =
-        proto_defination::bite::bite_service_client::BiteServiceClient::connect(
-            state.cfg.car_backend_url.clone(),
-        )
-        .await
-    {
-        client
-            .get_bite_state(tonic::Request::new(
-                proto_defination::bite::GetBiteStateRequest {},
-            ))
-            .await
-            .ok()
-            .map(|r| r.into_inner())
-    } else {
-        None
-    };
+    let car_bite_opt =
+        if let Some(ch) = crate::services::get_grpc_channel(&state.cfg.car_backend_url).await {
+            let mut client =
+                proto_defination::bite::bite_service_client::BiteServiceClient::new(ch);
+            client
+                .get_bite_state(tonic::Request::new(
+                    proto_defination::bite::GetBiteStateRequest {},
+                ))
+                .await
+                .ok()
+                .map(|r| r.into_inner())
+        } else {
+            None
+        };
 
     if let Some(b) = car_bite_opt.or_else(|| atc_bite_opt.filter(|ab| ab.connected)) {
         {
