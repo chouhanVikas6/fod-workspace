@@ -36,7 +36,7 @@ interface FodCellData {
 }
 
 const TARGET_MIN_COLUMN_WIDTH = 195;
-const ITEM_HEIGHT = 296;
+const ITEM_HEIGHT = 266;
 
 const FodGridCell = ({
   columnIndex,

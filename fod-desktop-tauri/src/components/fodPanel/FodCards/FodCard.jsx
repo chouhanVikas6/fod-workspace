@@ -239,35 +239,26 @@ const Fodcard = ({
         className="w-full flex-1 flex flex-col cursor-pointer select-none"
         onClick={onCardClick}
       >
-        {/* Header */}
-        <div className="flex justify-between items-center mb-1.5">
-          <span
-            className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider inline-flex items-center ${style.badgeStyle}`}
-          >
-            {style.text}
+        {/* Image Preview with overlaid FOD number (top-left) and Map button (top-right) */}
+        <div className="relative h-[98px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mt-0.5 mb-2 flex items-center justify-center">
+          <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold tracking-wide shadow-xs pointer-events-none">
+            FOD #{fod.groupId || fod.id}
           </span>
 
           <button
             type="button"
             title="View on map"
             onClick={openMapAndSelectFod}
-            className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-white/10 transition-colors"
+            className="absolute top-1.5 right-1.5 z-10 p-1 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-xs text-white shadow-xs transition-colors cursor-pointer"
           >
             <Image
               src={MapMode}
               alt="Map"
-              width={22}
-              height={22}
-              className="brightness-50 dark:brightness-200"
+              width={18}
+              height={18}
+              className="brightness-0 invert"
             />
           </button>
-        </div>
-
-        {/* Image Preview with overlaid FOD number */}
-        <div className="relative h-[96px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mb-2 flex items-center justify-center">
-          <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold tracking-wide shadow-xs pointer-events-none">
-            FOD #{fod.groupId || fod.id}
-          </span>
           {!imgError ? (
             <Image
               src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
