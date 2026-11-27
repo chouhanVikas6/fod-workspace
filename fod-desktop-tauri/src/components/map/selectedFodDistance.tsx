@@ -79,62 +79,8 @@ function SelectedFodDistance({ map }: { map?: any }) {
   const hasValidDistance = distance !== null && Number(distance) >= 0;
 
   return (
-    <div
-      className={`absolute top-3 left-3 z-20 rounded-xl bg-white/95 dark:bg-[#1E2228]/90 backdrop-blur-md border border-slate-200/90 dark:border-white/15 shadow-lg select-none transition-all ${
-        isExpanded ? 'min-w-[195px] sm:min-w-[210px] px-3 py-2.5' : 'px-2.5 py-1.5'
-      }`}
-    >
-      {/* Collapsible Header */}
-      <button
-        type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
-        className={`w-full flex items-center justify-between gap-2 cursor-pointer focus:outline-none ${
-          isExpanded ? 'pb-1.5 mb-1.5 border-b border-slate-200/80 dark:border-white/10' : ''
-        }`}
-        title={isExpanded ? 'Collapse coordinates' : 'Expand coordinates'}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-[#01B656] shrink-0" />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-[#A8B0BA] whitespace-nowrap">
-            Our Coordinates
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#4C9FE8]/15 text-[#4C9FE8] whitespace-nowrap">
-            {hasValidDistance ? `${distance} m` : '— m'}
-          </span>
-          {isExpanded ? (
-            <RxChevronUp className="w-3.5 h-3.5 text-slate-400 dark:text-[#8C939C]" />
-          ) : (
-            <RxChevronDown className="w-3.5 h-3.5 text-slate-400 dark:text-[#8C939C]" />
-          )}
-        </div>
-      </button>
-
-      {/* Coordinates Readout */}
-      {isExpanded && (
-        <div className="space-y-1 text-xs">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-[#8C939C]">
-              LAT
-            </span>
-            <span className="font-mono font-bold text-slate-800 dark:text-white tabular-nums">
-              {latDisplay}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-[#8C939C]">
-              LON
-            </span>
-            <span className="font-mono font-bold text-slate-800 dark:text-white tabular-nums">
-              {lonDisplay}
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
+    
+    <></>
   );
 }
 

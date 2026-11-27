@@ -15,8 +15,18 @@ const STATUS_BORDER_COLOR: Record<string, string> = {
   CLEARED: "#22c55e",
   ACCEPTED: "#ef4444",
   REJECTED: "#64748b",
-  NEW: "#eab308",
+  NEW: "#f59e0b",
 };
+
+interface ThumbnailMarkerEntry {
+  marker: mapboxgl.Marker;
+  el: HTMLDivElement;
+  card: HTMLDivElement;
+  statusDot: HTMLSpanElement;
+  status: string;
+  lon: number;
+  lat: number;
+}
 
 function getFodLocation(fod: any): { lat: number; lon: number } | null {
   if (!fod) return null;
@@ -111,6 +121,7 @@ const FodMarkers = ({
     features: groupRepresentatives.map(({ fod, loc }) => ({
       type: "Feature",
       properties: {
+        featureKey: String(fod.groupId ?? fod.id),
         groupId: fod.groupId,
         FodId: fod.id,
         FodPoint: fod.FodPoint,
@@ -133,14 +144,44 @@ const FodMarkers = ({
   const sourceId = "fodMarkers";
   const clusterLayerId = "clusters";
   const clusterCountLayerId = "cluster-count";
+  const unclusteredHaloLayerId = "unclustered-point-halo";
   const unclusteredLayerId = "unclustered-point";
   const initialized = useRef(false);
-  const thumbnailMarkersRef = useRef<Map<string | number, mapboxgl.Marker>>(new Map());
+  const thumbnailMarkersRef = useRef<Map<string, ThumbnailMarkerEntry>>(new Map());
+  const loadedThumbKeysRef = useRef<Set<string>>(new Set());
+
+  const updateDotLayerFilter = useCallback(() => {
+    const m = map.current;
+    if (!m) return;
+    const loadedKeys = Array.from(loadedThumbKeysRef.current);
+    const filter: any =
+      loadedKeys.length === 0
+        ? ["!", ["has", "point_count"]]
+        : [
+            "all",
+            ["!", ["has", "point_count"]],
+            ["!", ["in", ["get", "featureKey"], ["literal", loadedKeys]]],
+          ];
+    try {
+      if (m.getLayer(unclusteredHaloLayerId)) {
+        m.setFilter(unclusteredHaloLayerId, filter);
+      }
+      if (m.getLayer(unclusteredLayerId)) {
+        m.setFilter(unclusteredLayerId, filter);
+      }
+    } catch {
+      // Ignore if map style is mid-reload
+    }
+  }, [map]);
 
   const clearThumbnailMarkers = useCallback(() => {
-    thumbnailMarkersRef.current.forEach((marker) => marker.remove());
+    thumbnailMarkersRef.current.forEach(({ marker }) => marker.remove());
     thumbnailMarkersRef.current.clear();
-  }, []);
+    if (loadedThumbKeysRef.current.size > 0) {
+      loadedThumbKeysRef.current.clear();
+      updateDotLayerFilter();
+    }
+  }, [updateDotLayerFilter]);
 
   const syncThumbnailMarkers = useCallback(() => {
     const m = map.current;
@@ -153,28 +194,46 @@ const FodMarkers = ({
     }
 
     const bounds = m.getBounds();
-    const visibleGroups: Array<{ key: string | number; fod: any; loc: { lat: number; lon: number } }> = [];
+    const visibleGroups: Array<{ key: string; fod: any; loc: { lat: number; lon: number } }> = [];
 
     for (let i = 0; i < groupRepresentatives.length; i++) {
       const { fod, loc } = groupRepresentatives[i];
       if (!bounds || bounds.contains([loc.lon, loc.lat])) {
-        const key = fod.groupId ?? fod.id;
+        const key = String(fod.groupId ?? fod.id);
         visibleGroups.push({ key, fod, loc });
         if (visibleGroups.length >= MAX_THUMBNAIL_MARKERS) break;
       }
     }
 
     const nextKeys = new Set(visibleGroups.map((g) => g.key));
+    let loadedSetChanged = false;
     // Remove markers no longer in viewport
-    thumbnailMarkersRef.current.forEach((marker, key) => {
+    thumbnailMarkersRef.current.forEach((entry, key) => {
       if (!nextKeys.has(key)) {
-        marker.remove();
+        entry.marker.remove();
         thumbnailMarkersRef.current.delete(key);
+        if (loadedThumbKeysRef.current.delete(key)) {
+          loadedSetChanged = true;
+        }
       }
     });
 
     for (const { key, fod, loc } of visibleGroups) {
-      if (thumbnailMarkersRef.current.has(key)) continue;
+      const borderColor = STATUS_BORDER_COLOR[fod.groupStatus] || STATUS_BORDER_COLOR.NEW;
+      const existing = thumbnailMarkersRef.current.get(key);
+      if (existing) {
+        if (existing.lon !== loc.lon || existing.lat !== loc.lat) {
+          existing.marker.setLngLat([loc.lon, loc.lat]);
+          existing.lon = loc.lon;
+          existing.lat = loc.lat;
+        }
+        if (existing.status !== fod.groupStatus) {
+          existing.status = fod.groupStatus;
+          existing.card.style.borderColor = borderColor;
+          existing.statusDot.style.background = borderColor;
+        }
+        continue;
+      }
 
       const resolvedMissionId = fod.missionId ?? fod.mission_id ?? storeMissionNumber;
       const inlineFrame =
@@ -188,50 +247,105 @@ const FodMarkers = ({
 
       if (!inlineFrame && !relPath) continue;
 
-      const borderColor = STATUS_BORDER_COLOR[fod.groupStatus] || STATUS_BORDER_COLOR.NEW;
+      // IMPORTANT: Never set `position: relative` or `transform` on the Mapbox marker root `el`;
+      // Mapbox positions `.mapboxgl-marker` using `position: absolute; top: 0; left: 0; transform: translate(...)`.
       const el = document.createElement("div");
       el.className = "fod-group-thumb-marker";
       el.style.cssText = `
-        width: 46px;
-        height: 46px;
-        border-radius: 8px;
-        overflow: hidden;
-        border: 2px solid ${borderColor};
-        background: transparent;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 52px;
+        height: 52px;
+        border-radius: 10px;
         cursor: pointer;
-        position: relative;
+        pointer-events: auto;
         display: none;
+        z-index: 2;
+      `;
+
+      const card = document.createElement("div");
+      card.style.cssText = `
+        position: relative;
+        width: 100%;
+        height: 100%;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 2.5px solid ${borderColor};
+        background: #0f172a;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+        transition: transform 140ms ease, box-shadow 140ms ease;
       `;
 
       const img = document.createElement("img");
       img.alt = `FOD #${fod.groupId}`;
       img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
       img.onload = () => {
+        if (!thumbnailMarkersRef.current.has(key)) return;
         el.style.display = "block";
+        if (!loadedThumbKeysRef.current.has(key)) {
+          loadedThumbKeysRef.current.add(key);
+          updateDotLayerFilter();
+        }
       };
       img.onerror = () => {
         el.style.display = "none";
+        if (loadedThumbKeysRef.current.delete(key)) {
+          updateDotLayerFilter();
+        }
       };
 
-      const badge = document.createElement("span");
-      badge.textContent = `#${fod.groupId}`;
+      const badge = document.createElement("div");
       badge.style.cssText = `
         position: absolute;
         bottom: 0;
         left: 0;
         right: 0;
-        background: rgba(15, 23, 42, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        background: rgba(15, 23, 42, 0.82);
+        backdrop-filter: blur(2px);
         color: #f8fafc;
         font-size: 9px;
-        font-family: monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-weight: 700;
-        text-align: center;
-        line-height: 13px;
+        line-height: 14px;
+        padding: 1px 3px;
       `;
 
-      el.appendChild(img);
-      el.appendChild(badge);
+      const statusDot = document.createElement("span");
+      statusDot.style.cssText = `
+        width: 5px;
+        height: 5px;
+        border-radius: 9999px;
+        background: ${borderColor};
+        flex-shrink: 0;
+      `;
+
+      const labelText = document.createElement("span");
+      labelText.textContent = `#${fod.groupId}`;
+
+      badge.appendChild(statusDot);
+      badge.appendChild(labelText);
+      card.appendChild(img);
+      card.appendChild(badge);
+      el.appendChild(card);
+
+      el.addEventListener("mouseenter", () => {
+        card.style.transform = "scale(1.12)";
+        card.style.boxShadow =
+          "0 8px 22px rgba(0, 0, 0, 0.65), 0 0 0 2px rgba(255, 255, 255, 0.95)";
+        el.style.zIndex = "10";
+      });
+      el.addEventListener("mouseleave", () => {
+        card.style.transform = "scale(1)";
+        card.style.boxShadow =
+          "0 4px 14px rgba(0, 0, 0, 0.55), 0 0 0 1.5px rgba(255, 255, 255, 0.85)";
+        el.style.zIndex = "2";
+      });
+
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
         if (onSelectFodRef.current) {
@@ -245,7 +359,15 @@ const FodMarkers = ({
       const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
         .setLngLat([loc.lon, loc.lat])
         .addTo(m);
-      thumbnailMarkersRef.current.set(key, marker);
+      thumbnailMarkersRef.current.set(key, {
+        marker,
+        el,
+        card,
+        statusDot,
+        status: fod.groupStatus,
+        lon: loc.lon,
+        lat: loc.lat,
+      });
 
       const initialUrl = inlineFrame || (relPath ? thumbCache.get(relPath) : undefined);
       if (initialUrl) {
@@ -264,7 +386,11 @@ const FodMarkers = ({
           .catch(() => {});
       }
     }
-  }, [map, groupRepresentatives, storeMissionNumber, dispatch, clearThumbnailMarkers]);
+
+    if (loadedSetChanged) {
+      updateDotLayerFilter();
+    }
+  }, [map, groupRepresentatives, storeMissionNumber, dispatch, clearThumbnailMarkers, updateDotLayerFilter]);
 
   useEffect(() => {
     if (!map.current) return;
@@ -285,14 +411,24 @@ const FodMarkers = ({
           source: sourceId,
           filter: ["has", "point_count"],
           paint: {
-            "circle-color": "#51bbd6",
+            "circle-color": [
+              "step",
+              ["get", "point_count"],
+              "#0ea5e9", 25,
+              "#3b82f6", 100,
+              "#2563eb"
+            ],
             "circle-radius": [
               "step",
               ["get", "point_count"],
-              20, 100,
-              30, 750,
-              40
-            ]
+              18, 25,
+              24, 100,
+              30
+            ],
+            "circle-opacity": 0.92,
+            "circle-stroke-width": 2.5,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-opacity": 0.95
           }
         });
         // Cluster count labels
@@ -305,9 +441,39 @@ const FodMarkers = ({
             "text-field": "{point_count_abbreviated}",
             "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Bold"],
             "text-size": 12
+          },
+          paint: {
+            "text-color": "#ffffff"
           }
         });
-        // Unclustered FODs
+        // Unclustered FOD outer glow halo for crisp contrast on satellite imagery
+        map.current.addLayer({
+          id: unclusteredHaloLayerId,
+          type: "circle",
+          source: sourceId,
+          filter: ["!", ["has", "point_count"]],
+          paint: {
+            "circle-color": [
+              "match",
+              ["get", "status"],
+              "CLEARED", "#22c55e",
+              "ACCEPTED", "#ef4444",
+              "REJECTED", "#64748b",
+              "#f59e0b"
+            ],
+            "circle-radius": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              14, 9,
+              18, 13,
+              20, 16
+            ],
+            "circle-opacity": 0.3,
+            "circle-blur": 0.45
+          }
+        });
+        // Unclustered FOD core dot with crisp white ring
         map.current.addLayer({
           id: unclusteredLayerId,
           type: "circle",
@@ -317,12 +483,22 @@ const FodMarkers = ({
             "circle-color": [
               "match",
               ["get", "status"],
-              "CLEARED", "#00ff00",
-              "ACCEPTED", "#ff0000",
-              "REJECTED", "#888888",
-              "#ffff00" // default
+              "CLEARED", "#22c55e",
+              "ACCEPTED", "#ef4444",
+              "REJECTED", "#64748b",
+              "#f59e0b"
             ],
-            "circle-radius": 7
+            "circle-radius": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              14, 5,
+              18, 7,
+              20, 8.5
+            ],
+            "circle-stroke-width": 2.2,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-opacity": 0.95
           }
         });
         // Cluster click: zoom in
@@ -372,6 +548,7 @@ const FodMarkers = ({
           map.current.getCanvas().style.cursor = "";
         });
         initialized.current = true;
+        updateDotLayerFilter();
       }
     };
 
@@ -392,6 +569,7 @@ const FodMarkers = ({
         map.current.off('idle', onStyleLoad);
         if (map.current.getLayer(clusterLayerId)) map.current.removeLayer(clusterLayerId);
         if (map.current.getLayer(clusterCountLayerId)) map.current.removeLayer(clusterCountLayerId);
+        if (map.current.getLayer(unclusteredHaloLayerId)) map.current.removeLayer(unclusteredHaloLayerId);
         if (map.current.getLayer(unclusteredLayerId)) map.current.removeLayer(unclusteredLayerId);
         if (map.current.getSource(sourceId)) map.current.removeSource(sourceId);
       }
@@ -428,11 +606,24 @@ const FodMarkers = ({
     const m = map.current;
     if (!m) return;
 
-    const handleViewChange = () => syncThumbnailsRef.current();
+    let wasAboveThreshold = m.getZoom() >= THUMBNAIL_MIN_ZOOM;
+    const handleZoom = () => {
+      const isAboveThreshold = m.getZoom() >= THUMBNAIL_MIN_ZOOM;
+      if (isAboveThreshold !== wasAboveThreshold) {
+        wasAboveThreshold = isAboveThreshold;
+        syncThumbnailsRef.current();
+      }
+    };
+    const handleViewChange = () => {
+      wasAboveThreshold = m.getZoom() >= THUMBNAIL_MIN_ZOOM;
+      syncThumbnailsRef.current();
+    };
+    m.on("zoom", handleZoom);
     m.on("zoomend", handleViewChange);
     m.on("moveend", handleViewChange);
 
     return () => {
+      m.off("zoom", handleZoom);
       m.off("zoomend", handleViewChange);
       m.off("moveend", handleViewChange);
       clearThumbnailMarkers();
