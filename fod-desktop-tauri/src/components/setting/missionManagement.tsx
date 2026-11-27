@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/store';
+import { set_Terminate } from '@/store/slices/missionState-slice';
+import { resetFods } from '@/store/slices/fodReducer-slice';
+import { clearMissionImageCache } from '@/mocks/next-image';
 import {
   HiArrowPath,
   HiMagnifyingGlass,
@@ -69,7 +72,9 @@ function formatDate(raw?: string | number | null): string {
 }
 
 export default function MissionManagement() {
+  const dispatch = useDispatch();
   const theme = useSelector((store: RootState) => store.theme.theme);
+  const currentMissionNumber = useSelector((store: RootState) => store.MissionState.missionNumber);
   const isDark = theme === 'dark';
 
   const [loading, setLoading] = useState(false);
@@ -182,6 +187,19 @@ export default function MissionManagement() {
     }
   };
 
+  const cleanupFreedMissionsClientState = useCallback(
+    (ids: number[]) => {
+      for (const id of ids) {
+        clearMissionImageCache(id);
+      }
+      if (currentMissionNumber != null && ids.includes(Number(currentMissionNumber))) {
+        dispatch(set_Terminate());
+        dispatch(resetFods());
+      }
+    },
+    [currentMissionNumber, dispatch]
+  );
+
   const handleLocalFreeSingle = async (m: DesktopMissionItem) => {
     if (m.status === 'ACTIVE') {
       toast.warning('Cannot free storage for an active mission');
@@ -193,6 +211,7 @@ export default function MissionManagement() {
         method: 'POST',
         url: `/api/mission/local-free/${m.id}`,
       });
+      cleanupFreedMissionsClientState([m.id]);
       toast.success(
         `Freed ${formatBytes(res?.data?.bytesFreed)} on this device for Mission #${
           m.displayId ?? m.id
@@ -221,6 +240,7 @@ export default function MissionManagement() {
       const freedIds: number[] = res?.data?.freedMissionIds || [];
       const errors: any[] = res?.data?.errors || [];
       if (freedIds.length > 0) {
+        cleanupFreedMissionsClientState(freedIds);
         toast.success(
           `Freed ${freedIds.length} mission(s) (${formatBytes(res?.data?.bytesFreed)})`
         );
@@ -244,14 +264,15 @@ export default function MissionManagement() {
         method: 'POST',
         url: `/api/mission/local-reimport/${id}`,
       });
+      clearMissionImageCache(id);
       toast.success(
-        `Re-imported Mission #${label} (${res?.data?.restoredGroups ?? 0} groups, ${
+        `Imported Mission #${label} (${res?.data?.restoredGroups ?? 0} groups, ${
           res?.data?.restoredFrames ?? 0
         } images)`
       );
       await loadDesktopMissions(true);
     } catch (e: any) {
-      toast.error(e?.data?.error || 'Failed to re-import mission from ATC');
+      toast.error(e?.data?.error || 'Failed to import mission from ATC');
     } finally {
       setBusyKey(null);
     }
@@ -260,7 +281,7 @@ export default function MissionManagement() {
   const handleLocalReimportSelected = async () => {
     const targets = missions.filter((m) => selectedIds.has(m.id) && m.localEvicted);
     if (targets.length === 0) {
-      toast.info('Select freed missions (On ATC) to re-import');
+      toast.info('Select freed missions (On ATC) to import');
       return;
     }
     setBusyKey('reimport-batch');
@@ -268,15 +289,40 @@ export default function MissionManagement() {
     for (const m of targets) {
       try {
         await axiosClient({ method: 'POST', url: `/api/mission/local-reimport/${m.id}` });
+        clearMissionImageCache(m.id);
         ok += 1;
       } catch {
         // continue
       }
     }
-    toast.success(`Re-imported ${ok} of ${targets.length} mission(s)`);
+    if (ok > 0) {
+      toast.success(`Imported ${ok} of ${targets.length} mission(s)`);
+    } else {
+      toast.error('Failed to import selected mission(s) — check ATC / Car connection');
+    }
     setSelectedIds(new Set());
     await loadDesktopMissions(true);
     setBusyKey(null);
+  };
+
+  const handleLocalSyncSingle = async (m: DesktopMissionItem) => {
+    if (m.localEvicted) {
+      toast.info('Import this mission from ATC first before syncing.');
+      return;
+    }
+    setBusyKey(`sync-${m.id}`);
+    try {
+      await axiosClient({
+        method: 'POST',
+        url: `/api/mission/local-sync/${m.id}`,
+      });
+      toast.success(`Synced Mission #${m.displayId ?? m.id}`);
+      await loadDesktopMissions(true);
+    } catch (e: any) {
+      toast.error(e?.data?.error || 'Failed to sync mission');
+    } finally {
+      setBusyKey(null);
+    }
   };
 
   const handleSaveDesktopPolicy = async () => {
@@ -645,10 +691,10 @@ export default function MissionManagement() {
                       {formatDate(m.createdAt)}
                     </td>
                     <td className="py-2.5 px-2 font-mono whitespace-nowrap">
-                      {m.fods} / {m.cleared}
+                      {isFreed ? '—' : `${m.fods} / ${m.cleared}`}
                     </td>
                     <td className="py-2.5 px-2 font-mono whitespace-nowrap">
-                      {isFreed ? '0 B' : formatBytes(m.localSizeBytes)}
+                      {formatBytes(m.localSizeBytes)}
                     </td>
                     <td className="py-2.5 px-2 whitespace-nowrap">
                       {m.dirtyCount > 0 ? (
@@ -672,20 +718,34 @@ export default function MissionManagement() {
                             type="button"
                             disabled={busyKey === `reimport-${m.id}`}
                             onClick={() => handleLocalReimportSingle(m.id, label)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#5AA7EA]/15 text-[#5AA7EA] hover:bg-[#5AA7EA]/25 text-[11px] font-semibold cursor-pointer"
-                            title="Refetch / Re-import from ATC"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#5AA7EA]/15 text-[#5AA7EA] hover:bg-[#5AA7EA]/25 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+                            title="Import mission data and images from ATC first"
                           >
                             <HiCloudArrowDown className="w-3.5 h-3.5" />
-                            <span>Re-import</span>
+                            <span>Import</span>
                           </button>
                         ) : (
                           <>
+                            <button
+                              type="button"
+                              disabled={busyKey === `sync-${m.id}`}
+                              onClick={() => handleLocalSyncSingle(m)}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#5AA7EA]/15 text-[#5AA7EA] hover:bg-[#5AA7EA]/25 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+                              title="Sync latest updates with ATC / Car"
+                            >
+                              <HiArrowPath
+                                className={`w-3.5 h-3.5 ${
+                                  busyKey === `sync-${m.id}` ? 'animate-spin' : ''
+                                }`}
+                              />
+                              <span>Sync</span>
+                            </button>
                             {m.status !== 'ACTIVE' && (
                               <button
                                 type="button"
                                 disabled={busyKey === `free-${m.id}`}
                                 onClick={() => handleLocalFreeSingle(m)}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 text-[11px] font-semibold cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
                                 title="Free local cache (keeps mission on ATC)"
                               >
                                 <HiTrash className="w-3.5 h-3.5" />

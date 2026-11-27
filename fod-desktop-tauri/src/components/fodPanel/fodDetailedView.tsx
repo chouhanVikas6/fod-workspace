@@ -26,6 +26,7 @@ import { doubleAccept, undo_fod } from "@/store/slices/fodReducer-slice";
 import { toast } from "react-toastify";
 import { config } from "@/config/clientConfig";
 import { calculateFodRisk, RiskLevel } from "@/config/riskConfig";
+import { MAX_ZOOM, MIN_ZOOM, useImageZoomPan } from "./useImageZoomPan";
 
 const EMPTY_FODS: any[] = [];
 const EMPTY_DOUBLE_ACCEPTED: Record<string, any> = {};
@@ -36,12 +37,11 @@ const DetailedView = () => {
 
   const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
   const [selectedFrame, setselectedFrame] = useState<any>(null);
-  const [zoom, setZoom] = useState(1);
   const [fade, setfade] = useState(false);
 
   const detailedViewRef = useRef<HTMLDivElement | null>(null);
-  const imageSwipeStartX = useRef<number | null>(null);
   const panelSwipeStartX = useRef<number | null>(null);
+  const stepFrameRef = useRef<(delta: number) => void>(() => {});
 
   const [isAcceptDisabled, setAcceptButtonStatus] = useState(false);
   const [isRejectDisabled, setRejectButtonStatus] = useState(false);
@@ -59,6 +59,21 @@ const DetailedView = () => {
   );
 
   const filters = useSelector((state: RootState) => state.FodReducer.filters);
+
+  const {
+    viewportRef: imageViewportRef,
+    zoom,
+    pan,
+    isDragging: isPanning,
+    animateTransition,
+    zoomIn,
+    zoomOut,
+    resetZoom,
+    pointerHandlers: imagePointerHandlers,
+  } = useImageZoomPan({
+    isOpen,
+    onSwipeFrame: (delta) => stepFrameRef.current(delta),
+  });
 
   const getFrames = (fodItem: any) => {
     if (!fodItem) return [];
@@ -364,7 +379,7 @@ const DetailedView = () => {
       const nextIdx = Math.max(0, Math.min(frames.length - 1, prevIdx + delta));
 
       setselectedFrame(frames[nextIdx]);
-      setZoom(1);
+      resetZoom(false);
 
       const ele = document.getElementById(`selectedFrame${nextIdx}`);
 
@@ -380,16 +395,36 @@ const DetailedView = () => {
     });
   };
 
+  stepFrameRef.current = stepFrame;
+
   useEffect(() => {
     setSelectedFrameIdx(0);
     setselectedFrame(null);
-    setZoom(1);
-  }, [fod?.id, (fod as any)?.groupId]);
+    resetZoom(false);
+  }, [fod?.id, (fod as any)?.groupId, isOpen, resetZoom]);
 
   const handleAcceptRejectKeyDown = async (event: KeyboardEvent) => {
     if (event.key === "Escape" || event.keyCode === 27) {
       dispatch(removeDetailedViewFod());
       return;
+    }
+
+    if (isOpen) {
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        zoomIn();
+        return;
+      }
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        zoomOut();
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        resetZoom(true);
+        return;
+      }
     }
 
     switch (event.keyCode) {
@@ -551,53 +586,71 @@ const DetailedView = () => {
               </div>
 
               {/* Zoom Controls */}
-              <div className="absolute top-3.5 right-3.5 max-[1100px]:top-2 max-[1100px]:right-2 z-20 flex items-center gap-2 max-[1100px]:gap-1">
+              <div
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                className="absolute top-3.5 right-3.5 max-[1100px]:top-2 max-[1100px]:right-2 z-20 flex items-center gap-2 max-[1100px]:gap-1"
+              >
+                {zoom > 1.01 && (
+                  <button
+                    type="button"
+                    onClick={() => resetZoom(true)}
+                    title="Reset zoom & pan (0)"
+                    className="px-3 py-2 max-[1100px]:px-2 max-[1100px]:py-1.5 rounded-lg bg-[#017ED7]/90 hover:bg-[#016EC0] backdrop-blur-md border border-[#38A3F1]/60 text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
+                  >
+                    {Math.round(zoom * 100)}% ↺
+                  </button>
+                )}
+
                 <button
                   type="button"
-                  onClick={() =>
-                    setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))
-                  }
-                  className="px-3.5 py-2 max-[1100px]:px-2 max-[1100px]:py-1.5 rounded-lg bg-white/90 dark:bg-[#1A1F26]/85 hover:bg-slate-100 dark:hover:bg-[#262D37] backdrop-blur-md border border-slate-300 dark:border-[#3B4452] text-slate-800 dark:text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
+                  onClick={() => zoomIn()}
+                  disabled={zoom >= MAX_ZOOM}
+                  title="Zoom in (+ or pinch/scroll)"
+                  className="px-3.5 py-2 max-[1100px]:px-2 max-[1100px]:py-1.5 rounded-lg bg-white/90 dark:bg-[#1A1F26]/85 hover:bg-slate-100 dark:hover:bg-[#262D37] disabled:opacity-45 disabled:cursor-not-allowed backdrop-blur-md border border-slate-300 dark:border-[#3B4452] text-slate-800 dark:text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
                 >
                   + ZOOM IN
                 </button>
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setZoom((z) => Math.max(1, +(z - 0.25).toFixed(2)))
-                  }
-                  className="px-3.5 py-2 max-[1100px]:px-2 max-[1100px]:py-1.5 rounded-lg bg-white/90 dark:bg-[#1A1F26]/85 hover:bg-slate-100 dark:hover:bg-[#262D37] backdrop-blur-md border border-slate-300 dark:border-[#3B4452] text-slate-800 dark:text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
+                  onClick={() => zoomOut()}
+                  disabled={zoom <= MIN_ZOOM}
+                  title="Zoom out (- or pinch/scroll)"
+                  className="px-3.5 py-2 max-[1100px]:px-2 max-[1100px]:py-1.5 rounded-lg bg-white/90 dark:bg-[#1A1F26]/85 hover:bg-slate-100 dark:hover:bg-[#262D37] disabled:opacity-45 disabled:cursor-not-allowed backdrop-blur-md border border-slate-300 dark:border-[#3B4452] text-slate-800 dark:text-white text-xs max-[1100px]:text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-md"
                 >
                   − ZOOM OUT
                 </button>
               </div>
 
-              {/* Main Image (supports left/right swipe to switch frames) */}
+              {/* Main Image (supports pinch-to-zoom, wheel zoom, drag-to-pan, double-tap/click zoom, and 1x frame swipe) */}
               <div
-                onPointerDown={(e) => {
-                  imageSwipeStartX.current = e.clientX;
-                }}
-                onPointerUp={(e) => {
-                  if (imageSwipeStartX.current === null) return;
-                  const dx = e.clientX - imageSwipeStartX.current;
-                  imageSwipeStartX.current = null;
-                  if (Math.abs(dx) < 35) return;
-                  stepFrame(dx < 0 ? 1 : -1);
-                }}
-                onPointerCancel={() => {
-                  imageSwipeStartX.current = null;
-                }}
-                className="w-full h-full flex items-center justify-center overflow-hidden relative touch-pan-y cursor-grab active:cursor-grabbing"
+                ref={imageViewportRef}
+                {...imagePointerHandlers}
+                className={`w-full h-full flex items-center justify-center overflow-hidden relative touch-none select-none ${
+                  zoom > 1
+                    ? isPanning
+                      ? "cursor-grabbing"
+                      : "cursor-grab"
+                    : "cursor-grab active:cursor-grabbing"
+                }`}
               >
                 {activeFrame && (
                   <div
-                    className="w-full h-full flex items-center justify-center transition-transform duration-200 ease-out"
-                    style={{ transform: `scale(${zoom})` }}
+                    className={`w-full h-full flex items-center justify-center ${
+                      animateTransition
+                        ? "transition-transform duration-200 ease-out"
+                        : ""
+                    }`}
+                    style={{
+                      transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                      transformOrigin: "center center",
+                      willChange: "transform",
+                    }}
                   >
                     <Image
                       src={`${config.ImagesBase}/${missionState.missionNumber}/${activeFrame.groupId ?? (fod as any)?.groupId}/${activeFrame.id ?? fod?.id}.jpg`}
-                      className="w-full h-full object-cover object-center"
+                      className="w-full h-full object-cover object-center pointer-events-none"
                       alt={`FOD #${fodNumber}`}
                       width={800}
                       height={600}
@@ -632,7 +685,7 @@ const DetailedView = () => {
                           onClick={() => {
                             setSelectedFrameIdx(index);
                             setselectedFrame(frame);
-                            setZoom(1);
+                            resetZoom(false);
                           }}
                           className={`w-[96px] h-[72px] max-[1100px]:w-[72px] max-[1100px]:h-[54px] rounded-md overflow-hidden shrink-0 cursor-pointer transition-all duration-150 bg-slate-200 dark:bg-slate-900 ${
                             isSelected

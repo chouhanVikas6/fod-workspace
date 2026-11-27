@@ -97,10 +97,24 @@ const MissionSelector = () => {
         setSelectedMission(null);
     };
 
-    // Filter and sort missions by date/month/range and sortOrder (never show cold-stored missions)
+    // Filter and sort missions by date/month/range and sortOrder (never show cold-stored or locally freed missions)
     const activeMissionsList = useMemo(() => {
-        return (missions || []).filter((m) => (m.storageTier || 'HOT') !== 'COLD_STORED');
+        return (missions || []).filter(
+            (m) => (m.storageTier || 'HOT') !== 'COLD_STORED' && !m.localEvicted
+        );
     }, [missions]);
+
+    useEffect(() => {
+        if (!selectedMission) return;
+        const selectedId = selectedMission.mission_id ?? selectedMission.id;
+        const stillPresent = activeMissionsList.some(
+            (m) => (m.mission_id ?? m.id) === selectedId
+        );
+        if (!stillPresent) {
+            setSelectedMission(null);
+            setCurrentScreen('');
+        }
+    }, [activeMissionsList, selectedMission]);
 
     const filteredMissions = useMemo(() => {
         const list = activeMissionsList.filter((m) => {

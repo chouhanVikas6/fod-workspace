@@ -1269,6 +1269,7 @@ pub async fn fetch_all_groups_prefer_atc(
     state: &AppState,
     mission_id: i64,
 ) -> anyhow::Result<Vec<proto_defination::fod_group::FodGroupEntity>> {
+    let mut reached_any = false;
     for url in [&state.cfg.atc_backend_url, &state.cfg.car_backend_url] {
         let Ok(ep) = tonic::transport::Endpoint::from_shared(url.clone()) else {
             continue;
@@ -1303,6 +1304,7 @@ pub async fn fetch_all_groups_prefer_atc(
                 break;
             };
             ok_any = true;
+            reached_any = true;
             let inner = resp.into_inner();
             let total_pages = inner.pagination.map(|p| p.total_pages).unwrap_or(1);
             let len = inner.groups.len();
@@ -1316,7 +1318,11 @@ pub async fn fetch_all_groups_prefer_atc(
             return Ok(all);
         }
     }
-    Ok(Vec::new())
+    if reached_any {
+        Ok(Vec::new())
+    } else {
+        anyhow::bail!("Cannot import mission: ATC and Car are unreachable")
+    }
 }
 
 pub async fn fetch_biggest_fods_prefer_atc(

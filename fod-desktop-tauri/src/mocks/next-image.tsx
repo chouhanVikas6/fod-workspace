@@ -22,6 +22,20 @@ function cacheSetMissing(key: string) {
   missingImageCache.add(key);
 }
 
+export function clearMissionImageCache(missionId: number | string) {
+  const needle = `/${missionId}/`;
+  for (const key of Array.from(imageCache.keys())) {
+    if (key.includes(needle)) {
+      imageCache.delete(key);
+    }
+  }
+  for (const key of Array.from(missingImageCache.values())) {
+    if (key.includes(needle)) {
+      missingImageCache.delete(key);
+    }
+  }
+}
+
 const MAX_CONCURRENT_REQUESTS = 6;
 let activeRequests = 0;
 
