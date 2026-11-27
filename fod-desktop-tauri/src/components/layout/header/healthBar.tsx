@@ -401,6 +401,25 @@ const HealthBar = () => {
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-500 dark:text-[#8C939C]">
+                Fallback (ATC):
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 font-mono font-bold ${
+                  isAtcComm
+                    ? "text-emerald-600 dark:text-[#01B656]"
+                    : "text-rose-500 dark:text-rose-400"
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isAtcComm ? "bg-emerald-500 dark:bg-[#01B656]" : "bg-rose-500"
+                  }`}
+                />
+                {isAtcComm ? (!isCarComm ? "Active" : "Available") : "Unavailable"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-500 dark:text-[#8C939C]">
                 Ping / Latency:
               </span>
               <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
