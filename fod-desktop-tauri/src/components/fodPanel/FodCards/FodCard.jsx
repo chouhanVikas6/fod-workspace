@@ -52,26 +52,29 @@ const Fodcard = ({
   const isFodFound = fod.groupStatus === "ACCEPTED";
 
   const getStyleByRisk = (riskLevel) => {
+    const baseBorderStyle =
+      "border border-[#E2E8F0] dark:border-[#2B333E] shadow-[0_4px_16px_-2px_rgba(15,23,42,0.08)] dark:shadow-none";
+
     if (riskLevel === "HIGH") {
       return {
         badgeStyle: "bg-[#EF4444] text-white",
-        borderStyle:
-          "border-2 border-[#EF4444] shadow-[0_0_12px_rgba(239,68,68,0.25)]",
+        borderStyle: baseBorderStyle,
+        topAccentStyle: "border-[#EF4444]",
         text: "HIGH RISK",
       };
     } else if (riskLevel === "MEDIUM") {
       return {
         badgeStyle: "bg-[#F59E0B] text-black font-extrabold",
-        borderStyle:
-          "border-2 border-[#F59E0B] shadow-[0_0_12px_rgba(245,158,11,0.25)]",
+        borderStyle: baseBorderStyle,
+        topAccentStyle: "border-[#F59E0B]",
         text: "MEDIUM RISK",
       };
     } else {
       return {
         badgeStyle:
           "bg-[#E2E8F0] text-[#334155] border border-[#CBD5E1] dark:border-transparent dark:bg-[#374151] dark:text-slate-200",
-        borderStyle:
-          "border border-[#E2E8F0] dark:border-[#2B333E] shadow-[0_4px_16px_-2px_rgba(15,23,42,0.08)] dark:shadow-none",
+        borderStyle: baseBorderStyle,
+        topAccentStyle: "border-[#94A3B8] dark:border-[#64748B]",
         text: "LOW RISK",
       };
     }
@@ -213,9 +216,15 @@ const Fodcard = ({
     <div
       id={fod.id}
       key={fod.id}
-      className={`w-full h-full relative rounded-xl p-3 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${fade ? "fade-out opacity-40" : ""
+      className={`w-full h-full relative rounded-xl p-2.5 flex flex-col justify-between transition-all duration-200 ease-out bg-white dark:bg-[#1C2129] text-[#1E293B] dark:text-white hover:scale-[1.02] active:scale-100 ${style.borderStyle} ${fade ? "fade-out opacity-40" : ""
         }`}
     >
+      {/* Top Risk Accent Cap */}
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute -inset-px bottom-auto h-7 rounded-t-xl border-t-[4px] border-x-[3px] ${style.topAccentStyle} [mask-image:linear-gradient(to_bottom,black_40%,transparent_100%)]`}
+      />
+
       {imgModal && (
         <div className="absolute inset-0 rounded-xl bg-slate-900/20 dark:bg-black/60 backdrop-blur-xs z-30 flex flex-col items-center justify-center gap-2 zoid-fade-slide">
           <div className="w-7 h-7 rounded-full border-2 border-[#4C9FE8] border-t-transparent animate-spin" />
@@ -231,7 +240,7 @@ const Fodcard = ({
         onClick={onCardClick}
       >
         {/* Header */}
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center mb-1.5">
           <span
             className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider inline-flex items-center ${style.badgeStyle}`}
           >
@@ -247,20 +256,18 @@ const Fodcard = ({
             <Image
               src={MapMode}
               alt="Map"
-              width={18}
-              height={18}
+              width={22}
+              height={22}
               className="brightness-50 dark:brightness-200"
             />
           </button>
         </div>
 
-        {/* FOD Title */}
-        <div className="text-[17px] font-bold text-[#1E293B] dark:text-white tracking-tight mt-1 mb-2">
-          FOD #{fod.groupId || fod.id}
-        </div>
-
-        {/* Image Preview */}
-        <div className="relative h-[105px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mb-2.5 flex items-center justify-center">
+        {/* Image Preview with overlaid FOD number */}
+        <div className="relative h-[96px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mb-2 flex items-center justify-center">
+          <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold tracking-wide shadow-xs pointer-events-none">
+            FOD #{fod.groupId || fod.id}
+          </span>
           {!imgError ? (
             <Image
               src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
@@ -268,22 +275,19 @@ const Fodcard = ({
               alt="Fod Image"
               className="h-full w-full object-cover object-center group-hover:scale-105 transition-all duration-300"
               width={220}
-              height={105}
+              height={96}
               loading="lazy"
               onError={() => setImgError(true)}
             />
           ) : (
             <div className="flex flex-col items-center justify-center text-[#64748B] dark:text-slate-500 text-[11px] gap-1">
-              <span className="font-mono text-xs">
-                FOD #{fod.groupId || fod.id}
-              </span>
               <span>No frame preview</span>
             </div>
           )}
         </div>
 
         {/* Metadata */}
-        <div className="w-full flex flex-col gap-1 text-[11px] mb-3">
+        <div className="w-full flex flex-col gap-0.5 text-[11px] mb-2">
           <div className="flex justify-between items-center">
             <span className="text-[#64748B] dark:text-[#7E8691] font-medium">
               Type
@@ -319,14 +323,14 @@ const Fodcard = ({
       </div>
 
       {/* Action Buttons */}
-      <div className="w-full flex flex-col gap-2 mt-auto">
+      <div className="w-full flex flex-col gap-1.5 mt-auto">
         {isFodFound ? (
           <>
             <button
               type="button"
               disabled={imgModal}
               onClick={handleOpenCamera}
-              className="w-full h-[34px] rounded-[5px] border bg-[#002756] hover:bg-[#001F44] active:bg-[#001633] border-[#002756] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-[31px] rounded-[5px] border bg-[#002756] hover:bg-[#001F44] active:bg-[#001633] border-[#002756] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <BsCamera className="w-3.5 h-3.5" />
               <span>CAMERA</span>
@@ -336,7 +340,7 @@ const Fodcard = ({
               type="button"
               disabled={imgModal}
               onClick={handleClearFod}
-              className="w-full h-[34px] rounded-[5px] border bg-[#017ED7] hover:bg-[#016EC0] active:bg-[#015EA3] border-[#017ED7] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-[31px] rounded-[5px] border bg-[#017ED7] hover:bg-[#016EC0] active:bg-[#015EA3] border-[#017ED7] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <GiCardPickup className="w-4 h-4" />
               <span>CLEAR FOD</span>
@@ -348,7 +352,7 @@ const Fodcard = ({
               type="button"
               disabled={imgModal}
               onClick={(e) => acceptFod(fod, e)}
-              className="w-full h-[34px] rounded-[5px] border bg-[#4C9FE8] hover:bg-[#398BD5] active:bg-[#2F7FC5] border-[#4C9FE8] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-[31px] rounded-[5px] border bg-[#4C9FE8] hover:bg-[#398BD5] active:bg-[#2F7FC5] border-[#4C9FE8] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <HiOutlineCheck className="w-4 h-4 stroke-[2.5]" />
               <span>CONFIRM FOD</span>
@@ -358,7 +362,7 @@ const Fodcard = ({
               type="button"
               disabled={imgModal}
               onClick={(e) => rejectFod(fod, e)}
-              className="w-full h-[34px] rounded-[5px] bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-[31px] rounded-[5px] bg-[#F1F5F9] hover:bg-[#E2E8F0] active:bg-[#CBD5E1] dark:bg-[#303640] dark:hover:bg-[#39414C] dark:active:bg-[#252C35] border border-[#E2E8F0] dark:border-[#414B57] text-[#64748B] dark:text-[#A8B0BA] hover:text-[#1E293B] dark:hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RxCross1 className="w-3.5 h-3.5 stroke-[1.5]" />
               <span>NOT FOD</span>
