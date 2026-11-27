@@ -338,8 +338,11 @@ COALESCE("f"."size", CAST("fg"."biggestFodSize" AS REAL), 10.0) AS "biggestSize"
 fg."status" AS "groupStatus",
 fg."groupId" AS "idssssss"
 FROM "FodGroup" fg
+INNER JOIN "Mission" m ON m."id" = fg."missionId"
 LEFT JOIN "Fod" f ON fg."biggestFodId" = f."id"
 WHERE fg."missionId" = $1
+AND (COALESCE(m."localEvicted", 0) = 0 OR m."status" = 'ACTIVE')
+AND COALESCE(m."storageTier", 'HOT') != 'COLD_STORED'
 AND (
     fg."updatedAt" > $2
     OR (fg."updatedAt" = $2 AND fg."groupId" > $3)
@@ -379,13 +382,15 @@ pub async fn start_retrive_ipc_stream(state: AppState, sub_id: String, mission_i
     stop_retrive_ipc_stream(&state, &sub_id).await;
 
     if let Some(mid) = mission_id {
-        crate::scheduler::set_viewed_mission(mid);
-        let st = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
-                tracing::warn!("sync_fod on IPC retrive-data connect for mission {mid} failed: {e}");
-            }
-        });
+        if !crate::scheduler::is_mission_evicted_or_cold(&state, mid).await {
+            crate::scheduler::set_viewed_mission(mid);
+            let st = state.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
+                    tracing::warn!("sync_fod on IPC retrive-data connect for mission {mid} failed: {e}");
+                }
+            });
+        }
     }
 
     let event_name = format!("sse:retrive-data:{sub_id}");
@@ -414,12 +419,25 @@ pub async fn start_retrive_ipc_stream(state: AppState, sub_id: String, mission_i
         }
     });
 
-    state.retrive_subs.lock().await.insert(sub_id, handle);
+    state.retrive_subs.lock().await.insert(sub_id, (mission_id, handle));
 }
 
 pub async fn stop_retrive_ipc_stream(state: &AppState, sub_id: &str) {
-    if let Some(handle) = state.retrive_subs.lock().await.remove(sub_id) {
+    if let Some((_, handle)) = state.retrive_subs.lock().await.remove(sub_id) {
         handle.abort();
+    }
+}
+
+pub async fn stop_retrive_streams_for_mission(state: &AppState, mission_id: i64) {
+    let mut guard = state.retrive_subs.lock().await;
+    let keys: Vec<String> = guard
+        .iter()
+        .filter_map(|(k, (mid, _))| if *mid == Some(mission_id) { Some(k.clone()) } else { None })
+        .collect();
+    for k in keys {
+        if let Some((_, handle)) = guard.remove(&k) {
+            handle.abort();
+        }
     }
 }
 
@@ -499,12 +517,14 @@ pub async fn retrive_data(
     tracing::info!(?mission_id, "SSE retrive-data connection opened");
 
     if let Some(mid) = mission_id {
-        let st = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
-                tracing::warn!("sync_fod on SSE connect for mission {mid} failed: {e}");
-            }
-        });
+        if !crate::scheduler::is_mission_evicted_or_cold(&state, mid).await {
+            let st = state.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::scheduler::sync_fod(&st, mid).await {
+                    tracing::warn!("sync_fod on SSE connect for mission {mid} failed: {e}");
+                }
+            });
+        }
     }
 
     let (tx, rx) = mpsc::channel::<Event>(32);

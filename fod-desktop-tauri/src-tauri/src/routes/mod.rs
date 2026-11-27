@@ -68,6 +68,12 @@ async fn images(State(state): State<AppState>, Path(path): Path<String>) -> Resp
         let group_seg = parts[1];
         let fod_seg = parts[2].trim_end_matches(".jpg");
 
+        if let Ok(mid) = mission_seg.parse::<i64>() {
+            if crate::scheduler::is_mission_evicted_or_cold(&state, mid).await {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+        }
+
         if let Some(fod) = crate::services::fetch_fod_from_car(&state, fod_seg).await {
             if !fod.image_sha256.is_empty() {
                 if let Some(bytes) = crate::services::fetch_image_from_car(&state, &fod.image_sha256, false).await {

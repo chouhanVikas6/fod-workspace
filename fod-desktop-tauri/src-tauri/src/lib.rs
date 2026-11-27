@@ -179,6 +179,12 @@ async fn get_fod_image(
         let group_seg = parts[1];
         let fod_seg = parts[2].trim_end_matches(".jpg");
 
+        if let Ok(mid) = mission_seg.parse::<i64>() {
+            if scheduler::is_mission_evicted_or_cold(&state, mid).await {
+                return Ok(None);
+            }
+        }
+
         if let Some(fod) = services::fetch_fod_from_car(&state, fod_seg).await {
             if !fod.image_sha256.is_empty() {
                 if let Some(bytes) =
@@ -609,6 +615,8 @@ pub fn run() {
                     .bind(crate::services::now_naive())
                     .execute(&st.db)
                     .await;
+
+                scheduler::cleanup_evicted_missions_on_startup(&st).await;
 
                 if let Err(e) = realtime::setup(st.clone()).await {
                     tracing::error!("realtime::setup error: {e}");

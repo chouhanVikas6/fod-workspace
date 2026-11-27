@@ -60,6 +60,7 @@ pub fn router() -> Router<AppState> {
         .route("/local-free/{id}", any(local_free))
         .route("/local-free-batch", any(local_free_batch))
         .route("/local-reimport/{id}", any(local_reimport))
+        .route("/local-sync/{id}", any(local_sync))
         .route("/atc/cold-store/{id}", any(atc_cold_store))
         .route("/atc/restore/{id}", any(atc_restore))
         .route("/car/drop/{id}", any(car_drop))
@@ -694,7 +695,16 @@ async fn explore(method: Method, State(s): State<AppState>, Path(id): Path<Strin
         .fetch_optional(&s.db)
         .await
     {
-        Ok(m) => (StatusCode::OK, Json(m)).into_response(), // null when absent, like Node
+        Ok(Some(m)) => {
+            if m.local_evicted && m.status != crate::models::MissionStatus::Active {
+                return err_json(
+                    StatusCode::CONFLICT,
+                    json!({ "error": "Mission is freed locally. Import it from Mission Management first." }),
+                );
+            }
+            (StatusCode::OK, Json(Some(m))).into_response()
+        }
+        Ok(None) => (StatusCode::OK, Json(Option::<Mission>::None)).into_response(),
         Err(e) => {
             tracing::error!("{e}");
             err500("Failed to retrieve mission")
@@ -949,6 +959,9 @@ async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<
     let Some(mission_id) = svc::js_parse_int(&id) else {
         return err500("Failed to retrieve mission data");
     };
+    if crate::scheduler::is_mission_evicted_or_cold(&s, mission_id).await {
+        return (StatusCode::OK, Json(Vec::<Value>::new())).into_response();
+    }
     // Same query as the Node handler ($queryRaw); the only textual change is
     // ::text on the enum column so the driver returns it as a string, which
     // is what Prisma produced.
@@ -1610,12 +1623,13 @@ async fn reimport_mission_locally(s: &AppState, mission_id: i64) -> anyhow::Resu
     .ok()
     .flatten();
 
+    let mut pending_mission_insert: Option<Value> = None;
     if let Some((ref tier,)) = existing_row {
         if tier == "COLD_STORED" {
             anyhow::bail!("Mission {mission_id} is cold-stored on ATC. Restore it from Cold Storage first.");
         }
     } else {
-        // Mission row was previously dropped locally — fetch metadata from ATC/Car and insert it
+        // Mission row was previously dropped locally — fetch metadata from ATC/Car
         let detail = svc::api_to_main(
             s,
             reqwest::Method::GET,
@@ -1624,7 +1638,7 @@ async fn reimport_mission_locally(s: &AppState, mission_id: i64) -> anyhow::Resu
             Some(5000),
         )
         .await;
-        let data = detail.as_ref().and_then(|v| v.get("data")).unwrap_or(&Value::Null);
+        let data = detail.and_then(|v| v.get("data").cloned()).unwrap_or(Value::Null);
         if data.is_null() {
             anyhow::bail!("Mission {mission_id} not found on ATC or Car");
         }
@@ -1632,6 +1646,13 @@ async fn reimport_mission_locally(s: &AppState, mission_id: i64) -> anyhow::Resu
         if tier == "COLD_STORED" {
             anyhow::bail!("Mission {mission_id} is cold-stored on ATC. Restore it from Cold Storage first.");
         }
+        pending_mission_insert = Some(data);
+    }
+
+    // Fetch groups BEFORE flipping localEvicted = 0 so failed/offline imports keep localEvicted = 1
+    let groups = svc::fetch_all_groups_prefer_atc(s, mission_id).await?;
+
+    if let Some(data) = pending_mission_insert {
         let now = svc::now_naive();
         let display_id = data.get("displayId").and_then(Value::as_i64);
         let timer = data.get("timer").and_then(Value::as_f64).unwrap_or(0.0);
@@ -1657,19 +1678,18 @@ async fn reimport_mission_locally(s: &AppState, mission_id: i64) -> anyhow::Resu
         .bind(now)
         .execute(&s.db)
         .await?;
+    } else {
+        sqlx::query(
+            r#"UPDATE "Mission" SET "localEvicted" = 0, "updatedAt" = $2 WHERE "id" = $1"#,
+        )
+        .bind(mission_id)
+        .bind(svc::now_naive())
+        .execute(&s.db)
+        .await?;
     }
-
-    sqlx::query(
-        r#"UPDATE "Mission" SET "localEvicted" = 0, "updatedAt" = $2 WHERE "id" = $1"#,
-    )
-    .bind(mission_id)
-    .bind(svc::now_naive())
-    .execute(&s.db)
-    .await?;
 
     crate::scheduler::clear_mission_sync_cursor(mission_id);
 
-    let groups = svc::fetch_all_groups_prefer_atc(s, mission_id).await?;
     let now = svc::now_naive();
     let mut cleared_group_ids = Vec::new();
 
@@ -1848,6 +1868,70 @@ async fn local_reimport(
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(e) => err_json(StatusCode::CONFLICT, json!({ "error": e.to_string() })),
     }
+}
+
+async fn local_sync(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if method != Method::POST {
+        return mna(&method, Some("POST"));
+    }
+    let Some(mission_id) = svc::js_parse_int(&id) else {
+        return err_json(StatusCode::BAD_REQUEST, json!({ "error": "Invalid mission ID" }));
+    };
+
+    let row: Option<(bool, String, String)> = sqlx::query_as(
+        r#"SELECT COALESCE("localEvicted", 0), COALESCE("storageTier", 'HOT'), "status"
+           FROM "Mission" WHERE "id" = $1"#,
+    )
+    .bind(mission_id)
+    .fetch_optional(&s.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some((local_evicted, tier, status)) = row else {
+        return err_json(StatusCode::NOT_FOUND, json!({ "error": "Mission not found locally" }));
+    };
+    if tier == "COLD_STORED" {
+        return err_json(
+            StatusCode::CONFLICT,
+            json!({ "error": "Mission is cold-stored on ATC. Restore it from Archive & Backup first." }),
+        );
+    }
+    if local_evicted && status != "ACTIVE" {
+        return err_json(
+            StatusCode::CONFLICT,
+            json!({ "error": "Mission is freed locally. Import it first before syncing." }),
+        );
+    }
+
+    let reachable = svc::get_grpc_channel(&s.cfg.car_backend_url).await.is_some()
+        || svc::get_grpc_channel(&s.cfg.atc_backend_url).await.is_some();
+    if !reachable {
+        return err_json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({ "error": "ATC and Car are unreachable — cannot sync mission" }),
+        );
+    }
+
+    if let Err(e) = crate::scheduler::resolve_fod_group(&s).await {
+        return err500(&format!("Failed to push local decisions: {e}"));
+    }
+    if let Err(e) = crate::scheduler::sync_fod(&s, mission_id).await {
+        return err500(&format!("Failed to sync mission {mission_id}: {e}"));
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "missionId": mission_id,
+        })),
+    )
+        .into_response()
 }
 
 async fn atc_cold_store(

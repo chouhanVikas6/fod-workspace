@@ -2,7 +2,7 @@ import { startTransition, useEffect, useRef, useState } from 'react';
 import getSocketServer from '@/utils/SocketClient/socketClient';
 import { config } from '@/config/clientConfig';
 import { useDispatch, useSelector } from 'react-redux';
-import { accept_Fod, add_ToClearedFod, reject_Fod, syncFod, undo_fod } from '@/store/slices/fodReducer-slice';
+import { accept_Fod, add_ToClearedFod, reject_Fod, resetFods, syncFod, undo_fod } from '@/store/slices/fodReducer-slice';
 import { PayloadAction } from '@reduxjs/toolkit';
 import { updateSystemHealth } from '@/store/actions/systemHealth';
 import { handleServerError } from '@/utils/alerts';
@@ -10,6 +10,7 @@ import { RootState } from '@/store';
 //@ts-ignore
 import notificationSound from '../assets/audio/notification.mp3';
 import { pushOperationalAlert, set_Terminate } from '@/store/slices/missionState-slice';
+import { clearMissionImageCache } from '@/mocks/next-image';
 import { toast } from 'react-toastify';
 
 // Configuration
@@ -147,6 +148,16 @@ const useSocket = (eventHandlers: { [eventName: string]: EventHandler } = EMPTY_
         ) {
           toast.warn("Mission terminated.");
           dispatch(set_Terminate());
+        }
+      } else if (data.type === 'mission_freed') {
+        const freedId = data.missionId ?? data.message?.missionId;
+        if (freedId != null) {
+          clearMissionImageCache(freedId);
+          const currentMissionId = missionRef.current?.missionNumber;
+          if (currentMissionId != null && String(currentMissionId) === String(freedId)) {
+            dispatch(set_Terminate());
+            dispatch(resetFods());
+          }
         }
       }
     };

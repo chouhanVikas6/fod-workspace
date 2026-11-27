@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/store';
+import { set_Terminate } from '@/store/slices/missionState-slice';
+import { resetFods } from '@/store/slices/fodReducer-slice';
+import { clearMissionImageCache } from '@/mocks/next-image';
 import {
   HiArrowPath,
   HiMagnifyingGlass,
@@ -85,7 +88,9 @@ function formatDate(raw?: string | number | null): string {
 }
 
 export default function ArchiveStorage() {
+  const dispatch = useDispatch();
   const theme = useSelector((store: RootState) => store.theme.theme);
+  const currentMissionNumber = useSelector((store: RootState) => store.MissionState.missionNumber);
   const isDark = theme === 'dark';
 
   const [loading, setLoading] = useState(false);
@@ -168,6 +173,11 @@ export default function ArchiveStorage() {
         res?.data?.message ||
           `Mission #${m.displayId ?? m.id} cold-stored on ATC and dropped from all devices`
       );
+      clearMissionImageCache(m.id);
+      if (currentMissionNumber != null && Number(currentMissionNumber) === Number(m.id)) {
+        dispatch(set_Terminate());
+        dispatch(resetFods());
+      }
       setColdStoreConfirm(null);
       await loadFleetStorage(true);
     } catch (e: any) {

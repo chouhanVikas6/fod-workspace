@@ -589,6 +589,28 @@ pub fn set_viewed_mission(mission_id: i64) {
     }
 }
 
+pub fn clear_viewed_mission_if(mission_id: i64) {
+    let _ = VIEWED_MISSION_ID.compare_exchange(
+        mission_id,
+        0,
+        std::sync::atomic::Ordering::Relaxed,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub async fn is_mission_evicted_or_cold(state: &AppState, mission_id: i64) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        r#"SELECT (COALESCE("localEvicted", 0) = 1 OR COALESCE("storageTier", 'HOT') = 'COLD_STORED') AND "status" != 'ACTIVE'
+           FROM "Mission" WHERE "id" = $1"#,
+    )
+    .bind(mission_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false)
+}
+
 static SYNC_FOD_IN_FLIGHT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -612,6 +634,10 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
         return Ok(());
     }
     let _guard = SyncFodGuard;
+
+    if is_mission_evicted_or_cold(state, mission_id).await {
+        return Ok(());
+    }
 
     let local_group_count: i64 =
         sqlx::query_scalar(r#"SELECT COUNT(*) FROM "FodGroup" WHERE "missionId" = $1"#)
@@ -1335,6 +1361,62 @@ pub async fn save_desktop_storage_policy(
     Ok(())
 }
 
+async fn collect_cleared_image_hashes(state: &AppState, mission_id: i64) -> Vec<String> {
+    let Ok(rows) = sqlx::query_as::<_, (String, String)>(
+        r#"SELECT COALESCE("beforeClearImg", '[]'), COALESCE("afterClearImg", '[]')
+           FROM "ClearedFod" WHERE "missionId" = $1"#,
+    )
+    .bind(mission_id)
+    .fetch_all(&state.db)
+    .await
+    else {
+        return Vec::new();
+    };
+
+    let mut hashes = std::collections::BTreeSet::new();
+    for (before_json, after_json) in rows {
+        for raw in [before_json, after_json] {
+            if let Ok(arr) = serde_json::from_str::<Vec<String>>(&raw) {
+                for sha in arr {
+                    let clean = sha.trim();
+                    if !clean.is_empty() {
+                        hashes.insert(clean.to_string());
+                    }
+                }
+            }
+        }
+    }
+    hashes.into_iter().collect()
+}
+
+async fn cleanup_unreferenced_cleared_images(state: &AppState, hashes: Vec<String>) -> u64 {
+    let mut freed = 0u64;
+    for sha in hashes {
+        if sha.contains("..") || sha.contains('/') || sha.contains('\\') {
+            continue;
+        }
+        let pattern = format!("%{sha}%");
+        let refs: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM "ClearedFod"
+               WHERE "beforeClearImg" LIKE $1 OR "afterClearImg" LIKE $1"#,
+        )
+        .bind(&pattern)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(1);
+        if refs == 0 {
+            let p = std::path::Path::new("fod-images/mission").join(format!("{sha}.jpg"));
+            if let Ok(meta) = tokio::fs::metadata(&p).await {
+                let sz = meta.len();
+                if tokio::fs::remove_file(&p).await.is_ok() {
+                    freed += sz;
+                }
+            }
+        }
+    }
+    freed
+}
+
 /// Frees local SQLite FOD payloads (`Fod`, `FodGroup`, `ClearedFod`) and `fod-images/mission/<id>`
 /// while keeping the `"Mission"` metadata row with `localEvicted = 1`.
 /// Returns `(bytes_freed, rows_removed)`.
@@ -1367,6 +1449,8 @@ pub async fn purge_local_mission_data(
         }
     }
 
+    let cleared_hashes = collect_cleared_image_hashes(state, mission_id).await;
+
     let mut tx = state.db.begin().await?;
     let fods = sqlx::query(r#"DELETE FROM "Fod" WHERE "missionId" = $1"#)
         .bind(mission_id)
@@ -1392,13 +1476,24 @@ pub async fn purge_local_mission_data(
     .await?;
     tx.commit().await?;
 
+    clear_viewed_mission_if(mission_id);
     clear_mission_sync_cursor(mission_id);
+    crate::realtime::sse::stop_retrive_streams_for_mission(state, mission_id).await;
 
     let image_dir = std::path::Path::new("fod-images/mission").join(mission_id.to_string());
-    let dir_bytes = crate::archive::dir_size_bytes(&image_dir).await;
+    let mut dir_bytes = crate::archive::dir_size_bytes(&image_dir).await;
     if image_dir.exists() {
         let _ = tokio::fs::remove_dir_all(&image_dir).await;
     }
+    dir_bytes += cleanup_unreferenced_cleared_images(state, cleared_hashes).await;
+
+    state.emit_gui(
+        "update",
+        &json!({
+            "type": "mission_freed",
+            "missionId": mission_id,
+        }),
+    );
 
     Ok((dir_bytes, fods + groups + cleared))
 }
@@ -1430,6 +1525,8 @@ pub async fn drop_cold_stored_mission_locally(
         anyhow::bail!("Mission {mission_id} has {dirty_cnt} unsynced local decision(s)");
     }
 
+    let cleared_hashes = collect_cleared_image_hashes(state, mission_id).await;
+
     let mut tx = state.db.begin().await?;
     sqlx::query(r#"DELETE FROM "Fod" WHERE "missionId" = $1"#)
         .bind(mission_id)
@@ -1449,15 +1546,60 @@ pub async fn drop_cold_stored_mission_locally(
         .await?;
     tx.commit().await?;
 
+    clear_viewed_mission_if(mission_id);
     clear_mission_sync_cursor(mission_id);
+    crate::realtime::sse::stop_retrive_streams_for_mission(state, mission_id).await;
 
     let image_dir = std::path::Path::new("fod-images/mission").join(mission_id.to_string());
-    let dir_bytes = crate::archive::dir_size_bytes(&image_dir).await;
+    let mut dir_bytes = crate::archive::dir_size_bytes(&image_dir).await;
     if image_dir.exists() {
         let _ = tokio::fs::remove_dir_all(&image_dir).await;
     }
+    dir_bytes += cleanup_unreferenced_cleared_images(state, cleared_hashes).await;
+
+    state.emit_gui(
+        "update",
+        &json!({
+            "type": "mission_freed",
+            "missionId": mission_id,
+        }),
+    );
 
     Ok(dir_bytes)
+}
+
+/// Ensures any mission marked `localEvicted = 1` (not ACTIVE) has zero stray SQLite rows
+/// or cached frame images on startup (e.g. if an earlier sync populated them before the fix).
+pub async fn cleanup_evicted_missions_on_startup(state: &AppState) {
+    let Ok(evicted_ids) = sqlx::query_scalar::<_, i64>(
+        r#"SELECT "id" FROM "Mission" WHERE COALESCE("localEvicted", 0) = 1 AND "status" != 'ACTIVE'"#,
+    )
+    .fetch_all(&state.db)
+    .await
+    else {
+        return;
+    };
+
+    for mid in evicted_ids {
+        let hashes = collect_cleared_image_hashes(state, mid).await;
+        let _ = sqlx::query(r#"DELETE FROM "Fod" WHERE "missionId" = $1"#)
+            .bind(mid)
+            .execute(&state.db)
+            .await;
+        let _ = sqlx::query(r#"DELETE FROM "FodGroup" WHERE "missionId" = $1"#)
+            .bind(mid)
+            .execute(&state.db)
+            .await;
+        let _ = sqlx::query(r#"DELETE FROM "ClearedFod" WHERE "missionId" = $1"#)
+            .bind(mid)
+            .execute(&state.db)
+            .await;
+        let image_dir = std::path::Path::new("fod-images/mission").join(mid.to_string());
+        if image_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(&image_dir).await;
+        }
+        let _ = cleanup_unreferenced_cleared_images(state, hashes).await;
+    }
 }
 
 pub fn spawn_desktop_auto_storage_daemon(state: AppState) {

@@ -20,8 +20,8 @@ pub struct AppState {
     pub health: Arc<RwLock<SystemHealthStat>>,
     /// Tauri AppHandle used to emit IPC events to the frontend window.
     pub app_handle: Arc<OnceLock<AppHandle>>,
-    /// Active `retrive-data` IPC subscriptions keyed by subscription ID.
-    pub retrive_subs: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    /// Active `retrive-data` IPC subscriptions keyed by subscription ID: `(mission_id, task_handle)`.
+    pub retrive_subs: Arc<Mutex<HashMap<String, (Option<i64>, JoinHandle<()>)>>>,
     /// Shared ESP32 magnetometer calibration, port ownership & smoothing control.
     pub mag_control: Arc<crate::magnetometer_reader::MagnetometerControl>,
     /// Random boot token exposed via /healthz.
