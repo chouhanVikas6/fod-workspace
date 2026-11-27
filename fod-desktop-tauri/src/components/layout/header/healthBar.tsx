@@ -508,25 +508,6 @@ const HealthBar = () => {
                   : "—"}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-[#8C939C]">HDOP:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">
-                {(RtkData?.data as any)?.hdop ?? "—"}
-              </span>
-            </div>
-            {(RtkData?.data as any)?.source && (
-              <div className="flex justify-between gap-3">
-                <span className="text-slate-500 dark:text-[#8C939C]">Source:</span>
-                <span className="font-mono text-slate-700 dark:text-slate-300 truncate max-w-[160px]">
-                  {(RtkData.data as any).source}
-                </span>
-              </div>
-            )}
-            {(RtkData?.data as any)?.error && (
-              <div className="pt-1 text-[11px] text-rose-500 dark:text-rose-400 break-words">
-                {(RtkData.data as any).error}
-              </div>
-            )}
           </div>
         </div>
       )}

@@ -65,6 +65,7 @@ export function useImageZoomPan({
   maxZoom = MAX_ZOOM,
 }: UseImageZoomPanOptions) {
   const [transform, setTransform] = useState<ZoomTransform>({ zoom: 1, x: 0, y: 0 });
+  const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [animateTransition, setAnimateTransition] = useState(false);
 
@@ -176,6 +177,7 @@ export function useImageZoomPan({
       dragRef.current = null;
       didPinchRef.current = false;
       setIsDragging(false);
+      setSwipeOffsetX(0);
       commitTransform({ zoom: 1, x: 0, y: 0 }, animate);
     },
     [commitTransform],
@@ -266,6 +268,7 @@ export function useImageZoomPan({
     } else if (activePointersRef.current.size >= 2) {
       didPinchRef.current = true;
       setIsDragging(true);
+      setSwipeOffsetX(0);
       setAnimateTransition(false);
       pinchRef.current = getTwoPointerMetrics(activePointersRef.current);
     }
@@ -314,6 +317,15 @@ export function useImageZoomPan({
           const clamped = clampPan(cur.x + dx, cur.y + dy, cur.zoom, width, height);
           setIsDragging(true);
           commitTransform({ zoom: cur.zoom, x: clamped.x, y: clamped.y }, false);
+        } else {
+          const totalDx = e.clientX - drag.startX;
+          const totalDy = e.clientY - drag.startY;
+          if (Math.abs(totalDx) > 4 && Math.abs(totalDx) > Math.abs(totalDy)) {
+            setAnimateTransition(false);
+            setIsDragging(true);
+            const damped = Math.max(-90, Math.min(90, totalDx * 0.45));
+            setSwipeOffsetX(damped);
+          }
         }
       }
     },
@@ -365,9 +377,13 @@ export function useImageZoomPan({
           const totalDx = e.clientX - drag.startX;
           const totalDy = e.clientY - drag.startY;
           if (Math.abs(totalDx) >= 35 && Math.abs(totalDx) > Math.abs(totalDy)) {
+            setAnimateTransition(false);
+            setSwipeOffsetX(0);
             onSwipeFrameRef.current?.(totalDx < 0 ? 1 : -1);
             return;
           }
+          setAnimateTransition(true);
+          setSwipeOffsetX(0);
         }
 
         if (!drag.moved) {
@@ -407,6 +423,7 @@ export function useImageZoomPan({
     viewportRef,
     zoom: transform.zoom,
     pan: { x: transform.x, y: transform.y },
+    swipeOffsetX,
     isDragging,
     animateTransition,
     zoomIn,

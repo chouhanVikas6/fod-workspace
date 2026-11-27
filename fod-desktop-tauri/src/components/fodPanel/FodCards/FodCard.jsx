@@ -236,11 +236,11 @@ const Fodcard = ({
 
       {/* Clickable Card Body */}
       <div
-        className="w-full flex-1 flex flex-col cursor-pointer select-none"
+        className="w-full flex-1 min-h-0 flex flex-col cursor-pointer select-none"
         onClick={onCardClick}
       >
         {/* Image Preview with overlaid FOD number (top-left) and Map button (top-right) */}
-        <div className="relative h-[98px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mt-0.5 mb-2 flex items-center justify-center">
+        <div className="relative flex-1 min-h-[120px] w-full rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-700/50 group mt-0.5 mb-2 flex items-center justify-center">
           <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold tracking-wide shadow-xs pointer-events-none">
             FOD #{fod.groupId || fod.id}
           </span>
@@ -266,7 +266,7 @@ const Fodcard = ({
               alt="Fod Image"
               className="h-full w-full object-cover object-center group-hover:scale-105 transition-all duration-300"
               width={220}
-              height={96}
+              height={130}
               loading="lazy"
               onError={() => setImgError(true)}
             />
@@ -278,7 +278,7 @@ const Fodcard = ({
         </div>
 
         {/* Metadata */}
-        <div className="w-full flex flex-col gap-0.5 text-[11px] mb-2">
+        <div className="w-full shrink-0 flex flex-col gap-0.5 text-[11px] mb-2">
           <div className="flex justify-between items-center">
             <span className="text-[#64748B] dark:text-[#7E8691] font-medium">
               Type
@@ -298,16 +298,6 @@ const Fodcard = ({
               {fod.size
                 ? `${Math.round(Number(fod.size))} mm`
                 : Fod_Size(fod)}
-            </span>
-          </div>
-
-          <div className="flex justify-between items-center">
-            <span className="text-[#64748B] dark:text-[#7E8691] font-medium">
-              Location
-            </span>
-
-            <span className="text-[#1E293B] dark:text-slate-100 font-semibold">
-              {getLocationDisplay()}
             </span>
           </div>
         </div>

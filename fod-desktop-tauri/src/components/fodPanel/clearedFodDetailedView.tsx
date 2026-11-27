@@ -25,6 +25,33 @@ import { RxCross1 } from "react-icons/rx";
 import { config } from "@/config/clientConfig";
 
 /* ======================================================
+   CLEARANCE OUTCOME HELPER
+====================================================== */
+
+function getClearanceOutcome(fod: any): { label: string; badgeClass: string } | null {
+  const raw = fod?.collectorResponse?.status ?? fod?.collectorResponse?.FodStatus;
+  if (raw === "found" || raw === 1 || raw === "1") {
+    return {
+      label: "FOD Found",
+      badgeClass: "bg-blue-100 dark:bg-[#017ED7]/20 text-blue-700 dark:text-[#4C9FE8]",
+    };
+  }
+  if (raw === "not_found" || raw === 3 || raw === "3") {
+    return {
+      label: "Not Found",
+      badgeClass: "bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400",
+    };
+  }
+  if (raw === "false_positive" || raw === 2 || raw === "2") {
+    return {
+      label: "False Found",
+      badgeClass: "bg-slate-200 dark:bg-slate-600/30 text-slate-700 dark:text-slate-300",
+    };
+  }
+  return null;
+}
+
+/* ======================================================
    MAIN CLEARED FOD DETAIL VIEW
 ====================================================== */
 
@@ -67,6 +94,8 @@ const ClearedFodDetailView = () => {
 
   if (!isOpen || !fod) return null;
 
+  const outcome = getClearanceOutcome(fod);
+
   return (
     <div className="fixed inset-y-0 right-0 left-0 sm:left-[78px] top-[48px] z-[9999] flex items-center justify-center bg-slate-900/35 dark:bg-black/60 backdrop-blur-sm p-3 sm:p-5 select-none">
       <div
@@ -83,6 +112,14 @@ const ClearedFodDetailView = () => {
             <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-[#00B957]">
               CLEARED
             </span>
+
+            {outcome && (
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${outcome.badgeClass}`}
+              >
+                {outcome.label}
+              </span>
+            )}
           </div>
 
           <button
@@ -344,6 +381,8 @@ const ClearedFodData = () => {
     }
   };
 
+  const outcome = getClearanceOutcome(fod);
+
   const dataItems = [
     {
       label: "CAM ID",
@@ -352,6 +391,10 @@ const ClearedFodData = () => {
     {
       label: "FOD Status",
       value: (fod as any)?.groupStatus ?? "—",
+    },
+    {
+      label: "Clearance Result",
+      value: outcome?.label ?? "—",
     },
     {
       label: "Class",

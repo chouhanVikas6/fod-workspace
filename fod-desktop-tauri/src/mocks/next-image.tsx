@@ -36,6 +36,24 @@ export function clearMissionImageCache(missionId: number | string) {
   }
 }
 
+export function preloadFodImage(rawSrc: string | null | undefined) {
+  if (typeof rawSrc !== 'string' || !rawSrc) return;
+  if (!needsIpcResolution(rawSrc)) return;
+  if (imageCache.has(rawSrc) || missingImageCache.has(rawSrc)) return;
+
+  enqueueImageRequest(() => invoke<string | null>('get_fod_image', { path: rawSrc })).promise
+    .then((dataUrl) => {
+      if (dataUrl) {
+        cacheSet(rawSrc, dataUrl);
+      } else {
+        cacheSetMissing(rawSrc);
+      }
+    })
+    .catch(() => {
+      cacheSetMissing(rawSrc);
+    });
+}
+
 const MAX_CONCURRENT_REQUESTS = 6;
 let activeRequests = 0;
 

@@ -27,6 +27,23 @@ import { toast } from "react-toastify";
 import { config } from "@/config/clientConfig";
 import { calculateFodRisk, RiskLevel } from "@/config/riskConfig";
 import { MAX_ZOOM, MIN_ZOOM, useImageZoomPan } from "./useImageZoomPan";
+import { AnimatePresence, motion } from "framer-motion";
+import { preloadFodImage } from "@/mocks/next-image";
+
+const FRAME_SLIDE_VARIANTS = {
+  enter: (direction: number) => ({
+    x: direction === 0 ? 0 : direction > 0 ? "18%" : "-18%",
+    opacity: 0,
+  }),
+  center: {
+    x: 0,
+    opacity: 1,
+  },
+  exit: (direction: number) => ({
+    x: direction === 0 ? 0 : direction > 0 ? "-18%" : "18%",
+    opacity: 0,
+  }),
+};
 
 const EMPTY_FODS: any[] = [];
 const EMPTY_DOUBLE_ACCEPTED: Record<string, any> = {};
@@ -37,11 +54,14 @@ const DetailedView = () => {
 
   const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
   const [selectedFrame, setselectedFrame] = useState<any>(null);
+  const [slideDirection, setSlideDirection] = useState(0);
   const [fade, setfade] = useState(false);
 
   const detailedViewRef = useRef<HTMLDivElement | null>(null);
   const panelSwipeStartX = useRef<number | null>(null);
   const stepFrameRef = useRef<(delta: number) => void>(() => {});
+  const dotsRef = useRef<HTMLDivElement | null>(null);
+  const isScrubbingDots = useRef(false);
 
   const [isAcceptDisabled, setAcceptButtonStatus] = useState(false);
   const [isRejectDisabled, setRejectButtonStatus] = useState(false);
@@ -64,6 +84,7 @@ const DetailedView = () => {
     viewportRef: imageViewportRef,
     zoom,
     pan,
+    swipeOffsetX,
     isDragging: isPanning,
     animateTransition,
     zoomIn,
@@ -372,36 +393,67 @@ const DetailedView = () => {
     }, 200);
   };
 
+  const goToFrameIndex = (targetIdx: number) => {
+    if (!frames.length) return;
+    const clamped = Math.max(0, Math.min(frames.length - 1, targetIdx));
+    if (clamped === selectedFrameIdx && selectedFrame) return;
+    setSlideDirection(clamped > selectedFrameIdx ? 1 : clamped < selectedFrameIdx ? -1 : 0);
+    setSelectedFrameIdx(clamped);
+    setselectedFrame(frames[clamped]);
+    resetZoom(false);
+  };
+
   const stepFrame = (delta: number) => {
     if (!frames.length) return;
 
     setSelectedFrameIdx((prevIdx) => {
       const nextIdx = Math.max(0, Math.min(frames.length - 1, prevIdx + delta));
+      if (nextIdx === prevIdx) return prevIdx;
 
+      setSlideDirection(nextIdx > prevIdx ? 1 : -1);
       setselectedFrame(frames[nextIdx]);
       resetZoom(false);
-
-      const ele = document.getElementById(`selectedFrame${nextIdx}`);
-
-      if (ele) {
-        ele.scrollIntoView({
-          behavior: "smooth",
-          block: "nearest",
-          inline: "center",
-        });
-      }
 
       return nextIdx;
     });
   };
 
+  const scrubDotsAtClientX = (clientX: number) => {
+    const el = dotsRef.current;
+    if (!el || frames.length <= 1) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(0.9999, (clientX - rect.left) / rect.width));
+    const idx = Math.floor(ratio * frames.length);
+    if (idx !== selectedFrameIdx) {
+      goToFrameIndex(idx);
+    }
+  };
+
   stepFrameRef.current = stepFrame;
 
   useEffect(() => {
+    setSlideDirection(0);
     setSelectedFrameIdx(0);
     setselectedFrame(null);
     resetZoom(false);
   }, [fod?.id, (fod as any)?.groupId, isOpen, resetZoom]);
+
+  // Preload adjacent frames into memory cache so swiping left/right never flickers
+  useEffect(() => {
+    if (!isOpen || !frames.length || !missionState.missionNumber) return;
+    const groupFallback = (fod as any)?.groupId;
+    const offsets = [-1, 1, 2];
+    for (const offset of offsets) {
+      const candidate = frames[selectedFrameIdx + offset];
+      if (!candidate) continue;
+      const gid = candidate.groupId ?? groupFallback;
+      const fid = candidate.id ?? fod?.id;
+      if (gid != null && fid != null) {
+        preloadFodImage(`${config.ImagesBase}/${missionState.missionNumber}/${gid}/${fid}.jpg`);
+      }
+    }
+  }, [isOpen, frames, selectedFrameIdx, missionState.missionNumber, fod]);
 
   const handleAcceptRejectKeyDown = async (event: KeyboardEvent) => {
     if (event.key === "Escape" || event.keyCode === 27) {
@@ -463,25 +515,6 @@ const DetailedView = () => {
     };
   }, [isOpen, fod, isAcceptDisabled, isRejectDisabled, frames.length]);
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent | TouchEvent) {
-      if (
-        detailedViewRef.current &&
-        !detailedViewRef.current.contains(event.target as Node)
-      ) {
-        dispatch(removeDetailedViewFod());
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("touchstart", handleClickOutside);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
-    };
-  }, [dispatch]);
-
   const currentSize = Number(activeFrame?.size ?? (fod as any)?.size ?? 24);
   const currentClass = activeFrame?.class ?? (fod as any)?.class;
   const risk = getRiskBadge(calculateFodRisk(currentClass, currentSize));
@@ -531,7 +564,6 @@ const DetailedView = () => {
     <>
       {isOpen && (
         <div
-          onClick={() => dispatch(removeDetailedViewFod())}
           className="fixed top-[8%] left-[78px] right-0 bottom-0 bg-slate-900/25 dark:bg-[#181C23]/95 backdrop-blur-xs flex justify-center items-center z-40 select-none animate-fadeIn"
         >
           {fade && (
@@ -542,13 +574,6 @@ const DetailedView = () => {
 
           <div
             ref={detailedViewRef}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                dispatch(removeDetailedViewFod());
-              } else {
-                e.stopPropagation();
-              }
-            }}
             className="w-[96%] max-w-[1240px] h-[88%] max-h-[680px] min-w-0 flex items-center justify-center gap-2 sm:gap-3.5 relative"
           >
             {/* Previous FOD */}
@@ -637,83 +662,128 @@ const DetailedView = () => {
               >
                 {activeFrame && (
                   <div
-                    className={`w-full h-full flex items-center justify-center ${
+                    className={`w-full h-full flex items-center justify-center relative ${
                       animateTransition
                         ? "transition-transform duration-200 ease-out"
                         : ""
                     }`}
                     style={{
-                      transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                      transform: `translate3d(${pan.x + swipeOffsetX}px, ${pan.y}px, 0) scale(${zoom})`,
                       transformOrigin: "center center",
                       willChange: "transform",
                     }}
                   >
-                    <Image
-                      src={`${config.ImagesBase}/${missionState.missionNumber}/${activeFrame.groupId ?? (fod as any)?.groupId}/${activeFrame.id ?? fod?.id}.jpg`}
-                      className="w-full h-full object-cover object-center pointer-events-none"
-                      alt={`FOD #${fodNumber}`}
-                      width={800}
-                      height={600}
-                      draggable={false}
-                    />
+                    <AnimatePresence initial={false} custom={slideDirection}>
+                      <motion.div
+                        key={`${fodNumber}-${activeFrame.id ?? selectedFrameIdx}`}
+                        custom={slideDirection}
+                        variants={FRAME_SLIDE_VARIANTS}
+                        initial="enter"
+                        animate="center"
+                        exit="exit"
+                        transition={{ duration: 0.34, ease: [0.42, 0, 0.58, 1] }}
+                        className="absolute inset-0 w-full h-full flex items-center justify-center"
+                      >
+                        <Image
+                          src={`${config.ImagesBase}/${missionState.missionNumber}/${activeFrame.groupId ?? (fod as any)?.groupId}/${activeFrame.id ?? fod?.id}.jpg`}
+                          className="w-full h-full object-cover object-center pointer-events-none"
+                          alt={`FOD #${fodNumber}`}
+                          width={800}
+                          height={600}
+                          draggable={false}
+                        />
+                      </motion.div>
+                    </AnimatePresence>
                   </div>
                 )}
               </div>
 
-              {/* Thumbnail Carousel */}
-              {frames.length > 0 && (
-                <div className="absolute bottom-3 max-[1100px]:bottom-2 left-3 max-[1100px]:left-2 right-3 max-[1100px]:right-2 z-20 flex items-center justify-center gap-2">
+              {/* Left / Right Frame Navigation Arrows */}
+              {frames.length > 1 && (
+                <>
                   <button
                     type="button"
-                    onClick={() => stepFrame(-1)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      stepFrame(-1);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     disabled={selectedFrameIdx <= 0}
-                    className="w-8 h-8 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-white/90 dark:bg-[#161A21]/90 hover:bg-slate-100 dark:hover:bg-[#252C37] disabled:opacity-40 border border-slate-300 dark:border-[#3B4452] flex items-center justify-center text-slate-800 dark:text-white shrink-0 cursor-pointer transition-all active:scale-90 shadow-lg"
+                    aria-label="Previous frame"
+                    className="absolute left-3 max-[1100px]:left-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-black/45 hover:bg-black/65 disabled:opacity-30 text-white flex items-center justify-center transition-all cursor-pointer disabled:cursor-default backdrop-blur-[2px] shadow-md"
                   >
                     <FiChevronLeft className="w-4 h-4 stroke-[2.5]" />
                   </button>
 
-                  <div className="flex items-center gap-2.5 max-[1100px]:gap-1.5 overflow-x-auto py-1 px-1 max-w-full">
-                    {frames.map((frame: any, index: number) => {
-                      const isSelected = selectedFrame
-                        ? frame?.id === selectedFrame?.id
-                        : index === selectedFrameIdx;
-
-                      return (
-                        <div
-                          id={`selectedFrame${index}`}
-                          key={frame?.id ?? index}
-                          onClick={() => {
-                            setSelectedFrameIdx(index);
-                            setselectedFrame(frame);
-                            resetZoom(false);
-                          }}
-                          className={`w-[96px] h-[72px] max-[1100px]:w-[72px] max-[1100px]:h-[54px] rounded-md overflow-hidden shrink-0 cursor-pointer transition-all duration-150 bg-slate-200 dark:bg-slate-900 ${
-                            isSelected
-                              ? "border-2 border-[#4C9FE8] dark:border-white shadow-lg scale-[1.03] opacity-100"
-                              : "border border-slate-300 dark:border-[#495362] opacity-75 hover:opacity-100"
-                          }`}
-                        >
-                          <Image
-                            src={`${config.ImagesBase}/${missionState.missionNumber}/${frame.groupId ?? (fod as any)?.groupId}/${frame.id}.jpg`}
-                            className="w-full h-full object-cover object-center"
-                            alt="FOD frame thumbnail"
-                            width={96}
-                            height={72}
-                            draggable={false}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-
                   <button
                     type="button"
-                    onClick={() => stepFrame(1)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      stepFrame(1);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     disabled={selectedFrameIdx >= frames.length - 1}
-                    className="w-8 h-8 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-white/90 dark:bg-[#161A21]/90 hover:bg-slate-100 dark:hover:bg-[#252C37] disabled:opacity-40 border border-slate-300 dark:border-[#3B4452] flex items-center justify-center text-slate-800 dark:text-white shrink-0 cursor-pointer transition-all active:scale-90 shadow-lg"
+                    aria-label="Next frame"
+                    className="absolute right-3 max-[1100px]:right-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 max-[1100px]:w-7 max-[1100px]:h-7 rounded-full bg-black/45 hover:bg-black/65 disabled:opacity-30 text-white flex items-center justify-center transition-all cursor-pointer disabled:cursor-default backdrop-blur-[2px] shadow-md"
                   >
                     <FiChevronRight className="w-4 h-4 stroke-[2.5]" />
                   </button>
+                </>
+              )}
+
+              {/* Interactive Dot Slider Bar (click or drag across dots to scrub frames) */}
+              {frames.length > 1 && (
+                <div
+                  ref={dotsRef}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    isScrubbingDots.current = true;
+                    try {
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                    } catch {
+                      // ignore
+                    }
+                    scrubDotsAtClientX(e.clientX);
+                  }}
+                  onPointerMove={(e) => {
+                    if (!isScrubbingDots.current) return;
+                    e.stopPropagation();
+                    scrubDotsAtClientX(e.clientX);
+                  }}
+                  onPointerUp={(e) => {
+                    e.stopPropagation();
+                    isScrubbingDots.current = false;
+                    try {
+                      e.currentTarget.releasePointerCapture(e.pointerId);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onPointerCancel={() => {
+                    isScrubbingDots.current = false;
+                  }}
+                  className="absolute bottom-3.5 max-[1100px]:bottom-2.5 left-1/2 -translate-x-1/2 z-20 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full bg-black/35 backdrop-blur-xs cursor-ew-resize touch-none max-w-[90%] overflow-hidden"
+                  title="Click or drag across dots to switch frame"
+                >
+                  {frames.map((frame: any, index: number) => {
+                    const isSelected = index === selectedFrameIdx;
+                    return (
+                      <button
+                        key={frame?.id ?? index}
+                        type="button"
+                        aria-label={`Frame ${index + 1}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          goToFrameIndex(index);
+                        }}
+                        className={`rounded-full transition-all duration-150 shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)] cursor-pointer ${
+                          isSelected
+                            ? "w-2.5 h-2.5 bg-white scale-110"
+                            : "w-1.5 h-1.5 bg-white/45 hover:bg-white/80"
+                        }`}
+                      />
+                    );
+                  })}
                 </div>
               )}
             </div>

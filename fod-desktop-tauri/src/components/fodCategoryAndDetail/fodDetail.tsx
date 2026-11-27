@@ -30,6 +30,7 @@ const FodDetail = () => {
   const { fod, FodStatus, selectedFrame, origin } = useSelector(
     (state: RootState) => state.SelectedFod
   );
+  const missionState = useSelector((state: RootState) => state.MissionState);
 
   const safeFod = fod as any;
   const groupStatus = safeFod?.groupStatus ?? "";
@@ -177,7 +178,7 @@ const FodDetail = () => {
           {isFodFinalReviewOpen && (
             <div className="w-full grid grid-cols-3 gap-1.5">
               {[
-                { label: "FOD Accepted", value: 1 },
+                { label: "FOD Found", value: 1 },
                 { label: "Not Found", value: 3 },
                 { label: "False Found", value: 2 },
               ].map((opt) => (
@@ -234,14 +235,14 @@ const FodDetail = () => {
                       dispatch(
                         acceptFod({
                           ...safeFod,
-                          missionId: missionState.missionNumber,
+                          missionId: safeFod?.missionId ?? missionState.missionNumber,
                         }) as any
                       );
                       dispatch(close_SideBarFodDetail());
                     }}
                   >
                     <HiOutlineCheck className="h-4 w-4 shrink-0" />
-                    <span className="truncate">Confirm FOD</span>
+                    <span className="truncate">Accept FOD</span>
                   </button>
                 ) : (
                   <button
