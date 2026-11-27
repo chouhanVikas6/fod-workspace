@@ -98,5 +98,9 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    sourcemap: false,
+    minify: 'esbuild',
+    cssMinify: 'esbuild',
+    reportCompressedSize: false,
   },
 }));
