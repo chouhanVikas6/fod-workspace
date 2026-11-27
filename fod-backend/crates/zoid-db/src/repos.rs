@@ -467,6 +467,32 @@ impl Db {
             .map_err(|e| ZoidError::Database(e.to_string()))
     }
 
+    pub async fn get_fods_by_ids(&self, ids: &[Uuid]) -> Result<Vec<FodRow>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        sqlx::query_as::<_, FodRow>("SELECT * FROM fods WHERE id = ANY($1)")
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
+    pub async fn get_biggest_fod_for_group(
+        &self,
+        mission_id: i64,
+        group_id: i64,
+    ) -> Result<Option<FodRow>> {
+        sqlx::query_as::<_, FodRow>(
+            "SELECT * FROM fods WHERE mission_id = $1 AND group_id = $2 ORDER BY size DESC, captured_at ASC LIMIT 1",
+        )
+        .bind(mission_id)
+        .bind(group_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ZoidError::Database(e.to_string()))
+    }
+
     pub async fn get_fods_for_group(
         &self,
         mission_id: i64,

@@ -646,9 +646,16 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             .await
             .unwrap_or(0);
 
+    let local_fod_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "Fod" WHERE "missionId" = $1"#)
+            .bind(mission_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+
     let upstream_tag = current_upstream_tag(state).await;
     let cursor_key = (upstream_tag.clone(), mission_id);
-    let last_since_ms = if local_group_count == 0 {
+    let last_since_ms = if local_group_count == 0 || local_fod_count < local_group_count {
         0
     } else {
         mission_sync_cursors()
@@ -658,406 +665,280 @@ pub async fn sync_fod(state: &AppState, mission_id: i64) -> anyhow::Result<()> {
             .unwrap_or(0)
     };
 
-    // 1. Fresh data sync (when last_since_ms == 0)
+    // 1. Fresh/healing data sync (when last_since_ms == 0)
     // 2. Delta-only sync for updated data (when last_since_ms > 0, with a 2s safety overlap)
     let query_since_ms = if last_since_ms > 2000 {
-        last_since_ms - 2000
+        Some(last_since_ms - 2000)
     } else {
-        0
-    };
-
-    let body = if query_since_ms > 0 {
-        json!({ "missionId": mission_id, "updatedSinceMs": query_since_ms })
-    } else {
-        let groups =
-            sqlx::query_as::<_, FodGroup>(r#"SELECT * FROM "FodGroup" WHERE "missionId" = $1"#)
-                .bind(mission_id)
-                .fetch_all(&state.db)
-                .await?;
-        let fod_list: Vec<Value> = groups
-            .iter()
-            .map(|g| {
-                json!({
-                    "groupId": g.group_id,
-                    "missionId": g.mission_id,
-                    "status": g.status,
-                    "updatedAt": iso(g.updated_at),
-                    "biggestFod": g.biggest_fod_id,
-                    "biggestFodSize": g.biggest_fod_size,
-                })
-            })
-            .collect();
-        json!({ "missionId": mission_id, "fodList": fod_list })
-    };
-
-    let Some((status, data)) =
-        car_call(state, reqwest::Method::POST, "/api/fod-group/sync/groups", Some(body)).await
-    else {
-        return Ok(());
-    };
-    if !is_2xx(status) {
-        return Ok(());
-    }
-    let Some(updated) = data.get("fodGroups").and_then(Value::as_array) else {
-        return Ok(());
+        None
     };
 
     let mut max_seen_updated_ms = last_since_ms;
-    let mut any_new_biggest_fod = local_group_count == 0;
+    let mut any_rows = false;
+    let mut completed = true;
+    let mut page = 1i32;
 
-    for g in updated {
-        let Some(gid) = g.get("groupId").and_then(Value::as_i64) else {
-            continue;
+    loop {
+        let Some(res) =
+            crate::services::fetch_groups_page(state, mission_id, page, 50, query_since_ms).await
+        else {
+            completed = false;
+            break;
         };
-        let gid = gid as i32;
-        let new_status = g.get("status").and_then(Value::as_str);
-        let biggest_fod = g.get("biggestFod").and_then(Value::as_str);
-        let biggest_fod_size = g.get("biggestFodSize").and_then(Value::as_f64).map(|s| s as i32);
 
-        let id = uuid::Uuid::new_v4().to_string();
-        let st = new_status.unwrap_or("NEW");
-        let now = crate::services::now_naive();
-        let created = g
-            .get("createdAt")
-            .and_then(crate::services::parse_js_date)
-            .unwrap_or(now);
-        let updated_at_dt = g
-            .get("updatedAt")
-            .and_then(crate::services::parse_js_date)
-            .unwrap_or(now);
-        let row_updated_ms = updated_at_dt.and_utc().timestamp_millis();
-        if row_updated_ms > max_seen_updated_ms {
-            max_seen_updated_ms = row_updated_ms;
+        let total_pages = res.pagination.as_ref().map(|p| p.total_pages).unwrap_or(1);
+        let len = res.groups.len();
+        if len > 0 {
+            any_rows = true;
         }
 
-        let group_mission_id = g.get("missionId").and_then(Value::as_i64).unwrap_or(mission_id);
-        let incoming_ver = g.get("version").and_then(Value::as_i64).unwrap_or(0);
-        let incoming_vv = parse_vv_json(g.get("versionVector"));
-        let incoming_vv_str = serde_json::to_string(&incoming_vv).unwrap_or_else(|_| "{}".to_string());
-        let incoming_decided_at = g.get("decidedAtMs").and_then(Value::as_i64).unwrap_or(0);
-        let incoming_updated_by = g.get("updatedBy").and_then(Value::as_str).unwrap_or("");
-
-        let local: Option<FodGroup> = match sqlx::query_as::<_, FodGroup>(
-            r#"SELECT * FROM "FodGroup" WHERE "groupId" = $1 AND "missionId" = $2"#,
-        )
-        .bind(gid)
-        .bind(group_mission_id)
-        .fetch_optional(&state.db)
-        .await
-        {
-            Ok(opt) => opt,
-            Err(e) => {
-                tracing::warn!("sync_fod check local group error: {e}");
-                None
+        for g in res.groups {
+            // Persist primary FOD metadata + JPEG frame FIRST so FodGroup is never visible without its Fod + frame.
+            if let Some(ref pf) = g.primary_fod {
+                crate::services::persist_primary_fod(state, pf).await;
             }
-        };
 
-        let mut should_emit = false;
-        match local {
-            None => {
-                let insert_res = sqlx::query(
-                    r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","versionVector","decidedAtMs","updatedBy","biggestFodId","biggestFodSize","createdAt","updatedAt")
-                       VALUES ($1,$2,$3,false,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
-                )
-                .bind(id)
-                .bind(gid)
-                .bind(group_mission_id)
-                .bind(st)
-                .bind(incoming_ver)
-                .bind(&incoming_vv_str)
-                .bind(incoming_decided_at)
-                .bind(incoming_updated_by)
-                .bind(biggest_fod)
-                .bind(biggest_fod_size)
-                .bind(created)
-                .bind(now)
-                .execute(&state.db)
-                .await;
+            let gid = g.group_id as i32;
+            let st = crate::services::proto_group_status_str(g.status);
+            let biggest_fod = g.biggest_fod.as_deref();
+            let biggest_fod_size = g.biggest_fod_size.map(|s| s as i32);
 
-                if let Err(e) = insert_res {
-                    tracing::warn!("sync_fod insert FodGroup {gid} error: {e}");
-                } else {
-                    should_emit = true;
-                    if biggest_fod.is_some() {
-                        any_new_biggest_fod = true;
-                    }
-                }
+            let id = uuid::Uuid::new_v4().to_string();
+            let now = crate::services::now_naive();
+            let created = chrono::DateTime::from_timestamp_millis(g.created_at)
+                .map(|dt| dt.naive_utc())
+                .unwrap_or(now);
+            let row_updated_ms = g.updated_at;
+            if row_updated_ms > max_seen_updated_ms {
+                max_seen_updated_ms = row_updated_ms;
             }
-            Some(local_g) => {
-                let local_ver = local_g.version.unwrap_or(0);
-                let local_vv = parse_vv_str(local_g.version_vector.as_deref());
-                let local_decided_at = local_g.decided_at_ms.unwrap_or(0);
-                let local_updated_by = local_g.updated_by.as_deref().unwrap_or("");
-                let local_dirty = local_g.dirty.unwrap_or(false);
-                let local_status_str = local_g.status.to_string();
-                let incoming_is_cleared = st == "CLEARED";
 
-                if biggest_fod.is_some() && local_g.biggest_fod_id.as_deref() != biggest_fod {
-                    any_new_biggest_fod = true;
+            let group_mission_id = g.mission_id;
+            let incoming_ver = g.version;
+            let incoming_vv: std::collections::BTreeMap<String, i64> = g
+                .version_vector
+                .into_iter()
+                .filter(|(_, v)| *v > 0)
+                .collect();
+            let incoming_vv_str =
+                serde_json::to_string(&incoming_vv).unwrap_or_else(|_| "{}".to_string());
+            let incoming_decided_at = g.decided_at_ms;
+            let incoming_updated_by = g.updated_by.as_str();
+
+            let local: Option<FodGroup> = match sqlx::query_as::<_, FodGroup>(
+                r#"SELECT * FROM "FodGroup" WHERE "groupId" = $1 AND "missionId" = $2"#,
+            )
+            .bind(gid)
+            .bind(group_mission_id)
+            .fetch_optional(&state.db)
+            .await
+            {
+                Ok(opt) => opt,
+                Err(e) => {
+                    tracing::warn!("sync_fod check local group error: {e}");
+                    None
                 }
+            };
 
-                if incoming_is_cleared {
-                    let _ = sqlx::query(
-                        r#"UPDATE "FodGroup"
-                           SET "status" = 'CLEARED',
-                               "version" = $1,
-                               "versionVector" = $5,
-                               "decidedAtMs" = $6,
-                               "updatedBy" = $7,
-                               "dirty" = false,
-                               "updatedAt" = $4
-                           WHERE "groupId" = $2 AND "missionId" = $3"#,
+            let mut should_emit = false;
+            match local {
+                None => {
+                    let insert_res = sqlx::query(
+                        r#"INSERT INTO "FodGroup" ("id","groupId","missionId","dirty","status","version","versionVector","decidedAtMs","updatedBy","biggestFodId","biggestFodSize","createdAt","updatedAt")
+                           VALUES ($1,$2,$3,false,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
                     )
-                    .bind(incoming_ver)
+                    .bind(id)
                     .bind(gid)
                     .bind(group_mission_id)
-                    .bind(now)
+                    .bind(st)
+                    .bind(incoming_ver)
                     .bind(&incoming_vv_str)
                     .bind(incoming_decided_at)
                     .bind(incoming_updated_by)
+                    .bind(biggest_fod)
+                    .bind(biggest_fod_size)
+                    .bind(created)
+                    .bind(now)
                     .execute(&state.db)
                     .await;
 
-                    if local_g.status != FodGroupStatus::Cleared {
+                    if let Err(e) = insert_res {
+                        tracing::warn!("sync_fod insert FodGroup {gid} error: {e}");
+                    } else {
                         should_emit = true;
                     }
-                } else if local_g.status == FodGroupStatus::Cleared {
-                    // CLEARED is terminal; never downgrade a locally CLEARED group.
-                    if !local_dirty {
+                }
+                Some(local_g) => {
+                    let local_ver = local_g.version.unwrap_or(0);
+                    let local_vv = parse_vv_str(local_g.version_vector.as_deref());
+                    let local_decided_at = local_g.decided_at_ms.unwrap_or(0);
+                    let local_updated_by = local_g.updated_by.as_deref().unwrap_or("");
+                    let local_dirty = local_g.dirty.unwrap_or(false);
+                    let local_status_str = local_g.status.to_string();
+                    let incoming_is_cleared = st == "CLEARED";
+
+                    if incoming_is_cleared {
                         let _ = sqlx::query(
-                            r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2"#,
+                            r#"UPDATE "FodGroup"
+                               SET "status" = 'CLEARED',
+                                   "version" = $1,
+                                   "versionVector" = $5,
+                                   "decidedAtMs" = $6,
+                                   "updatedBy" = $7,
+                                   "dirty" = false,
+                                   "updatedAt" = $4
+                               WHERE "groupId" = $2 AND "missionId" = $3"#,
                         )
-                        .bind(gid)
-                        .bind(group_mission_id)
-                        .bind(now)
-                        .execute(&state.db)
-                        .await;
-                    }
-                } else if local_dirty {
-                    // Local operator decision in progress; retain local until resolved with upstream.
-                } else {
-                    let vv_order = if !incoming_vv.is_empty() || !local_vv.is_empty() {
-                        Some(compare_vv(&incoming_vv, &local_vv))
-                    } else {
-                        None
-                    };
-
-                    let take_incoming = match vv_order {
-                        Some(VvOrder::Greater) => true,
-                        Some(VvOrder::Less) => false,
-                        Some(VvOrder::Equal) => {
-                            local_status_str != st
-                                && incoming_wins_concurrent(
-                                    st,
-                                    incoming_decided_at,
-                                    incoming_updated_by,
-                                    &local_status_str,
-                                    local_decided_at,
-                                    local_updated_by,
-                                )
-                        }
-                        Some(VvOrder::Concurrent) => incoming_wins_concurrent(
-                            st,
-                            incoming_decided_at,
-                            incoming_updated_by,
-                            &local_status_str,
-                            local_decided_at,
-                            local_updated_by,
-                        ),
-                        None => {
-                            incoming_ver > local_ver
-                                || (incoming_ver == local_ver && local_status_str != st)
-                        }
-                    };
-
-                    let local_ahead = matches!(vv_order, Some(VvOrder::Less))
-                        || ( matches!(vv_order, Some(VvOrder::Concurrent)) && !take_incoming )
-                        || ( vv_order.is_none() && local_ver > incoming_ver );
-
-                    let biggest_changed =
-                        biggest_fod.is_some() && local_g.biggest_fod_id.as_deref() != biggest_fod;
-
-                    if take_incoming || (biggest_changed && !local_ahead) {
-                        let final_st = if take_incoming { st } else { &local_status_str };
-                        let status_changed = local_status_str != final_st;
-                        let mark_dirty_for_merge = matches!(vv_order, Some(VvOrder::Concurrent));
-                        let _ = sqlx::query(
-                            r#"UPDATE "FodGroup" SET
-                                "status" = $1,
-                                "version" = $2,
-                                "versionVector" = $8,
-                                "decidedAtMs" = $9,
-                                "updatedBy" = $10,
-                                "dirty" = $11,
-                                "biggestFodId" = COALESCE($3, "FodGroup"."biggestFodId"),
-                                "biggestFodSize" = COALESCE($4, "FodGroup"."biggestFodSize"),
-                                "updatedAt" = $7
-                            WHERE "groupId" = $5 AND "missionId" = $6"#,
-                        )
-                        .bind(final_st)
                         .bind(incoming_ver)
-                        .bind(biggest_fod)
-                        .bind(biggest_fod_size)
                         .bind(gid)
                         .bind(group_mission_id)
                         .bind(now)
                         .bind(&incoming_vv_str)
                         .bind(incoming_decided_at)
                         .bind(incoming_updated_by)
-                        .bind(mark_dirty_for_merge)
                         .execute(&state.db)
                         .await;
 
-                        if status_changed {
+                        if local_g.status != FodGroupStatus::Cleared {
                             should_emit = true;
                         }
-                    } else if local_ahead {
-                        // This desktop carries a newer or winning concurrent decision from another node
-                        // (e.g. Car -> Desktop -> ATC or ATC -> Desktop -> Car); mark dirty so resolveFodGroup pushes it!
-                        let _ = sqlx::query(
-                            r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2 AND COALESCE("dirty", false) = false"#,
-                        )
-                        .bind(gid)
-                        .bind(group_mission_id)
-                        .bind(now)
-                        .execute(&state.db)
-                        .await;
+                    } else if local_g.status == FodGroupStatus::Cleared {
+                        // CLEARED is terminal; never downgrade a locally CLEARED group.
+                        if !local_dirty {
+                            let _ = sqlx::query(
+                                r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2"#,
+                            )
+                            .bind(gid)
+                            .bind(group_mission_id)
+                            .bind(now)
+                            .execute(&state.db)
+                            .await;
+                        }
+                    } else if local_dirty {
+                        // Local operator decision in progress; retain local until resolved with upstream.
+                    } else {
+                        let vv_order = if !incoming_vv.is_empty() || !local_vv.is_empty() {
+                            Some(compare_vv(&incoming_vv, &local_vv))
+                        } else {
+                            None
+                        };
+
+                        let take_incoming = match vv_order {
+                            Some(VvOrder::Greater) => true,
+                            Some(VvOrder::Less) => false,
+                            Some(VvOrder::Equal) => {
+                                local_status_str != st
+                                    && incoming_wins_concurrent(
+                                        st,
+                                        incoming_decided_at,
+                                        incoming_updated_by,
+                                        &local_status_str,
+                                        local_decided_at,
+                                        local_updated_by,
+                                    )
+                            }
+                            Some(VvOrder::Concurrent) => incoming_wins_concurrent(
+                                st,
+                                incoming_decided_at,
+                                incoming_updated_by,
+                                &local_status_str,
+                                local_decided_at,
+                                local_updated_by,
+                            ),
+                            None => {
+                                incoming_ver > local_ver
+                                    || (incoming_ver == local_ver && local_status_str != st)
+                            }
+                        };
+
+                        let local_ahead = matches!(vv_order, Some(VvOrder::Less))
+                            || (matches!(vv_order, Some(VvOrder::Concurrent)) && !take_incoming)
+                            || (vv_order.is_none() && local_ver > incoming_ver);
+
+                        let biggest_changed =
+                            biggest_fod.is_some() && local_g.biggest_fod_id.as_deref() != biggest_fod;
+
+                        if take_incoming || (biggest_changed && !local_ahead) {
+                            let final_st = if take_incoming { st } else { &local_status_str };
+                            let status_changed = local_status_str != final_st;
+                            let mark_dirty_for_merge = matches!(vv_order, Some(VvOrder::Concurrent));
+                            let _ = sqlx::query(
+                                r#"UPDATE "FodGroup" SET
+                                    "status" = $1,
+                                    "version" = $2,
+                                    "versionVector" = $8,
+                                    "decidedAtMs" = $9,
+                                    "updatedBy" = $10,
+                                    "dirty" = $11,
+                                    "biggestFodId" = COALESCE($3, "FodGroup"."biggestFodId"),
+                                    "biggestFodSize" = COALESCE($4, "FodGroup"."biggestFodSize"),
+                                    "updatedAt" = $7
+                                WHERE "groupId" = $5 AND "missionId" = $6"#,
+                            )
+                            .bind(final_st)
+                            .bind(incoming_ver)
+                            .bind(biggest_fod)
+                            .bind(biggest_fod_size)
+                            .bind(gid)
+                            .bind(group_mission_id)
+                            .bind(now)
+                            .bind(&incoming_vv_str)
+                            .bind(incoming_decided_at)
+                            .bind(incoming_updated_by)
+                            .bind(mark_dirty_for_merge)
+                            .execute(&state.db)
+                            .await;
+
+                            if status_changed {
+                                should_emit = true;
+                            }
+                        } else if local_ahead {
+                            // This desktop carries a newer or winning concurrent decision from another node
+                            // (e.g. Car -> Desktop -> ATC or ATC -> Desktop -> Car); mark dirty so resolveFodGroup pushes it!
+                            let _ = sqlx::query(
+                                r#"UPDATE "FodGroup" SET "dirty" = true, "updatedAt" = $3 WHERE "groupId" = $1 AND "missionId" = $2 AND COALESCE("dirty", false) = false"#,
+                            )
+                            .bind(gid)
+                            .bind(group_mission_id)
+                            .bind(now)
+                            .execute(&state.db)
+                            .await;
+                        }
                     }
                 }
             }
-        }
 
-        // primaryPacket → createFodBatch (R1's fod-ingest + imagewriter; the
-        // fn ignores its missionId arg for parity — each fod carries its own).
-        if let Some(packet) = g.get("primaryPacket").filter(|v| !v.is_null()) {
-            crate::services::create_fod_batch(state, vec![packet.clone()], group_mission_id.into())
-                .await;
-        }
-
-        if let Some(cf) = g.get("clearedFod")
-            && cf.is_object()
-            && let Err(e) = upsert_cleared_fod(state, cf).await
-        {
-            tracing::warn!("clearedFod upsert (syncFod) failed: {e}");
-        }
-
-        if should_emit {
-            state.emit_gui(
-                "update",
-                &json!({
-                    "type": "fodGroup",
-                    "message": {
-                        "groupId": gid,
-                        "missionId": group_mission_id,
-                        "status": st
-                    }
-                }),
-            );
-        }
-    }
-
-    if max_seen_updated_ms > 0 {
-        if let Ok(mut map) = mission_sync_cursors().lock() {
-            map.insert(cursor_key, max_seen_updated_ms);
-        }
-    } else if last_since_ms == 0 && !updated.is_empty() {
-        if let Ok(mut map) = mission_sync_cursors().lock() {
-            map.insert(cursor_key, chrono::Utc::now().timestamp_millis());
-        }
-    }
-
-    // Only fetch all biggest FODs when fresh data or new biggest_fod references arrive,
-    // avoiding re-downloading thousands of FODs + JPEGs every second.
-    if !any_new_biggest_fod {
-        return Ok(());
-    }
-
-    // Sync biggest FOD entities from Car/ATC backend into Fod table
-    let biggest_fods = crate::services::fetch_biggest_fods_for_mission(state, mission_id).await;
-    let mut missing_images: Vec<(String, String, String, String)> = Vec::new();
-    for f in biggest_fods {
-        let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
-        let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
-        let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
-        let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
-        let ts = chrono::DateTime::from_timestamp_millis(f.timestamp)
-            .map(|dt| dt.naive_utc())
-            .unwrap_or_else(crate::services::now_naive);
-        let created = chrono::DateTime::from_timestamp_millis(f.created_at)
-            .map(|dt| dt.naive_utc())
-            .unwrap_or(ts);
-
-        let now = crate::services::now_naive();
-        let res = sqlx::query(
-            r#"INSERT INTO "Fod" (
-                "id", "missionId", "groupId", "sysid", "location", "confidence",
-                "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false)
-            ON CONFLICT ("id") DO UPDATE SET
-                "location" = EXCLUDED."location",
-                "confidence" = EXCLUDED."confidence",
-                "class" = EXCLUDED."class",
-                "velocity" = EXCLUDED."velocity",
-                "size" = EXCLUDED."size",
-                "updatedAt" = $12"#,
-        )
-        .bind(&f.id)
-        .bind(f.mission_id)
-        .bind(f.group_id as i32)
-        .bind(if f.sysid.is_empty() { None } else { Some(&f.sysid) })
-        .bind(loc)
-        .bind(f.confidence)
-        .bind(if f.class_name.is_empty() { None } else { Some(&f.class_name) })
-        .bind(f.velocity)
-        .bind(f.size)
-        .bind(ts)
-        .bind(created)
-        .bind(now)
-        .execute(&state.db)
-        .await;
-
-        if let Err(e) = res {
-            tracing::warn!("Failed to upsert FOD {}: {e}", f.id);
-        } else {
-            let _ = sqlx::query(
-                r#"UPDATE "FodGroup" SET "biggestFodId" = $1, "biggestFodSize" = $2, "updatedAt" = $5
-                   WHERE "groupId" = $3 AND "missionId" = $4
-                     AND ("biggestFodId" IS NOT $1 OR "biggestFodSize" IS NOT $2)"#,
-            )
-            .bind(&f.id)
-            .bind(f.size as i32)
-            .bind(f.group_id as i32)
-            .bind(f.mission_id)
-            .bind(now)
-            .execute(&state.db)
-            .await;
-        }
-
-        // Save bundled frame JPEG immediately, or queue missing frame image for background fetch (Car -> ATC fallback)
-        let m_str = f.mission_id.to_string();
-        let g_str = f.group_id.to_string();
-        if !f.frame_jpeg.is_empty() {
-            let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await;
-        } else if !f.image_sha256.is_empty() && missing_images.len() < 12 {
-            let img_file = std::path::Path::new("fod-images/mission")
-                .join(&m_str)
-                .join(&g_str)
-                .join(format!("{}.jpg", f.id));
-            if !img_file.exists() {
-                missing_images.push((m_str, g_str, f.id, f.image_sha256));
+            if should_emit {
+                state.emit_gui(
+                    "update",
+                    &json!({
+                        "type": "fodGroup",
+                        "message": {
+                            "groupId": gid,
+                            "missionId": group_mission_id,
+                            "status": st
+                        }
+                    }),
+                );
             }
         }
+
+        if page >= total_pages || len == 0 || page >= 500 {
+            break;
+        }
+        page += 1;
     }
 
-    if !missing_images.is_empty() {
-        let st = state.clone();
-        tokio::spawn(async move {
-            for (m_str, g_str, fod_id, sha) in missing_images {
-                if let Some(bytes) = crate::services::fetch_image_from_car(&st, &sha, false).await {
-                    let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &fod_id, &bytes).await;
-                }
+    if completed {
+        if max_seen_updated_ms > 0 {
+            if let Ok(mut map) = mission_sync_cursors().lock() {
+                map.insert(cursor_key, max_seen_updated_ms);
             }
-        });
+        } else if last_since_ms == 0 && any_rows {
+            if let Ok(mut map) = mission_sync_cursors().lock() {
+                map.insert(cursor_key, chrono::Utc::now().timestamp_millis());
+            }
+        }
     }
 
     Ok(())
@@ -1475,6 +1356,9 @@ pub async fn purge_local_mission_data(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&state.db)
+        .await;
 
     clear_viewed_mission_if(mission_id);
     clear_mission_sync_cursor(mission_id);
@@ -1545,6 +1429,9 @@ pub async fn drop_cold_stored_mission_locally(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&state.db)
+        .await;
 
     clear_viewed_mission_if(mission_id);
     clear_mission_sync_cursor(mission_id);

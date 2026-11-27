@@ -3,7 +3,7 @@ import { config } from "@/config/clientConfig";
 import { base64decodedFrame } from "@/utils/DecodeFrames";
 
 interface Fod {
-  id?:number;
+  id?: number;
   FodId: number;
   FodPoint: string;
   // Other fod properties
@@ -11,7 +11,7 @@ interface Fod {
   imgModal?: boolean; // Flag for image modal visibility
   groupStatus?: string;
   groupId: number;
-  sysid?:string;
+  sysid?: string;
 }
 
 interface FodQueue {
@@ -30,11 +30,11 @@ interface Filters {
 
 export interface FodStateType {
   filters: Filters;
-  fodMap:{
+  fodMap: {
     [key: number]: number;
   };
   fods: Array<Fod>;
-  doubleAccepted:{
+  doubleAccepted: {
     [key: number]: boolean;
   };
   fodsLoading: boolean;
@@ -44,12 +44,12 @@ export interface FodStateType {
 const { FodListsLimit } = config;
 
 const initialState: FodStateType = {
-  fodMap:{},
+  fodMap: {},
   filters: {
     sortby: 'latest',
     classes: ['Metallic', 'Rocks/Ashpalt', 'Organic', 'Non-Metallic'],
     size: { ...(config.filters.size) },
-    groupStatus:'NEW'
+    groupStatus: 'NEW'
   },
   fods: [],
   doubleAccepted: {},
@@ -63,10 +63,10 @@ function normalizeFodItem(item: any) {
     typeof item._ts === 'number'
       ? item._ts
       : typeof item.timestamp === 'number'
-      ? item.timestamp
-      : item.timestamp
-      ? Date.parse(item.timestamp) || 0
-      : 0;
+        ? item.timestamp
+        : item.timestamp
+          ? Date.parse(item.timestamp) || 0
+          : 0;
   let parsedLoc = item._loc;
   if (parsedLoc === undefined && item.location) {
     if (typeof item.location === 'object') {
@@ -79,13 +79,37 @@ function normalizeFodItem(item: any) {
       }
     }
   }
-  return {
-    ...item,
-    groupId: Number(item.groupId),
-    groupStatus: item.groupStatus || item.status || 'NEW',
+  const groupId = Number(item.groupId);
+  const groupStatus = item.groupStatus || item.status || 'NEW';
+
+  // Keep Redux items lightweight (group summary fields only; full detection
+  // details are fetched on-demand when a card is opened, and thumbnails are
+  // resolved lazily via Tauri asset:// / bounded LRU cache).
+  const slim: any = {
+    id: item.id,
+    groupId,
+    groupStatus,
+    status: groupStatus,
+    size: item.size,
+    biggestSize: item.biggestSize,
+    class: item.class,
+    velocity: item.velocity,
+    sysid: item.sysid,
+    timestamp: item.timestamp,
+    location: parsedLoc ?? item.location ?? null,
     _ts: parsedTs,
     _loc: parsedLoc ?? null,
   };
+  if (item.grid !== undefined) slim.grid = item.grid;
+  if (item.imgModal !== undefined) slim.imgModal = item.imgModal;
+  if (item.FodId !== undefined) slim.FodId = item.FodId;
+  if (item.FodPoint !== undefined) slim.FodPoint = item.FodPoint;
+  if (item.imagePath) slim.imagePath = item.imagePath;
+  // Only retain inline base64 frame if there is no id/groupId to load from disk
+  if (item.frame && (!item.id || !Number.isFinite(groupId))) {
+    slim.frame = item.frame;
+  }
+  return slim;
 }
 
 const FodReducer = createSlice({
@@ -222,11 +246,11 @@ const FodReducer = createSlice({
       const { payload: data } = action;
       state.fods = [
         ...(data.alertQueueFods || []),
-        ...(data.clearenceQueueFods || []), 
+        ...(data.clearenceQueueFods || []),
         ...(data.rejectedFods || []),
         ...(data.clearedFods || [])
       ].slice(0, FodListsLimit).map(normalizeFodItem);
-      
+
       // Rebuild the fodMap
       const map: Record<number, number> = {};
       for (let i = 0; i < state.fods.length; i++) {
@@ -254,12 +278,12 @@ const FodReducer = createSlice({
       const { payload: classToRemove } = action;
       state.filters.classes = state.filters.classes.filter((item) => item !== classToRemove)
     },
-    setDashboardStatus:(state, action)=>{
+    setDashboardStatus: (state, action) => {
       const { payload } = action;
-      if(payload!='NEW' && payload!="ACCEPTED"){
-        state.filters.groupStatus='NEW';
-      }else{
-        state.filters.groupStatus=payload;
+      if (payload != 'NEW' && payload != "ACCEPTED") {
+        state.filters.groupStatus = 'NEW';
+      } else {
+        state.filters.groupStatus = payload;
       }
     },
     doubleAccept: (state, action) => {

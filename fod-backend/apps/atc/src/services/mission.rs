@@ -84,7 +84,8 @@ impl AtcMissionServiceImpl {
             return;
         };
 
-        let mut fg_client = FodGroupServiceClient::new(ch.clone());
+        let mut fg_client = FodGroupServiceClient::new(ch.clone())
+            .max_decoding_message_size(32 * 1024 * 1024);
         let mut fod_client = FodServiceClient::new(ch.clone())
             .max_decoding_message_size(32 * 1024 * 1024);
 
@@ -96,7 +97,7 @@ impl AtcMissionServiceImpl {
                     mission_id,
                     pagination: Some(proto_defination::common::PaginationRequest {
                         page,
-                        limit: 200,
+                        limit: 50,
                     }),
                     updated_since_ms: None,
                 }))
@@ -107,25 +108,19 @@ impl AtcMissionServiceImpl {
             let inner = resp.into_inner();
             let total_pages = inner.pagination.map(|p| p.total_pages).unwrap_or(1);
             for g in &inner.groups {
+                if let Some(ref pf) = g.primary_fod {
+                    if !pf.frame_jpeg.is_empty() {
+                        let _ = self.storage.save_frame(&pf.frame_jpeg).await;
+                    }
+                    let _ = self.db.upsert_replicated_fod(pf).await;
+                }
                 let _ = self.db.insert_replicated_group_if_absent(g, false).await;
                 group_ids.push(g.group_id);
             }
-            if page >= total_pages || inner.groups.is_empty() || page >= 100 {
+            if page >= total_pages || inner.groups.is_empty() || page >= 200 {
                 break;
             }
             page += 1;
-        }
-
-        if let Ok(resp) = fod_client
-            .get_biggest_fod_per_group(Request::new(GetBiggestFodRequest { mission_id }))
-            .await
-        {
-            for f in resp.into_inner().fods {
-                if !f.frame_jpeg.is_empty() {
-                    let _ = self.storage.save_frame(&f.frame_jpeg).await;
-                }
-                let _ = self.db.upsert_replicated_fod(&f).await;
-            }
         }
 
         for gid in group_ids {

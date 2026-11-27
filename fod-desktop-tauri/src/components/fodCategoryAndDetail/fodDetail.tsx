@@ -361,6 +361,7 @@ export const FodGrid = () => {
         {currentFrame ? (
           <Image
             src={`${config.ImagesBase}/${missionState.missionNumber}/${currentFrame.groupId}/${currentFrame.id}.jpg`}
+            localPath={currentFrame?.imagePath}
             className="w-full h-full object-cover object-center pointer-events-none"
             alt={`FOD frame ${activeIdx + 1}`}
             width={320}

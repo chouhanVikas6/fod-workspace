@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracker = Arc::new(Mutex::new(Tracker::new(0, 60_000, 5.0, 15)));
     let bite = Arc::new(BiteAggregator::new());
 
-    let (group_tx, _) = broadcast::channel(1000);
+    let (group_tx, _) = broadcast::channel(256);
     let (change_tx, _) = broadcast::channel(1000);
 
     // Instantiate Service Handlers
@@ -91,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     mission_ctrl_svc.start_timer_loop();
     let fod_group_svc = FodGroupServiceImpl::new(
         db.clone(),
+        storage.clone(),
         group_tx.clone(),
         change_tx.clone(),
         "car-primary".to_string(),
@@ -171,7 +172,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .max_encoding_message_size(32 * 1024 * 1024),
         )
         .add_service(MissionControlServiceServer::new(mission_ctrl_svc))
-        .add_service(FodGroupServiceServer::new(fod_group_svc))
+        .add_service(
+            FodGroupServiceServer::new(fod_group_svc)
+                .max_decoding_message_size(32 * 1024 * 1024)
+                .max_encoding_message_size(32 * 1024 * 1024),
+        )
         .add_service(
             FodServiceServer::new(fod_svc)
                 .max_decoding_message_size(32 * 1024 * 1024)
@@ -184,8 +189,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .add_service(
             ReplicationServiceServer::new(replication_svc)
-                .max_decoding_message_size(16 * 1024 * 1024)
-                .max_encoding_message_size(16 * 1024 * 1024),
+                .max_decoding_message_size(32 * 1024 * 1024)
+                .max_encoding_message_size(32 * 1024 * 1024),
         )
         .add_service(UserServiceServer::new(user_svc))
         .serve(addr);

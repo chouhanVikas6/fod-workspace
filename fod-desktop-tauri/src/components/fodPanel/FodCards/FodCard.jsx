@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { RxCross1 } from "react-icons/rx";
@@ -48,6 +48,10 @@ const Fodcard = ({
   const [fade, setFade] = useState(false);
   const [imgModal, setImageModal] = useState(false);
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [fod?.id, fod?.groupId, missionNumber]);
 
   const isFodFound = fod.groupStatus === "ACCEPTED";
 
@@ -262,6 +266,7 @@ const Fodcard = ({
           {!imgError ? (
             <Image
               src={`${config.ImagesBase}/${missionNumber}/${fod.groupId}/${fod.id}.jpg`}
+              localPath={fod.imagePath}
               draggable={false}
               alt="Fod Image"
               className="h-full w-full object-cover object-center group-hover:scale-105 transition-all duration-300"

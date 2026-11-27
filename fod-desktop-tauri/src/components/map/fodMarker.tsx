@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import mapboxgl from "mapbox-gl";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { RootState, AppDispatch } from "@/store";
 import { updateSelectedFod } from "@/store/actions/SelectedFod";
 import { setSideBarVisibility } from "@/store/slices/selectedFod-slice";
@@ -369,7 +369,8 @@ const FodMarkers = ({
         lat: loc.lat,
       });
 
-      const initialUrl = inlineFrame || (relPath ? thumbCache.get(relPath) : undefined);
+      const directAssetUrl = fod.imagePath ? convertFileSrc(fod.imagePath) : null;
+      const initialUrl = inlineFrame || directAssetUrl || (relPath ? thumbCache.get(relPath) : undefined);
       if (initialUrl) {
         img.src = initialUrl;
       } else if (relPath) {

@@ -197,8 +197,18 @@ async fn try_create_mission(s: &AppState, body: &Value) -> anyhow::Result<Missio
 
 // ---------------------------------------------------------------------------
 // GET /api/mission/stat — pages/api/mission/stat.ts
+// Supports optional pagination/filtering query params:
+//   limit, offset, sort ("newest" | "oldest"), dateFrom (YYYY-MM-DD),
+//   dateTo (YYYY-MM-DD), excludeEvicted ("1" | "true")
+// When `limit` is omitted, returns the legacy JSON array for full backwards
+// compatibility. When `limit` is supplied, returns:
+//   { items, total, totalUnfiltered, hasMore, activeMission }
 // ---------------------------------------------------------------------------
-async fn stat(method: Method, State(s): State<AppState>) -> Response {
+async fn stat(
+    method: Method,
+    State(s): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
     if method != Method::GET {
         return mna(&method, None);
     }
@@ -206,7 +216,50 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
     if let Err(e) = crate::scheduler::sync(&s, "missionList").await {
         tracing::error!("Error during syncing process: {e}");
     }
-    let sql = r#"
+
+    let limit_opt = q
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|v| v.clamp(1, 200));
+    let offset = q
+        .get("offset")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
+    let sort_asc = q.get("sort").map(|v| v.as_str()) == Some("oldest");
+    let exclude_evicted = matches!(
+        q.get("excludeEvicted").map(|v| v.as_str()),
+        Some("1") | Some("true")
+    );
+    let date_from = q
+        .get("dateFrom")
+        .map(|v| v.trim().to_string())
+        .filter(|v| v.len() == 10 && v.bytes().all(|b| b.is_ascii_digit() || b == b'-'));
+    let date_to = q
+        .get("dateTo")
+        .map(|v| v.trim().to_string())
+        .filter(|v| v.len() == 10 && v.bytes().all(|b| b.is_ascii_digit() || b == b'-'));
+
+    let mut where_clauses = vec![r#"COALESCE(m."storageTier", 'HOT') != 'COLD_STORED'"#.to_string()];
+    if exclude_evicted {
+        where_clauses.push(r#"COALESCE(m."localEvicted", 0) = 0"#.to_string());
+    }
+    if let Some(ref from) = date_from {
+        where_clauses.push(format!(r#"substr(m."createdAt", 1, 10) >= '{}'"#, from));
+    }
+    if let Some(ref to) = date_to {
+        where_clauses.push(format!(r#"substr(m."createdAt", 1, 10) <= '{}'"#, to));
+    }
+    let where_sql = where_clauses.join(" AND ");
+    let order_dir = if sort_asc { "ASC" } else { "DESC" };
+
+    let limit_clause = match limit_opt {
+        Some(lim) => format!("LIMIT {lim} OFFSET {offset}"),
+        None => String::new(),
+    };
+
+    let sql = format!(
+        r#"
        SELECT
          m.*,
          COUNT(CASE WHEN fg.status = 'ACCEPTED' THEN 1 END) AS "accepted",
@@ -220,11 +273,13 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
          (SELECT MAX(f."timestamp") FROM "Fod" f WHERE f."missionId" = m.id) AS "lastFodAt"
        FROM "Mission" m
        LEFT JOIN "FodGroup" fg ON m.id = fg."missionId"
-       WHERE COALESCE(m."storageTier", 'HOT') != 'COLD_STORED'
+       WHERE {where_sql}
        GROUP BY m.id
-       ORDER BY m.id DESC
-     "#;
-    let rows = match sqlx::query(sql).fetch_all(&s.db).await {
+       ORDER BY m.id {order_dir}
+       {limit_clause}
+     "#
+    );
+    let rows = match sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&s.db).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("{e}");
@@ -287,6 +342,88 @@ async fn stat(method: Method, State(s): State<AppState>) -> Response {
         o.insert("duration".to_string(), json!(duration_ms));
         out.push(v);
     }
+
+    if let Some(_lim) = limit_opt {
+        let count_sql = format!(r#"SELECT COUNT(*) FROM "Mission" m WHERE {where_sql}"#);
+        let total_filtered: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(count_sql))
+            .fetch_one(&s.db)
+            .await
+            .unwrap_or(out.len() as i64);
+
+        let total_unfiltered: i64 = if exclude_evicted {
+            sqlx::query_scalar(
+                r#"SELECT COUNT(*) FROM "Mission" WHERE COALESCE("storageTier", 'HOT') != 'COLD_STORED' AND COALESCE("localEvicted", 0) = 0"#,
+            )
+            .fetch_one(&s.db)
+            .await
+            .unwrap_or(total_filtered)
+        } else {
+            sqlx::query_scalar(
+                r#"SELECT COUNT(*) FROM "Mission" WHERE COALESCE("storageTier", 'HOT') != 'COLD_STORED'"#,
+            )
+            .fetch_one(&s.db)
+            .await
+            .unwrap_or(total_filtered)
+        };
+
+        // Include active mission if any, so UI always shows live mission card regardless of page/sort
+        let active_mission: Option<Value> = out
+            .iter()
+            .find(|m| m.get("status").and_then(Value::as_str) == Some("ACTIVE"))
+            .cloned()
+            .or_else(|| None);
+        let active_mission = if active_mission.is_some() {
+            active_mission
+        } else {
+            let active_row = sqlx::query(
+                r#"
+                SELECT
+                  m.*,
+                  COUNT(CASE WHEN fg.status = 'ACCEPTED' THEN 1 END) AS "accepted",
+                  COUNT(CASE WHEN fg.status = 'REJECTED' THEN 1 END) AS "rejected",
+                  COUNT(CASE WHEN fg.status = 'CLEARED' THEN 1 END) AS "cleared",
+                  COUNT(CASE WHEN fg.status = 'NEW' THEN 1 END) AS "newFodGroups",
+                  COUNT(CASE WHEN COALESCE(fg."dirty", 0) = 1 THEN 1 END) AS "dirtyCount",
+                  COUNT(fg.id) AS "total"
+                FROM "Mission" m
+                LEFT JOIN "FodGroup" fg ON m.id = fg."missionId"
+                WHERE m."status" = 'ACTIVE' AND COALESCE(m."storageTier", 'HOT') != 'COLD_STORED'
+                GROUP BY m.id
+                ORDER BY m.id DESC
+                LIMIT 1
+                "#,
+            )
+            .fetch_optional(&s.db)
+            .await
+            .ok()
+            .flatten();
+            active_row.and_then(|row| {
+                let mission = Mission::from_row(&row).ok()?;
+                let mut v = svc::to_value(&mission);
+                let o = v.as_object_mut()?;
+                for key in ["accepted", "rejected", "cleared", "newFodGroups", "dirtyCount", "total"] {
+                    let n: i64 = row.try_get(key).unwrap_or(0);
+                    o.insert(key.to_string(), json!(n));
+                }
+                o.insert("mission_id".to_string(), json!(mission.id));
+                Some(v)
+            })
+        };
+
+        let has_more = (offset + out.len() as i64) < total_filtered;
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "items": out,
+                "total": total_filtered,
+                "totalUnfiltered": total_unfiltered,
+                "hasMore": has_more,
+                "activeMission": active_mission,
+            })),
+        )
+            .into_response();
+    }
+
     (StatusCode::OK, Json(out)).into_response()
 }
 
@@ -951,21 +1088,81 @@ async fn restart(method: Method, State(s): State<AppState>, Path(id): Path<Strin
 
 // ---------------------------------------------------------------------------
 // GET /api/mission/retrive-data/{id} — pages/api/mission/retrive-data/[id].ts
+// Supports optional SQLite-backed pagination & filtering for large missions:
+//   status ("NEW" | "ACCEPTED" | "REJECTED" | "CLEARED"),
+//   sort ("latest" | "oldest" | "biggestTosmallest" | "smallestTobiggest"),
+//   minSize (number), limit (1..=5000), offset (>=0)
+// When `limit` is omitted, returns the legacy JSON array for full compatibility.
+// When `limit` is supplied, returns { items, total, limit, offset, hasMore }.
 // ---------------------------------------------------------------------------
-async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<String>) -> Response {
+async fn retrive_data(
+    method: Method,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
     if method != Method::GET {
         return mna(&method, Some("GET, PUT"));
     }
     let Some(mission_id) = svc::js_parse_int(&id) else {
         return err500("Failed to retrieve mission data");
     };
+    let limit_opt = q
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|v| v.clamp(1, 5000));
+    let offset = q
+        .get("offset")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
+    let status_filter = q
+        .get("status")
+        .map(|v| v.trim().to_uppercase())
+        .filter(|v| matches!(v.as_str(), "NEW" | "ACCEPTED" | "REJECTED" | "CLEARED"));
+    let min_size = q
+        .get("minSize")
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0);
+    let order_by = match q.get("sort").map(|v| v.as_str()) {
+        Some("oldest") => r#"f."timestamp" ASC, f."groupId" ASC"#,
+        Some("biggestTosmallest") => r#""maxFod"."maxSize" DESC, f."groupId" DESC"#,
+        Some("smallestTobiggest") => r#""maxFod"."maxSize" ASC, f."groupId" ASC"#,
+        Some("latest") => r#"f."timestamp" DESC, f."groupId" DESC"#,
+        _ => r#"f."groupId" DESC"#,
+    };
+
     if crate::scheduler::is_mission_evicted_or_cold(&s, mission_id).await {
+        if let Some(lim) = limit_opt {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "items": Vec::<Value>::new(),
+                    "total": 0,
+                    "limit": lim,
+                    "offset": offset,
+                    "hasMore": false,
+                })),
+            )
+                .into_response();
+        }
         return (StatusCode::OK, Json(Vec::<Value>::new())).into_response();
     }
-    // Same query as the Node handler ($queryRaw); the only textual change is
-    // ::text on the enum column so the driver returns it as a string, which
-    // is what Prisma produced.
-    let sql = r#"
+
+    let mut extra_where = String::new();
+    if let Some(ref st) = status_filter {
+        extra_where.push_str(&format!(r#" AND fg."status" = '{}'"#, st));
+    }
+    if let Some(ms) = min_size {
+        extra_where.push_str(&format!(r#" AND "maxFod"."maxSize" >= {ms}"#));
+    }
+    let limit_clause = match limit_opt {
+        Some(lim) => format!("LIMIT {lim} OFFSET {offset}"),
+        None => String::new(),
+    };
+
+    let sql = format!(
+        r#"
       SELECT
             "f"."id",
             "f"."size",
@@ -993,13 +1190,15 @@ async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<
         LEFT JOIN
             "FodGroup" fg ON f."groupId" = fg."groupId" AND f."missionId" = fg."missionId"
         WHERE
-            f."missionId" = $1
+            f."missionId" = $1{extra_where}
         GROUP BY
             f."groupId"
         ORDER BY
-            f."groupId" DESC
-      "#;
-    let rows = match sqlx::query(sql).bind(mission_id).fetch_all(&s.db).await {
+            {order_by}
+        {limit_clause}
+      "#
+    );
+    let rows = match sqlx::query(sqlx::AssertSqlSafe(sql)).bind(mission_id).fetch_all(&s.db).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("{e}");
@@ -1009,7 +1208,6 @@ async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<
     let mut out: Vec<Value> = Vec::with_capacity(rows.len());
     for row in rows {
         let location: Value = row.try_get("location").unwrap_or(Value::Null);
-        // fod.location = typeof location=="string" ? JSON.parse(location) : location
         let location = match location {
             Value::String(text) => match serde_json::from_str::<Value>(&text) {
                 Ok(v) => v,
@@ -1043,6 +1241,44 @@ async fn retrive_data(method: Method, State(s): State<AppState>, Path(id): Path<
             ),
         ]));
     }
+
+    if let Some(lim) = limit_opt {
+        let count_sql = format!(
+            r#"
+            SELECT COUNT(*) FROM (
+                SELECT f."groupId"
+                FROM "Fod" f
+                INNER JOIN (
+                    SELECT "groupId", MAX("size") AS "maxSize"
+                    FROM "Fod"
+                    WHERE "missionId" = $1
+                    GROUP BY "groupId"
+                ) AS "maxFod" ON f."groupId" = "maxFod"."groupId" AND f."size" = "maxFod"."maxSize"
+                LEFT JOIN "FodGroup" fg ON f."groupId" = fg."groupId" AND f."missionId" = fg."missionId"
+                WHERE f."missionId" = $1{extra_where}
+                GROUP BY f."groupId"
+            )
+            "#
+        );
+        let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(count_sql))
+            .bind(mission_id)
+            .fetch_one(&s.db)
+            .await
+            .unwrap_or(out.len() as i64);
+        let has_more = (offset + out.len() as i64) < total;
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "items": out,
+                "total": total,
+                "limit": lim,
+                "offset": offset,
+                "hasMore": has_more,
+            })),
+        )
+            .into_response();
+    }
+
     (StatusCode::OK, Json(out)).into_response()
 }
 
@@ -2088,7 +2324,10 @@ async fn car_drop(
     }
 }
 
-async fn build_local_archive_bytes(s: &AppState, mission_id: i64) -> anyhow::Result<Vec<u8>> {
+async fn build_local_archive_bundle(
+    s: &AppState,
+    mission_id: i64,
+) -> anyhow::Result<crate::archive::MissionArchiveBundle> {
     let mission: Mission = sqlx::query_as(r#"SELECT * FROM "Mission" WHERE "id" = $1"#)
         .bind(mission_id)
         .fetch_optional(&s.db)
@@ -2270,7 +2509,17 @@ async fn build_local_archive_bytes(s: &AppState, mission_id: i64) -> anyhow::Res
         frames,
     };
 
-    tokio::task::spawn_blocking(move || crate::archive::encode_archive_bytes(&bundle)).await?
+    Ok(bundle)
+}
+
+async fn write_local_archive_to_file(
+    s: &AppState,
+    mission_id: i64,
+    target: std::path::PathBuf,
+) -> anyhow::Result<u64> {
+    let bundle = build_local_archive_bundle(s, mission_id).await?;
+    tokio::task::spawn_blocking(move || crate::archive::encode_archive_to_file(&bundle, &target))
+        .await?
 }
 
 async fn archive_export(
@@ -2297,26 +2546,6 @@ async fn archive_export(
         .and_then(Value::as_str)
         .unwrap_or("atc");
 
-    let archive_bytes = if source == "local" {
-        match build_local_archive_bytes(&s, mission_id).await {
-            Ok(b) => b,
-            Err(e) => return err_json(StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })),
-        }
-    } else {
-        match svc::export_mission_archive_from_upstream(&s, mission_id).await {
-            Ok((_fname, b)) => b,
-            Err(upstream_err) => match build_local_archive_bytes(&s, mission_id).await {
-                Ok(b) => b,
-                Err(_) => {
-                    return err_json(
-                        StatusCode::BAD_GATEWAY,
-                        json!({ "error": format!("Archive export failed: {upstream_err}") }),
-                    );
-                }
-            },
-        }
-    };
-
     let target = match dest_path {
         Some(p) => p,
         None => {
@@ -2329,9 +2558,33 @@ async fn archive_export(
     if let Some(parent) = target.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    if let Err(e) = tokio::fs::write(&target, &archive_bytes).await {
-        return err500(&format!("Failed to write archive to disk: {e}"));
-    }
+
+    let size_bytes: u64 = if source == "local" {
+        match write_local_archive_to_file(&s, mission_id, target.clone()).await {
+            Ok(sz) => sz,
+            Err(e) => return err_json(StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })),
+        }
+    } else {
+        match svc::export_mission_archive_from_upstream(&s, mission_id).await {
+            Ok((_fname, b)) => {
+                if let Err(e) = tokio::fs::write(&target, &b).await {
+                    return err500(&format!("Failed to write archive to disk: {e}"));
+                }
+                b.len() as u64
+            }
+            Err(upstream_err) => {
+                match write_local_archive_to_file(&s, mission_id, target.clone()).await {
+                    Ok(sz) => sz,
+                    Err(_) => {
+                        return err_json(
+                            StatusCode::BAD_GATEWAY,
+                            json!({ "error": format!("Archive export failed: {upstream_err}") }),
+                        );
+                    }
+                }
+            }
+        }
+    };
 
     (
         StatusCode::OK,
@@ -2339,7 +2592,7 @@ async fn archive_export(
             "success": true,
             "missionId": mission_id,
             "path": target.to_string_lossy(),
-            "sizeBytes": archive_bytes.len(),
+            "sizeBytes": size_bytes,
         })),
     )
         .into_response()

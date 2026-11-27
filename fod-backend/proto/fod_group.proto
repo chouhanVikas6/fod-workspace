@@ -2,6 +2,7 @@ syntax = "proto3";
 package zoid.fod_group;
 
 import "common.proto";
+import "fod.proto";
 
 service FodGroupService {
     rpc ListGroups (ListGroupsRequest) returns (FodGroupListResponse);
@@ -27,6 +28,8 @@ message FodGroupEntity {
     int64 decided_at_ms = 12;
     // Node/actor that made the decision currently held in `status`.
     string updated_by = 13;
+    // Primary (biggest) FOD detection with its `frame_jpeg` bundled atomically.
+    zoid.fod.FodEntity primary_fod = 14;
 }
 
 message ListGroupsRequest {

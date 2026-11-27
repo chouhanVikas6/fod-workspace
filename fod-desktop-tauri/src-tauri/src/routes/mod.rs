@@ -74,13 +74,9 @@ async fn images(State(state): State<AppState>, Path(path): Path<String>) -> Resp
             }
         }
 
-        if let Some(fod) = crate::services::fetch_fod_from_car(&state, fod_seg).await {
-            if !fod.image_sha256.is_empty() {
-                if let Some(bytes) = crate::services::fetch_image_from_car(&state, &fod.image_sha256, false).await {
-                    let _ = crate::imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes).await;
-                    return ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response();
-                }
-            }
+        if let Some(bytes) = crate::services::fetch_fod_image_bytes(&state, fod_seg).await {
+            let _ = crate::imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes).await;
+            return ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response();
         }
     }
 

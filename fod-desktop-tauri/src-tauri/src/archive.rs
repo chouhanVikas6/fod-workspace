@@ -125,14 +125,17 @@ fn write_tar_entry<W: Write>(out: &mut W, name: &str, data: &[u8]) -> std::io::R
     Ok(())
 }
 
-pub fn encode_archive_bytes(bundle: &MissionArchiveBundle) -> anyhow::Result<Vec<u8>> {
+pub fn encode_archive_to_writer<W: Write>(
+    bundle: &MissionArchiveBundle,
+    writer: W,
+) -> anyhow::Result<W> {
     let root = match bundle.manifest.display_id {
         Some(did) => format!("mission-{}-d{}", bundle.manifest.mission_id, did),
         None => format!("mission-{}", bundle.manifest.mission_id),
     };
 
     let manifest_bytes = serde_json::to_vec_pretty(&bundle.manifest)?;
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut encoder = GzEncoder::new(writer, Compression::default());
     write_tar_entry(&mut encoder, &format!("{root}/manifest.json"), &manifest_bytes)?;
     write_tar_entry(&mut encoder, &format!("{root}/mission.json"), &bundle.mission_json)?;
     write_tar_entry(&mut encoder, &format!("{root}/fod_groups.json"), &bundle.fod_groups_json)?;
@@ -150,6 +153,21 @@ pub fn encode_archive_bytes(bundle: &MissionArchiveBundle) -> anyhow::Result<Vec
 
     encoder.write_all(&[0u8; 1024])?;
     Ok(encoder.finish()?)
+}
+
+pub fn encode_archive_bytes(bundle: &MissionArchiveBundle) -> anyhow::Result<Vec<u8>> {
+    encode_archive_to_writer(bundle, Vec::new())
+}
+
+pub fn encode_archive_to_file(bundle: &MissionArchiveBundle, path: &Path) -> anyhow::Result<u64> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(path)?;
+    let mut writer = encode_archive_to_writer(bundle, std::io::BufWriter::new(file))?;
+    writer.flush()?;
+    let meta = std::fs::metadata(path)?;
+    Ok(meta.len())
 }
 
 fn parse_octal(field: &[u8]) -> anyhow::Result<usize> {
@@ -323,6 +341,54 @@ pub async fn disk_usage_for_path(path: &Path) -> (u64, u64, u64, f64) {
             }
         }
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        unsafe extern "system" {
+            fn GetDiskFreeSpaceExW(
+                lpDirectoryName: *const u16,
+                lpFreeBytesAvailableToCaller: *mut u64,
+                lpTotalNumberOfBytes: *mut u64,
+                lpTotalNumberOfFreeBytes: *mut u64,
+            ) -> i32;
+        }
+        let probe = if path.exists() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        };
+        if let Ok(Some(res)) = tokio::task::spawn_blocking(move || {
+            let wide: Vec<u16> = probe
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut free_avail: u64 = 0;
+            let mut total: u64 = 0;
+            let mut total_free: u64 = 0;
+            let ok = unsafe {
+                GetDiskFreeSpaceExW(
+                    wide.as_ptr(),
+                    &mut free_avail,
+                    &mut total,
+                    &mut total_free,
+                )
+            };
+            if ok != 0 && total > 0 {
+                let used = total.saturating_sub(total_free);
+                let pct = ((used as f64 / total as f64) * 1000.0).round() / 10.0;
+                Some((total, used, free_avail, pct))
+            } else {
+                None
+            }
+        })
+        .await
+        {
+            return res;
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = path;
     (0, 0, 0, 0.0)
 }
 

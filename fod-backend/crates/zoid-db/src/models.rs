@@ -335,6 +335,7 @@ impl FodGroupRow {
             version_vector: zoid_replication::vv_to_map(&self.vv.0),
             decided_at_ms: self.decided_at_ms,
             updated_by: self.updated_by.clone(),
+            primary_fod: None,
         }
     }
 
@@ -344,6 +345,7 @@ impl FodGroupRow {
             vv: self.vv.0.clone(),
             decided_at_ms: self.decided_at_ms,
             updated_by: self.updated_by.clone(),
+            primary_fod: None,
         }
     }
 }

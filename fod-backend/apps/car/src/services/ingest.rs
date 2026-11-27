@@ -5,6 +5,7 @@ use proto_defination::ingest::ingest_service_server::IngestService;
 use proto_defination::ingest::{
     DetectionBatch, IngestAck, IngestStatus, TelemetryFrame, TelemetrySummary,
 };
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -89,6 +90,8 @@ impl IngestService for IngestServiceImpl {
 
                 let mut rej_count = 0;
                 let mut fod_rows = Vec::with_capacity(batch.detections.len());
+                let mut batch_jpegs: HashMap<Uuid, Vec<u8>> = HashMap::with_capacity(batch.detections.len());
+                let mut batch_fods: HashMap<Uuid, FodRow> = HashMap::with_capacity(batch.detections.len());
                 let created_at = Utc::now();
 
                 for det in batch.detections {
@@ -128,7 +131,12 @@ impl IngestService for IngestServiceImpl {
                     let captured_at = DateTime::from_timestamp_millis(now_ms)
                         .unwrap_or_else(Utc::now);
 
-                    fod_rows.push(FodRow {
+                    let frame_missing = det.crop_jpeg.is_empty();
+                    if !frame_missing {
+                        batch_jpegs.insert(fod_id, det.crop_jpeg);
+                    }
+
+                    let row = FodRow {
                         id: fod_id,
                         mission_id: active_mission.id,
                         group_id,
@@ -143,10 +151,12 @@ impl IngestService for IngestServiceImpl {
                         size: det.size,
                         image_sha256: sha256,
                         image_size: frame_size,
-                        frame_missing: det.crop_jpeg.is_empty(),
+                        frame_missing,
                         captured_at,
                         created_at,
-                    });
+                    };
+                    batch_fods.insert(fod_id, row.clone());
+                    fod_rows.push(row);
                 }
 
                 let (accepted_count, dup_count) = if fod_rows.is_empty() {
@@ -155,7 +165,30 @@ impl IngestService for IngestServiceImpl {
                     match db.ingest_fod_batch(active_mission.id, &fod_rows).await {
                         Ok((acc, dup, updated_groups)) => {
                             for group in updated_groups {
-                                let _ = group_tx.send(group.to_proto());
+                                let mut g_proto = group.to_proto();
+                                let primary = if let Some(bid) = group.biggest_fod {
+                                    if let Some(in_mem) = batch_fods.get(&bid) {
+                                        let mut f_proto = in_mem.to_proto();
+                                        if let Some(jpeg) = batch_jpegs.get(&bid) {
+                                            f_proto.frame_jpeg = jpeg.clone();
+                                        }
+                                        Some(f_proto)
+                                    } else if let Ok(Some(db_fod)) = db.get_fod(bid).await {
+                                        let mut f_proto = db_fod.to_proto();
+                                        if !f_proto.frame_missing && !f_proto.image_sha256.is_empty() {
+                                            if let Ok(bytes) = storage.read_frame(&f_proto.image_sha256, false).await {
+                                                f_proto.frame_jpeg = bytes;
+                                            }
+                                        }
+                                        Some(f_proto)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                g_proto.primary_fod = primary;
+                                let _ = group_tx.send(g_proto);
                             }
                             (acc, dup)
                         }

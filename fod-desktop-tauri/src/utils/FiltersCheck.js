@@ -71,13 +71,29 @@ export const sortByFilter = (filters, fods, currentLocation = null) => {
                 return tsDiff !== 0 ? tsDiff : (b.groupId || 0) - (a.groupId || 0);
             });
         case 'nearestFirst': {
-            if (!currentLocation) {
+            if (
+                !currentLocation ||
+                typeof currentLocation.lat !== 'number' ||
+                typeof currentLocation.lon !== 'number'
+            ) {
                 return list; // no self location -> leave order untouched
             }
-            // Compute distance once per item (O(N)) instead of O(N log N) inside comparator
+            // Fast O(N) equirectangular approximation (no Turf allocation per item)
+            const refLat = currentLocation.lat;
+            const refLon = currentLocation.lon;
+            const cosLat = Math.cos((refLat * Math.PI) / 180);
             const withDist = list.map((item) => {
-                const d = distanceBwCollectorAndFod(item, currentLocation);
-                return { item, d: typeof d === 'number' ? d : Infinity };
+                const loc =
+                    item._loc ??
+                    (typeof item.location === 'object' ? item.location : null);
+                const lat = loc?.lat;
+                const lon = loc?.lon;
+                if (typeof lat !== 'number' || typeof lon !== 'number') {
+                    return { item, d: Infinity };
+                }
+                const dLat = lat - refLat;
+                const dLon = (lon - refLon) * cosLat;
+                return { item, d: dLat * dLat + dLon * dLon };
             });
             withDist.sort((a, b) => a.d - b.d);
             return withDist.map((entry) => entry.item);

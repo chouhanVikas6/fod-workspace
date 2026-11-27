@@ -139,6 +139,218 @@ async fn api_request(
     })
 }
 
+pub(crate) fn canonical_asset_path(path: &std::path::Path) -> Option<String> {
+    let abs = std::fs::canonicalize(path).ok()?;
+    let s = abs.to_string_lossy().to_string();
+    // Strip Windows extended-length prefix so Tauri convertFileSrc produces a valid asset:// URL
+    Some(s.strip_prefix(r"\\?\").unwrap_or(&s).to_string())
+}
+
+pub(crate) fn is_raw_image_header(header: &[u8], n: usize) -> bool {
+    // JPEG (FF D8) or PNG (89 50 4E 47)
+    (n >= 2 && header[0] == 0xFF && header[1] == 0xD8)
+        || (n >= 4 && header[..4] == [0x89, 0x50, 0x4E, 0x47])
+}
+
+pub(crate) fn resolve_local_raw_image_path_sync(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut header = [0u8; 4];
+    let n = f.read(&mut header).ok()?;
+    if is_raw_image_header(&header, n) {
+        canonical_asset_path(path)
+    } else {
+        None
+    }
+}
+
+pub(crate) async fn is_raw_image_file(path: &std::path::Path) -> bool {
+    let Ok(mut f) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    use tokio::io::AsyncReadExt;
+    let mut header = [0u8; 4];
+    let Ok(n) = f.read(&mut header).await else {
+        return false;
+    };
+    is_raw_image_header(&header, n)
+}
+
+pub(crate) async fn resolve_local_raw_image_path(path: &std::path::Path) -> Option<String> {
+    if is_raw_image_file(path).await {
+        canonical_asset_path(path)
+    } else {
+        None
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedFodImage {
+    pub kind: &'static str,
+    pub value: String,
+}
+
+/// Unified single-IPC FOD image resolver: prefers a local `asset://` file path
+/// when available and falls back to an inline `data:image/jpeg;base64,...` URI
+/// without ever issuing duplicate gRPC fetches (and works even if CWD is read-only).
+#[tauri::command]
+async fn resolve_fod_image(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Option<ResolvedFodImage>, String> {
+    let clean = normalize_image_path(&path);
+    if clean.is_empty() || clean.contains("..") {
+        return Ok(None);
+    }
+
+    // 1. Check local fod-images/mission/<clean>
+    let file = std::path::Path::new("fod-images/mission").join(&clean);
+    if is_raw_image_file(&file).await {
+        if let Some(p) = canonical_asset_path(&file) {
+            return Ok(Some(ResolvedFodImage { kind: "path", value: p }));
+        }
+    }
+    if let Ok(bytes) = tokio::fs::read(&file).await {
+        if !bytes.is_empty() {
+            return Ok(Some(ResolvedFodImage {
+                kind: "dataUrl",
+                value: bytes_to_data_url(&bytes),
+            }));
+        }
+    }
+
+    // 2. If it's a 64-char hex sha256 (e.g. ClearedFod beforeClearImg / afterClearImg)
+    let stem = clean.trim_end_matches(".jpg");
+    if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+        let cached = std::path::Path::new("fod-images/mission").join(format!("{stem}.jpg"));
+        if is_raw_image_file(&cached).await {
+            if let Some(p) = canonical_asset_path(&cached) {
+                return Ok(Some(ResolvedFodImage { kind: "path", value: p }));
+            }
+        }
+        if let Ok(bytes) = tokio::fs::read(&cached).await {
+            if !bytes.is_empty() {
+                return Ok(Some(ResolvedFodImage {
+                    kind: "dataUrl",
+                    value: bytes_to_data_url(&bytes),
+                }));
+            }
+        }
+        if let Some(bytes) = services::fetch_image_from_car(&state, stem, false).await {
+            if let Some(parent) = cached.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if tokio::fs::write(&cached, &bytes).await.is_ok() && is_raw_image_file(&cached).await {
+                if let Some(p) = canonical_asset_path(&cached) {
+                    return Ok(Some(ResolvedFodImage { kind: "path", value: p }));
+                }
+            }
+            return Ok(Some(ResolvedFodImage {
+                kind: "dataUrl",
+                value: bytes_to_data_url(&bytes),
+            }));
+        }
+        return Ok(None);
+    }
+
+    // 3. On-demand fetch from Car/ATC backend: "<mission>/<group>/<fod>.jpg"
+    let parts: Vec<&str> = clean.split('/').collect();
+    if parts.len() >= 3 {
+        let mission_seg = parts[0];
+        let group_seg = parts[1];
+        let fod_seg = parts[2].trim_end_matches(".jpg");
+
+        if let Ok(mid) = mission_seg.parse::<i64>() {
+            if scheduler::is_mission_evicted_or_cold(&state, mid).await {
+                return Ok(None);
+            }
+        }
+
+        if let Some(bytes) = services::fetch_fod_image_bytes(&state, fod_seg).await {
+            if imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes)
+                .await
+                .is_ok()
+                && is_raw_image_file(&file).await
+            {
+                if let Some(p) = canonical_asset_path(&file) {
+                    return Ok(Some(ResolvedFodImage { kind: "path", value: p }));
+                }
+            }
+            return Ok(Some(ResolvedFodImage {
+                kind: "dataUrl",
+                value: bytes_to_data_url(&bytes),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Resolve a FOD image to a local filesystem path so the WebView can load it directly
+/// via Tauri's `asset://` protocol (`convertFileSrc`) without base64 IPC overhead.
+/// Returns `None` if the file is missing or stored in legacy UTF-8 base64 text format
+/// (the frontend then falls back to `get_fod_image`).
+#[tauri::command]
+async fn resolve_fod_image_path(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Option<String>, String> {
+    let clean = normalize_image_path(&path);
+    if clean.is_empty() || clean.contains("..") {
+        return Ok(None);
+    }
+
+    // 1. Check local fod-images/mission/<clean>
+    let file = std::path::Path::new("fod-images/mission").join(&clean);
+    if is_raw_image_file(&file).await {
+        return Ok(canonical_asset_path(&file));
+    }
+
+    // 2. If it's a 64-char hex sha256 (e.g. ClearedFod beforeClearImg / afterClearImg)
+    let stem = clean.trim_end_matches(".jpg");
+    if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+        let cached = std::path::Path::new("fod-images/mission").join(format!("{stem}.jpg"));
+        if is_raw_image_file(&cached).await {
+            return Ok(canonical_asset_path(&cached));
+        }
+        if let Some(bytes) = services::fetch_image_from_car(&state, stem, false).await {
+            if let Some(parent) = cached.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if tokio::fs::write(&cached, &bytes).await.is_ok() && is_raw_image_file(&cached).await {
+                return Ok(canonical_asset_path(&cached));
+            }
+        }
+    }
+
+    // 3. On-demand fetch from Car backend: "<mission>/<group>/<fod>.jpg"
+    let parts: Vec<&str> = clean.split('/').collect();
+    if parts.len() >= 3 {
+        let mission_seg = parts[0];
+        let group_seg = parts[1];
+        let fod_seg = parts[2].trim_end_matches(".jpg");
+
+        if let Ok(mid) = mission_seg.parse::<i64>() {
+            if scheduler::is_mission_evicted_or_cold(&state, mid).await {
+                return Ok(None);
+            }
+        }
+
+        if let Some(bytes) = services::fetch_fod_image_bytes(&state, fod_seg).await {
+            if imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes)
+                .await
+                .is_ok()
+                && is_raw_image_file(&file).await
+            {
+                return Ok(canonical_asset_path(&file));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 /// Resolve a FOD image or ClearedFod sha256 image via Tauri IPC and return a `data:image/jpeg;base64,...` URI.
 #[tauri::command]
 async fn get_fod_image(
@@ -185,16 +397,10 @@ async fn get_fod_image(
             }
         }
 
-        if let Some(fod) = services::fetch_fod_from_car(&state, fod_seg).await {
-            if !fod.image_sha256.is_empty() {
-                if let Some(bytes) =
-                    services::fetch_image_from_car(&state, &fod.image_sha256, false).await
-                {
-                    let _ =
-                        imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes).await;
-                    return Ok(Some(bytes_to_data_url(&bytes)));
-                }
-            }
+        if let Some(bytes) = services::fetch_fod_image_bytes(&state, fod_seg).await {
+            let _ =
+                imagewriter::write_fod_jpeg(mission_seg, group_seg, fod_seg, &bytes).await;
+            return Ok(Some(bytes_to_data_url(&bytes)));
         }
     }
 
@@ -583,6 +789,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             api_request,
             get_fod_image,
+            resolve_fod_image,
+            resolve_fod_image_path,
             socket_emit,
             get_health_bite_state,
             start_retrive_stream,

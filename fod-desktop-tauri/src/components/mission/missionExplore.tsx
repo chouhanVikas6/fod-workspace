@@ -583,6 +583,7 @@ function MissionExplore({ stopTemplateView, selectedMission }: any) {
                                         >
                                             <Image
                                                 src={`${config.ImagesBase}/${selectedMission.id}/${fod.groupId}/${fod.id}.jpg`}
+                                                localPath={fod.imagePath}
                                                 alt={`FOD #${itemKey}`}
                                                 width={120}
                                                 height={90}

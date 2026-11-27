@@ -74,7 +74,12 @@ async fn connect_stream_client(
         .tcp_keepalive(Some(Duration::from_secs(5)))
         .http2_keep_alive_interval(Duration::from_secs(2))
         .keep_alive_while_idle(true);
-    FodGroupServiceClient::connect(endpoint).await.ok()
+    let ch = endpoint.connect().await.ok()?;
+    Some(
+        FodGroupServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024)
+            .max_encoding_message_size(32 * 1024 * 1024),
+    )
 }
 
 async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()> {
@@ -90,6 +95,12 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
     .unwrap_or(false);
     if skip_evicted {
         return Ok(());
+    }
+
+    // Persist bundled primary FOD metadata + JPEG frame FIRST before inserting/updating FodGroup
+    // so downstream SQLite readers never see a FodGroup without its Fod + JPEG already ready.
+    if let Some(ref pf) = g.primary_fod {
+        crate::services::persist_primary_fod(state, pf).await;
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -130,10 +141,6 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
     };
 
     let mut should_emit = false;
-    let biggest_fod_changed = match &local {
-        None => biggest_fod.is_some(),
-        Some(local_g) => biggest_fod.is_some() && local_g.biggest_fod_id != biggest_fod,
-    };
     match local {
         None => {
             let insert_res = sqlx::query(
@@ -169,6 +176,8 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
             let local_dirty = local_g.dirty.unwrap_or(false);
             let local_status_str = local_g.status.to_string();
             let incoming_is_cleared = st == "CLEARED";
+            let biggest_fod_changed =
+                biggest_fod.is_some() && local_g.biggest_fod_id != biggest_fod;
 
             if incoming_is_cleared {
                 let _ = sqlx::query(
@@ -311,65 +320,6 @@ async fn handle_group(state: &AppState, g: FodGroupEntity) -> anyhow::Result<()>
                 }
             }),
         );
-    }
-
-    if biggest_fod_changed {
-        if let Some(fod_id) = biggest_fod {
-            let state_clone = state.clone();
-            tokio::spawn(async move {
-                if let Some(f) = crate::services::fetch_fod_from_car(&state_clone, &fod_id).await {
-                    let now = crate::services::now_naive();
-                    let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
-                    let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
-                    let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
-                    let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
-                    let ts = chrono::DateTime::from_timestamp_millis(f.timestamp)
-                        .map(|dt| dt.naive_utc())
-                        .unwrap_or(now);
-                    let created = chrono::DateTime::from_timestamp_millis(f.created_at)
-                        .map(|dt| dt.naive_utc())
-                        .unwrap_or(ts);
-
-                    let m_str = f.mission_id.to_string();
-                    let g_str = f.group_id.to_string();
-                    if !f.frame_jpeg.is_empty() {
-                        let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await;
-                    } else if !f.image_sha256.is_empty() {
-                        if let Some(bytes) = crate::services::fetch_image_from_car(&state_clone, &f.image_sha256, false).await {
-                            let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &bytes).await;
-                        }
-                    }
-
-                    let _ = sqlx::query(
-                        r#"INSERT INTO "Fod" (
-                            "id", "missionId", "groupId", "sysid", "location", "confidence",
-                            "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false)
-                        ON CONFLICT ("id") DO UPDATE SET
-                            "location" = EXCLUDED."location",
-                            "confidence" = EXCLUDED."confidence",
-                            "class" = EXCLUDED."class",
-                            "velocity" = EXCLUDED."velocity",
-                            "size" = EXCLUDED."size",
-                            "updatedAt" = $12"#,
-                    )
-                    .bind(&f.id)
-                    .bind(f.mission_id)
-                    .bind(f.group_id as i32)
-                    .bind(if f.sysid.is_empty() { None } else { Some(&f.sysid) })
-                    .bind(loc)
-                    .bind(f.confidence)
-                    .bind(if f.class_name.is_empty() { None } else { Some(&f.class_name) })
-                    .bind(f.velocity)
-                    .bind(f.size)
-                    .bind(ts)
-                    .bind(created)
-                    .bind(now)
-                    .execute(&state_clone.db)
-                    .await;
-                }
-            });
-        }
     }
 
     Ok(())

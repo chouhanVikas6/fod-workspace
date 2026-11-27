@@ -119,8 +119,8 @@ impl SyncClient {
             match ReplicationServiceClient::connect(self.car_endpoint.clone()).await {
                 Ok(client) => {
                     let mut client = client
-                        .max_decoding_message_size(16 * 1024 * 1024)
-                        .max_encoding_message_size(16 * 1024 * 1024);
+                        .max_decoding_message_size(32 * 1024 * 1024)
+                        .max_encoding_message_size(32 * 1024 * 1024);
                     tracing::info!("Replication connection established with Car primary");
                     backoff_secs = 1;
 
@@ -300,6 +300,52 @@ impl SyncClient {
         }
     }
 
+    async fn resolve_primary_fod(
+        &self,
+        group: &proto_defination::fod_group::FodGroupEntity,
+        bundled: Option<&proto_defination::fod::FodEntity>,
+    ) -> Option<proto_defination::fod::FodEntity> {
+        if let Some(pf) = bundled {
+            if group.biggest_fod.as_deref() == Some(pf.id.as_str()) || group.biggest_fod.is_none() {
+                if !pf.frame_jpeg.is_empty() || pf.frame_missing || pf.image_sha256.is_empty() {
+                    return Some(pf.clone());
+                }
+                let mut cloned = pf.clone();
+                if let Ok(bytes) = self.storage.read_frame(&cloned.image_sha256, false).await {
+                    cloned.frame_jpeg = bytes;
+                }
+                return Some(cloned);
+            }
+        }
+        let mut fod_row = if let Some(ref bid) = group.biggest_fod {
+            if let Ok(uuid) = uuid::Uuid::parse_str(bid) {
+                self.db.get_fod(uuid).await.ok().flatten()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if fod_row.is_none() {
+            fod_row = self
+                .db
+                .get_biggest_fod_for_group(group.mission_id, group.group_id)
+                .await
+                .ok()
+                .flatten();
+        }
+        if let Some(row) = fod_row {
+            let mut entity = row.to_proto();
+            if !entity.frame_missing && !entity.image_sha256.is_empty() {
+                if let Ok(bytes) = self.storage.read_frame(&entity.image_sha256, false).await {
+                    entity.frame_jpeg = bytes;
+                }
+            }
+            return Some(entity);
+        }
+        None
+    }
+
     async fn ensure_mission_exists(
         &self,
         mission_id: i64,
@@ -356,6 +402,17 @@ impl SyncClient {
                                     continue;
                                 }
                                 self.ensure_mission_exists(g.mission_id).await?;
+                                if let Some(ref pf) = g.primary_fod {
+                                    if !pf.frame_jpeg.is_empty() {
+                                        if let Err(e) = self.storage.save_frame(&pf.frame_jpeg).await {
+                                            tracing::warn!("Failed to save bundled primary FOD frame {}: {}", pf.id, e);
+                                        }
+                                    }
+                                    if let Err(e) = self.db.upsert_replicated_fod(pf).await {
+                                        tracing::warn!("Failed to upsert bundled primary FOD {}: {}", pf.id, e);
+                                    }
+                                }
+                                let bundled_primary = g.primary_fod.clone();
                                 let _ = self.db.insert_replicated_group_if_absent(&g, false).await;
                                 let _ = self.db.merge_group_biggest_fod(g.mission_id, g.group_id, g.biggest_fod.as_deref(), g.biggest_fod_size).await;
                                 let incoming = zoid_db::models::versioned_from_proto(&g);
@@ -404,16 +461,19 @@ impl SyncClient {
                                         }
                                         (zoid_replication::MergeDecision::TakeIncoming, _) => {
                                             if let Some(a) = after {
-                                                let proto = a.to_proto();
+                                                let mut proto = a.to_proto();
+                                                proto.primary_fod = self.resolve_primary_fod(&proto, bundled_primary.as_ref()).await;
                                                 let _ = self.group_tx.send(proto);
                                             }
                                         }
                                         (zoid_replication::MergeDecision::Merged(_), _) => {
                                             needs_push_back = true;
                                             if let Some(a) = after {
-                                                let proto = a.to_proto();
-                                                let _ = self.group_tx.send(proto.clone());
-                                                updated_group = Some(proto);
+                                                let push_proto = a.to_proto();
+                                                let mut stream_proto = push_proto.clone();
+                                                stream_proto.primary_fod = self.resolve_primary_fod(&stream_proto, bundled_primary.as_ref()).await;
+                                                let _ = self.group_tx.send(stream_proto);
+                                                updated_group = Some(push_proto);
                                             }
                                         }
                                     }
@@ -424,7 +484,8 @@ impl SyncClient {
                                         Some(eg) => Some(eg),
                                         None => self.db.get_fod_group(g.mission_id, g.group_id).await.ok().flatten().map(|row| row.to_proto()),
                                     };
-                                    if let Some(push_msg) = push_entity {
+                                    if let Some(mut push_msg) = push_entity {
+                                        push_msg.primary_fod = None;
                                         let _ = out_tx.send(ReplicaMessage {
                                             msg: Some(ReplicaMsg::GroupPush(push_msg)),
                                         }).await;
@@ -569,7 +630,7 @@ impl SyncClient {
                         ack.outcome
                     );
                 }
-                if let Some(merged_g) = ack.merged {
+                if let Some(mut merged_g) = ack.merged {
                     let incoming = zoid_db::models::versioned_from_proto(&merged_g);
                     let mut changed = false;
                     let _ = self.db.mutate_fod_group(ack.mission_id, ack.group_id, |current| {
@@ -586,6 +647,7 @@ impl SyncClient {
                         (write, ())
                     }).await;
                     if changed {
+                        merged_g.primary_fod = self.resolve_primary_fod(&merged_g, None).await;
                         let _ = self.group_tx.send(merged_g);
                     }
                 } else {

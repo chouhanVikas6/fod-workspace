@@ -37,6 +37,24 @@ interface FodCellData {
 
 const TARGET_MIN_COLUMN_WIDTH = 195;
 const ITEM_HEIGHT = 266;
+const GPS_SORT_MIN_MOVE_METERS = 3;
+const GPS_SORT_THROTTLE_MS = 2500;
+
+function haversineMeters(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number }
+): number {
+  const toRad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toRad;
+  const dLon = (b.lon - a.lon) * toRad;
+  const lat1 = a.lat * toRad;
+  const lat2 = b.lat * toRad;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h =
+    sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
 
 const FodGridCell = ({
   columnIndex,
@@ -98,7 +116,7 @@ const FodDisplay = ({
   const groupStatus = filters.groupStatus || "NEW";
   const isSortingByDistance = filters.sortby === "nearestFirst";
 
-  const currentLocation = useSelector(
+  const liveLocation = useSelector(
     (state: RootState) => {
       if (!isSortingByDistance) return null;
 
@@ -114,12 +132,78 @@ const FodDisplay = ({
       }
 
       return {
-        lat: Math.round(primary.lat * 10000) / 10000,
-        lon: Math.round(primary.lon * 10000) / 10000,
+        lat: primary.lat,
+        lon: primary.lon,
       };
     },
     shallowEqual
   );
+
+  // Throttle distance-sorted recomputation on live 10Hz RTK ticks:
+  // only update when GPS moves >= 3m and at most once every 2.5s.
+  const [currentLocation, setCurrentLocation] = useState<{
+    lat: number;
+    lon: number;
+  } | null>(null);
+  const lastSortLocRef = useRef<{
+    lat: number;
+    lon: number;
+    ts: number;
+  } | null>(null);
+  const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!isSortingByDistance || !liveLocation) {
+      if (throttleTimerRef.current) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
+      if (!isSortingByDistance) {
+        lastSortLocRef.current = null;
+        setCurrentLocation(null);
+      }
+      return;
+    }
+
+    const now = Date.now();
+    const prev = lastSortLocRef.current;
+
+    if (!prev) {
+      lastSortLocRef.current = { ...liveLocation, ts: now };
+      setCurrentLocation(liveLocation);
+      return;
+    }
+
+    const movedMeters = haversineMeters(prev, liveLocation);
+    if (movedMeters < GPS_SORT_MIN_MOVE_METERS) {
+      return;
+    }
+
+    const elapsed = now - prev.ts;
+    if (elapsed >= GPS_SORT_THROTTLE_MS) {
+      if (throttleTimerRef.current) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
+      lastSortLocRef.current = { ...liveLocation, ts: now };
+      setCurrentLocation(liveLocation);
+    } else if (!throttleTimerRef.current) {
+      const latest = liveLocation;
+      throttleTimerRef.current = setTimeout(() => {
+        throttleTimerRef.current = null;
+        lastSortLocRef.current = { ...latest, ts: Date.now() };
+        setCurrentLocation(latest);
+      }, GPS_SORT_THROTTLE_MS - elapsed);
+    }
+  }, [isSortingByDistance, liveLocation]);
+
+  useEffect(() => {
+    return () => {
+      if (throttleTimerRef.current) {
+        clearTimeout(throttleTimerRef.current);
+      }
+    };
+  }, []);
 
   // Measure the actual FOD grid container.
   const gridContainerRef = useRef<HTMLDivElement>(null);

@@ -659,6 +659,16 @@ async fn query_rows(
             });
         let group_status: Option<String> = row.try_get("groupStatus")?;
         let idssssss: i32 = row.try_get("idssssss")?;
+        let image_path = match (&id, group_id) {
+            (Some(fid), Some(gid)) => {
+                let local_file = std::path::Path::new("fod-images/mission")
+                    .join(mission_id.to_string())
+                    .join(gid.to_string())
+                    .join(format!("{fid}.jpg"));
+                crate::resolve_local_raw_image_path(&local_file).await
+            }
+            _ => None,
+        };
         out.push(json!({
             "id": id,
             "size": size,
@@ -672,6 +682,7 @@ async fn query_rows(
             "updatedAt": updated_at,
             "groupStatus": group_status,
             "idssssss": idssssss,
+            "imagePath": image_path,
         }));
     }
     Ok(out)

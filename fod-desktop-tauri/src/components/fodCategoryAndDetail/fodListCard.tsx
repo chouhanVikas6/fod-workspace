@@ -60,6 +60,7 @@ const FodListcard = ({ fod }: any) => {
         <div className="relative h-full w-[45%] bg-slate-100 dark:bg-slate-900 shrink-0">
           <Image
             src={`${config.ImagesBase}/${missionState.missionNumber}/${fod.groupId}/${fod.id}.jpg`}
+            localPath={fod.imagePath}
             className="h-full w-full object-cover object-center"
             draggable={false}
             alt=""

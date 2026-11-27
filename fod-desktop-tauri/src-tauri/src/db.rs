@@ -23,7 +23,10 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
         .busy_timeout(Duration::from_secs(10))
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .pragma("wal_autocheckpoint", "1000")
+        .pragma("temp_store", "MEMORY")
+        .pragma("cache_size", "-16000");
 
     let pool = SqlitePoolOptions::new()
         .max_connections(10)
@@ -206,6 +209,20 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query(r#"ALTER TABLE "FodGroup" ADD COLUMN "updatedBy" TEXT DEFAULT ''"#)
         .execute(pool)
         .await;
+
+    // Performance indexes for high-volume long-running operation.
+    for idx_sql in [
+        r#"CREATE INDEX IF NOT EXISTS "FodGroup_dirty_idx" ON "FodGroup"("dirty") WHERE "dirty" = 1"#,
+        r#"CREATE INDEX IF NOT EXISTS "ClearedFod_dirty_idx" ON "ClearedFod"("dirty") WHERE "dirty" = 1"#,
+        r#"CREATE INDEX IF NOT EXISTS "Fod_missionId_groupId_idx" ON "Fod"("missionId", "groupId")"#,
+        r#"CREATE INDEX IF NOT EXISTS "Mission_status_idx" ON "Mission"("status")"#,
+        r#"CREATE INDEX IF NOT EXISTS "Mission_createdAt_idx" ON "Mission"("createdAt")"#,
+        r#"CREATE INDEX IF NOT EXISTS "FodGroup_missionId_status_groupId_idx" ON "FodGroup"("missionId", "status", "groupId")"#,
+        r#"CREATE INDEX IF NOT EXISTS "Fod_missionId_groupId_size_idx" ON "Fod"("missionId", "groupId", "size" DESC)"#,
+        r#"CREATE INDEX IF NOT EXISTS "Mission_tier_evicted_created_idx" ON "Mission"("storageTier", "localEvicted", "createdAt")"#,
+    ] {
+        let _ = sqlx::query(idx_sql).execute(pool).await;
+    }
 
     Ok(())
 }

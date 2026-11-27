@@ -267,6 +267,11 @@ fn proto_fod_entity_to_json(f: &proto_defination::fod::FodEntity) -> Value {
     let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
     let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
     let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
+    let local_file = std::path::Path::new("fod-images/mission")
+        .join(f.mission_id.to_string())
+        .join(f.group_id.to_string())
+        .join(format!("{}.jpg", f.id));
+    let image_path = crate::resolve_local_raw_image_path_sync(&local_file);
     json!({
         "id": f.id,
         "missionId": f.mission_id,
@@ -290,6 +295,7 @@ fn proto_fod_entity_to_json(f: &proto_defination::fod::FodEntity) -> Value {
         "imageSize": f.image_size,
         "frameMissing": f.frame_missing,
         "createdAt": proto_ms_to_iso(f.created_at),
+        "imagePath": image_path,
     })
 }
 
@@ -356,7 +362,106 @@ async fn connect_mission_client(state: &AppState) -> Option<proto_defination::mi
 
 async fn connect_fod_group_client(state: &AppState) -> Option<proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient<tonic::transport::Channel>> {
     let ch = connect_channel_with_fallback(&state.cfg.car_backend_url, &state.cfg.atc_backend_url).await?;
-    Some(proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::new(ch))
+    Some(
+        proto_defination::fod_group::fod_group_service_client::FodGroupServiceClient::new(ch)
+            .max_decoding_message_size(32 * 1024 * 1024)
+            .max_encoding_message_size(32 * 1024 * 1024),
+    )
+}
+
+pub async fn fetch_groups_page(
+    state: &AppState,
+    mission_id: i64,
+    page: i32,
+    limit: i32,
+    updated_since_ms: Option<i64>,
+) -> Option<proto_defination::fod_group::FodGroupListResponse> {
+    let mut client = connect_fod_group_client(state).await?;
+    match client
+        .list_groups(tonic::Request::new(
+            proto_defination::fod_group::ListGroupsRequest {
+                mission_id,
+                pagination: Some(proto_defination::common::PaginationRequest { page, limit }),
+                updated_since_ms,
+            },
+        ))
+        .await
+    {
+        Ok(r) => Some(r.into_inner()),
+        Err(e) => {
+            tracing::warn!("fetch_groups_page mission={mission_id} page={page} failed: {e}");
+            None
+        }
+    }
+}
+
+/// Atomically persist a primary FOD's JPEG frame to disk (before DB upsert) and
+/// upsert its `"Fod"` row in local SQLite so metadata and frame are always ready together.
+pub async fn persist_primary_fod(
+    state: &AppState,
+    f: &proto_defination::fod::FodEntity,
+) {
+    let m_str = f.mission_id.to_string();
+    let g_str = f.group_id.to_string();
+    if !f.frame_jpeg.is_empty() {
+        if let Err(e) = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &f.frame_jpeg).await {
+            tracing::warn!("Failed to write primary FOD jpeg {}: {e}", f.id);
+        }
+    } else if !f.frame_missing && !f.image_sha256.is_empty() {
+        let img_file = std::path::Path::new("fod-images/mission")
+            .join(&m_str)
+            .join(&g_str)
+            .join(format!("{}.jpg", f.id));
+        if !img_file.exists() {
+            if let Some(bytes) = fetch_image_from_car(state, &f.image_sha256, false).await {
+                let _ = crate::imagewriter::write_fod_jpeg(&m_str, &g_str, &f.id, &bytes).await;
+            }
+        }
+    }
+
+    let now = now_naive();
+    let lat = f.location.as_ref().map(|l| l.lat).unwrap_or(0.0);
+    let lon = f.location.as_ref().map(|l| l.lon).unwrap_or(0.0);
+    let sd = f.location.as_ref().map(|l| l.sd).unwrap_or(0.0);
+    let loc = json!({ "lat": lat, "lon": lon, "sd": sd });
+    let ts = chrono::DateTime::from_timestamp_millis(f.timestamp)
+        .map(|dt| dt.naive_utc())
+        .unwrap_or(now);
+    let created = chrono::DateTime::from_timestamp_millis(f.created_at)
+        .map(|dt| dt.naive_utc())
+        .unwrap_or(ts);
+
+    let res = sqlx::query(
+        r#"INSERT INTO "Fod" (
+            "id", "missionId", "groupId", "sysid", "location", "confidence",
+            "class", "velocity", "size", "timestamp", "createdAt", "updatedAt", "dirty"
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false)
+        ON CONFLICT ("id") DO UPDATE SET
+            "location" = EXCLUDED."location",
+            "confidence" = EXCLUDED."confidence",
+            "class" = EXCLUDED."class",
+            "velocity" = EXCLUDED."velocity",
+            "size" = EXCLUDED."size",
+            "updatedAt" = $12"#,
+    )
+    .bind(&f.id)
+    .bind(f.mission_id)
+    .bind(f.group_id as i32)
+    .bind(if f.sysid.is_empty() { None } else { Some(&f.sysid) })
+    .bind(loc)
+    .bind(f.confidence)
+    .bind(if f.class_name.is_empty() { None } else { Some(&f.class_name) })
+    .bind(f.velocity)
+    .bind(f.size)
+    .bind(ts)
+    .bind(created)
+    .bind(now)
+    .execute(&state.db)
+    .await;
+
+    if let Err(e) = res {
+        tracing::warn!("persist_primary_fod upsert FOD {} failed: {e}", f.id);
+    }
 }
 
 async fn connect_fod_client(state: &AppState) -> Option<proto_defination::fod::fod_service_client::FodServiceClient<tonic::transport::Channel>> {
@@ -373,13 +478,7 @@ async fn connect_image_client_for_url(
 ) -> Option<
     proto_defination::image::image_service_client::ImageServiceClient<tonic::transport::Channel>,
 > {
-    let endpoint = tonic::transport::Endpoint::from_shared(url.to_string()).ok()?;
-    let ch = endpoint
-        .connect_timeout(Duration::from_millis(600))
-        .timeout(Duration::from_secs(10))
-        .connect()
-        .await
-        .ok()?;
+    let ch = get_grpc_channel(url).await?;
     Some(
         proto_defination::image::image_service_client::ImageServiceClient::new(ch)
             .max_decoding_message_size(32 * 1024 * 1024)
@@ -795,7 +894,7 @@ pub async fn call_car_grpc(
             let res = match client.list_groups(tonic::Request::new(
                 proto_defination::fod_group::ListGroupsRequest {
                     mission_id,
-                    pagination: Some(proto_defination::common::PaginationRequest { page, limit: 200 }),
+                    pagination: Some(proto_defination::common::PaginationRequest { page, limit: 50 }),
                     updated_since_ms,
                 },
             )).await {
@@ -809,9 +908,12 @@ pub async fn call_car_grpc(
             let total_pages = res.pagination.as_ref().map(|p| p.total_pages).unwrap_or(1);
             let len = res.groups.len();
             for g in res.groups {
+                if let Some(ref pf) = g.primary_fod {
+                    persist_primary_fod(state, pf).await;
+                }
                 all_groups.push(proto_fod_group_to_json(&g));
             }
-            if page >= total_pages || len == 0 || page >= 200 {
+            if page >= total_pages || len == 0 || page >= 500 {
                 break;
             }
             page += 1;
@@ -1075,12 +1177,18 @@ pub async fn fetch_biggest_fods_for_mission(
         Some(c) => c,
         None => return Vec::new(),
     };
-    let Ok(res) = client.get_biggest_fod_per_group(tonic::Request::new(
-        proto_defination::fod::GetBiggestFodRequest { mission_id },
-    )).await else {
-        return Vec::new();
-    };
-    res.into_inner().fods
+    match client
+        .get_biggest_fod_per_group(tonic::Request::new(
+            proto_defination::fod::GetBiggestFodRequest { mission_id },
+        ))
+        .await
+    {
+        Ok(res) => res.into_inner().fods,
+        Err(e) => {
+            tracing::warn!(mission_id, error = %e, "get_biggest_fod_per_group failed");
+            Vec::new()
+        }
+    }
 }
 
 pub async fn fetch_fod_from_car(
@@ -1094,6 +1202,23 @@ pub async fn fetch_fod_from_car(
         }
     )).await.ok()?;
     Some(res.into_inner())
+}
+
+/// Fetch raw JPEG bytes for a FOD ID: uses `frame_jpeg` already attached to the
+/// `get_fod` response when available, and only falls back to `download_image`
+/// by `image_sha256` if `frame_jpeg` is empty.
+pub async fn fetch_fod_image_bytes(
+    state: &AppState,
+    fod_id: &str,
+) -> Option<Vec<u8>> {
+    let fod = fetch_fod_from_car(state, fod_id).await?;
+    if !fod.frame_jpeg.is_empty() {
+        return Some(fod.frame_jpeg);
+    }
+    if !fod.image_sha256.is_empty() {
+        return fetch_image_from_car(state, &fod.image_sha256, false).await;
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1670,7 +1795,12 @@ pub async fn fetch_image_from_car(
     }
 
     // gRPC download with Car priority and ATC fallback (also falls back if primary returns NOT_FOUND)
-    for url in [&state.cfg.car_backend_url, &state.cfg.atc_backend_url] {
+    let urls: Vec<&str> = if state.cfg.atc_backend_url != state.cfg.car_backend_url {
+        vec![&state.cfg.car_backend_url, &state.cfg.atc_backend_url]
+    } else {
+        vec![&state.cfg.car_backend_url]
+    };
+    for url in urls {
         let Some(mut client) = connect_image_client_for_url(url).await else {
             continue;
         };

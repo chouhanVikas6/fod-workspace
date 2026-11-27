@@ -39,6 +39,7 @@ const FodHorizontalcard = ({
         <div className="relative h-full w-1/2">
           <Image
             src={`${config.ImagesBase}/${selectedMission.id}/${fod.groupId}/${fod.id}.jpg`}
+            localPath={fod.imagePath}
             className="h-full w-full object-cover object-center"
             draggable={false}
             alt={""}

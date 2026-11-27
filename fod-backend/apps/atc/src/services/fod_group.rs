@@ -5,15 +5,21 @@ use proto_defination::fod_group::{
     ListGroupsRequest, ResolutionResult, ResolveGroupsRequest, ResolveGroupsResponse,
     StreamGroupsRequest,
 };
+use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
+use uuid::Uuid;
+use zoid_db::models::{FodGroupRow, FodRow};
 use zoid_db::Db;
+use zoid_storage::FrameStorage;
 
 pub struct AtcFodGroupServiceImpl {
     db: Db,
+    storage: Arc<FrameStorage>,
     node_id: String,
     group_push_tx: mpsc::Sender<FodGroupEntity>,
     group_tx: broadcast::Sender<FodGroupEntity>,
@@ -22,16 +28,86 @@ pub struct AtcFodGroupServiceImpl {
 impl AtcFodGroupServiceImpl {
     pub fn new(
         db: Db,
+        storage: Arc<FrameStorage>,
         node_id: String,
         group_push_tx: mpsc::Sender<FodGroupEntity>,
         group_tx: broadcast::Sender<FodGroupEntity>,
     ) -> Self {
         Self {
             db,
+            storage,
             node_id,
             group_push_tx,
             group_tx,
         }
+    }
+
+    async fn build_fod_proto_with_frame(&self, row: &FodRow) -> proto_defination::fod::FodEntity {
+        let mut entity = row.to_proto();
+        if !entity.frame_missing && !entity.image_sha256.is_empty() {
+            if let Ok(bytes) = self.storage.read_frame(&entity.image_sha256, false).await {
+                entity.frame_jpeg = bytes;
+            }
+        }
+        entity
+    }
+
+    async fn attach_primary_fod(&self, mut group: FodGroupEntity) -> FodGroupEntity {
+        let mut fod_row = if let Some(ref bid) = group.biggest_fod {
+            if let Ok(uuid) = Uuid::parse_str(bid) {
+                self.db.get_fod(uuid).await.ok().flatten()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if fod_row.is_none() {
+            fod_row = self
+                .db
+                .get_biggest_fod_for_group(group.mission_id, group.group_id)
+                .await
+                .ok()
+                .flatten();
+        }
+        if let Some(row) = fod_row {
+            if group.biggest_fod.is_none() {
+                group.biggest_fod = Some(row.id.to_string());
+                group.biggest_fod_size = Some(row.size);
+            }
+            group.primary_fod = Some(self.build_fod_proto_with_frame(&row).await);
+        }
+        group
+    }
+
+    async fn enrich_groups_batch(&self, rows: Vec<FodGroupRow>) -> Vec<FodGroupEntity> {
+        let ids: Vec<Uuid> = rows.iter().filter_map(|g| g.biggest_fod).collect();
+        let fetched = self.db.get_fods_by_ids(&ids).await.unwrap_or_default();
+        let by_id: HashMap<Uuid, FodRow> = fetched.into_iter().map(|f| (f.id, f)).collect();
+
+        let mut out = Vec::with_capacity(rows.len());
+        for g in rows {
+            let mut entity = g.to_proto();
+            let row_opt = g.biggest_fod.and_then(|id| by_id.get(&id).cloned());
+            let row_opt = match row_opt {
+                Some(r) => Some(r),
+                None => self
+                    .db
+                    .get_biggest_fod_for_group(g.mission_id, g.group_id)
+                    .await
+                    .ok()
+                    .flatten(),
+            };
+            if let Some(row) = row_opt {
+                if entity.biggest_fod.is_none() {
+                    entity.biggest_fod = Some(row.id.to_string());
+                    entity.biggest_fod_size = Some(row.size);
+                }
+                entity.primary_fod = Some(self.build_fod_proto_with_frame(&row).await);
+            }
+            out.push(entity);
+        }
+        out
     }
 }
 
@@ -47,7 +123,7 @@ impl FodGroupService for AtcFodGroupServiceImpl {
             limit: 50,
         });
         let page = pagination.page.max(1) as i64;
-        let limit = pagination.limit.clamp(1, 200) as i64;
+        let limit = pagination.limit.clamp(1, 50) as i64;
         let offset = (page - 1) * limit;
         let updated_since = req
             .updated_since_ms
@@ -66,7 +142,7 @@ impl FodGroupService for AtcFodGroupServiceImpl {
             1
         };
 
-        let entities: Vec<FodGroupEntity> = groups.into_iter().map(|g| g.to_proto()).collect();
+        let entities = self.enrich_groups_batch(groups).await;
 
         Ok(Response::new(FodGroupListResponse {
             groups: entities,
@@ -138,6 +214,7 @@ impl FodGroupService for AtcFodGroupServiceImpl {
                 version_vector: Default::default(),
                 decided_at_ms: 0,
                 updated_by: String::new(),
+                primary_fod: None,
             };
             let _ = self.db.insert_replicated_group_if_absent(&placeholder, false).await;
 
@@ -188,7 +265,8 @@ impl FodGroupService for AtcFodGroupServiceImpl {
                                     &res.command_id,
                                 )
                                 .await;
-                            let _ = self.group_tx.send(proto_ug.clone());
+                            let enriched = self.attach_primary_fod(proto_ug.clone()).await;
+                            let _ = self.group_tx.send(enriched);
                             let _ = self.group_push_tx.send(proto_ug.clone()).await;
                             proto_ug
                         }

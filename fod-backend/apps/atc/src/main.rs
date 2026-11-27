@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         base_dir: frames_dir,
     }));
 
-    let (group_tx, _) = broadcast::channel(1000);
+    let (group_tx, _) = broadcast::channel(256);
 
     // Start Replication Sync Client in background
     let (
@@ -119,6 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bite_svc = AtcBiteServiceImpl::new(bite);
     let fod_group_svc = AtcFodGroupServiceImpl::new(
         db.clone(),
+        storage.clone(),
         node_id.clone(),
         group_push_tx,
         group_tx,
@@ -171,7 +172,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(tonic_web::GrpcWebLayer::new())
         .add_service(health_service)
         .add_service(BiteServiceServer::new(bite_svc))
-        .add_service(FodGroupServiceServer::new(fod_group_svc))
+        .add_service(
+            FodGroupServiceServer::new(fod_group_svc)
+                .max_decoding_message_size(32 * 1024 * 1024)
+                .max_encoding_message_size(32 * 1024 * 1024),
+        )
         .add_service(
             FodServiceServer::new(fod_svc)
                 .max_decoding_message_size(32 * 1024 * 1024)

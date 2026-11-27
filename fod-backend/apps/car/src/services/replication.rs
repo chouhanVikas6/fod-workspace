@@ -25,6 +25,39 @@ async fn load_fod_frame(storage: &FrameStorage, f: &proto_defination::fod::FodEn
     storage.read_frame(&f.image_sha256, false).await.unwrap_or_default()
 }
 
+async fn attach_primary_fod_to_group(
+    db: &Db,
+    storage: &FrameStorage,
+    mut g: proto_defination::fod_group::FodGroupEntity,
+) -> proto_defination::fod_group::FodGroupEntity {
+    let mut fod_row = if let Some(ref bid) = g.biggest_fod {
+        if let Ok(uuid) = Uuid::parse_str(bid) {
+            db.get_fod(uuid).await.ok().flatten()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if fod_row.is_none() {
+        fod_row = db
+            .get_biggest_fod_for_group(g.mission_id, g.group_id)
+            .await
+            .ok()
+            .flatten();
+    }
+    if let Some(row) = fod_row {
+        if g.biggest_fod.is_none() {
+            g.biggest_fod = Some(row.id.to_string());
+            g.biggest_fod_size = Some(row.size);
+        }
+        let mut f_proto = row.to_proto();
+        f_proto.frame_jpeg = load_fod_frame(storage, &f_proto).await;
+        g.primary_fod = Some(f_proto);
+    }
+    g
+}
+
 async fn load_cleared_images(
     storage: &FrameStorage,
     c: &proto_defination::cleared_fod::ClearedFodEntity,
@@ -88,9 +121,12 @@ impl ReplicationServiceImpl {
                 if parts.len() == 2 {
                     if let (Ok(m_id), Ok(g_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
                         if let Ok(Some(g)) = self.db.get_fod_group(m_id, g_id).await {
+                            let enriched =
+                                attach_primary_fod_to_group(&self.db, &self.storage, g.to_proto())
+                                    .await;
                             return Some(Change {
                                 seq,
-                                entity: Some(change::Entity::Group(g.to_proto())),
+                                entity: Some(change::Entity::Group(enriched)),
                                 frame_jpeg: Vec::new(),
                                 cleared_images: Vec::new(),
                             });
@@ -260,20 +296,39 @@ impl ReplicationService for ReplicationServiceImpl {
                                 if m.storage_tier == "COLD_STORED" || m.storage_tier == "CAR_DROPPED" {
                                     continue;
                                 }
-                                if let Ok(fods) = db.get_biggest_fods_for_mission(m.id).await {
+                                if let Ok((groups, _)) = db.list_fod_groups(m.id, 5000, 0).await {
+                                    let ids: Vec<Uuid> =
+                                        groups.iter().filter_map(|g| g.biggest_fod).collect();
+                                    let fetched = db.get_fods_by_ids(&ids).await.unwrap_or_default();
+                                    let by_id: std::collections::HashMap<Uuid, zoid_db::models::FodRow> =
+                                        fetched.into_iter().map(|f| (f.id, f)).collect();
+
                                     let mut batch_changes: Vec<Change> = Vec::new();
                                     let mut batch_bytes: usize = 0;
-                                    for f in fods {
-                                        let f_proto = f.to_proto();
-                                        let frame_jpeg = load_fod_frame(&storage, &f_proto).await;
-                                        batch_bytes += frame_jpeg.len();
+                                    for g in groups {
+                                        let mut g_proto = g.to_proto();
+                                        let fod_opt = match g.biggest_fod.and_then(|id| by_id.get(&id).cloned()) {
+                                            Some(r) => Some(r),
+                                            None => db.get_biggest_fod_for_group(g.mission_id, g.group_id).await.ok().flatten(),
+                                        };
+                                        if let Some(row) = fod_opt {
+                                            if g_proto.biggest_fod.is_none() {
+                                                g_proto.biggest_fod = Some(row.id.to_string());
+                                                g_proto.biggest_fod_size = Some(row.size);
+                                            }
+                                            let mut f_proto = row.to_proto();
+                                            let frame_jpeg = load_fod_frame(&storage, &f_proto).await;
+                                            batch_bytes += frame_jpeg.len();
+                                            f_proto.frame_jpeg = frame_jpeg;
+                                            g_proto.primary_fod = Some(f_proto);
+                                        }
                                         batch_changes.push(Change {
                                             seq: replica_cursor,
-                                            entity: Some(change::Entity::Fod(f_proto)),
-                                            frame_jpeg,
+                                            entity: Some(change::Entity::Group(g_proto)),
+                                            frame_jpeg: Vec::new(),
                                             cleared_images: Vec::new(),
                                         });
-                                        if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 100 {
+                                        if batch_bytes >= MAX_REPLICATION_BATCH_BYTES || batch_changes.len() >= 50 {
                                             priority_batches.push_back(ChangeBatch {
                                                 from_seq: replica_cursor,
                                                 to_seq: replica_cursor,
@@ -287,24 +342,6 @@ impl ReplicationService for ReplicationServiceImpl {
                                             from_seq: replica_cursor,
                                             to_seq: replica_cursor,
                                             changes: batch_changes,
-                                        });
-                                    }
-                                }
-                                if let Ok((groups, _)) = db.list_fod_groups(m.id, 5000, 0).await {
-                                    for chunk in groups.chunks(200) {
-                                        let changes: Vec<Change> = chunk
-                                            .iter()
-                                            .map(|g| Change {
-                                                seq: replica_cursor,
-                                                entity: Some(change::Entity::Group(g.to_proto())),
-                                                frame_jpeg: Vec::new(),
-                                                cleared_images: Vec::new(),
-                                            })
-                                            .collect();
-                                        priority_batches.push_back(ChangeBatch {
-                                            from_seq: replica_cursor,
-                                            to_seq: replica_cursor,
-                                            changes,
                                         });
                                     }
                                 }
@@ -482,9 +519,10 @@ impl ReplicationService for ReplicationServiceImpl {
 
                                             if outcome_str != "KEPT_PRIMARY" {
                                                 let new_seq = db.append_change(2, &format!("{}:{}", mission_id, group_id)).await.unwrap_or(0);
+                                                let enriched = attach_primary_fod_to_group(&db, &storage, final_proto).await;
                                                 let change_item = Change {
                                                     seq: new_seq,
-                                                    entity: Some(change::Entity::Group(final_proto)),
+                                                    entity: Some(change::Entity::Group(enriched)),
                                                     frame_jpeg: Vec::new(),
                                                     cleared_images: Vec::new(),
                                                 };

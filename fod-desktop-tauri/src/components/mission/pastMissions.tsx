@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useCallback } from "react";
 import { FolderOpen } from "lucide-react";
 import MissionCard from "./missionCard";
 
@@ -16,21 +16,32 @@ function getMissionDateInfo(mission: any): { key: string; label: string } {
     return { key, label };
 }
 
-// Mission list comes from MissionSelector's 2.5s poll so card stats stay live.
+// Mission list comes from MissionSelector's paginated API so card stats stay live
+// without loading thousands of missions at once.
 const PastMission = ({
     missions,
-    visibleLimit = 25,
+    totalCount,
+    hasMore: hasMoreProp,
+    loadingMore = false,
     onLoadMore,
     setMission,
     selectedMission,
 }: any) => {
-    const visibleMissions = useMemo(() => {
-        if (!missions?.length) return [];
-        return missions.slice(0, visibleLimit);
-    }, [missions, visibleLimit]);
+    const visibleMissions = missions || [];
+    const total = typeof totalCount === "number" ? totalCount : visibleMissions.length;
+    const hasMore = typeof hasMoreProp === "boolean" ? hasMoreProp : total > visibleMissions.length;
+    const remainingCount = Math.max(0, total - visibleMissions.length);
 
-    const hasMore = (missions?.length ?? 0) > visibleMissions.length;
-    const remainingCount = Math.max(0, (missions?.length ?? 0) - visibleMissions.length);
+    const handleScroll = useCallback(
+        (e: React.UIEvent<HTMLDivElement>) => {
+            if (!hasMore || loadingMore || !onLoadMore) return;
+            const el = e.currentTarget;
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+                onLoadMore();
+            }
+        },
+        [hasMore, loadingMore, onLoadMore]
+    );
 
     const groupedMissions = useMemo(() => {
         if (!visibleMissions.length) return [];
@@ -49,7 +60,10 @@ const PastMission = ({
     }, [visibleMissions]);
 
     return (
-        <div className='flex-1 min-h-0 w-full flex flex-col justify-start items-stretch space-y-2.5 overflow-y-auto pr-1'>
+        <div
+            onScroll={handleScroll}
+            className='flex-1 min-h-0 w-full flex flex-col justify-start items-stretch space-y-2.5 overflow-y-auto pr-1'
+        >
             {groupedMissions.length ? (
                 <>
                     {groupedMissions.map((group) => (
@@ -74,10 +88,13 @@ const PastMission = ({
                     {hasMore && onLoadMore && (
                         <button
                             type="button"
+                            disabled={loadingMore}
                             onClick={onLoadMore}
-                            className="w-full py-2 mt-1 rounded-xl border border-slate-200 dark:border-[#323842] bg-slate-50 hover:bg-slate-100 dark:bg-[#22262D] dark:hover:bg-[#2B3038] text-xs font-semibold text-[#4C9FE8] transition-colors cursor-pointer shrink-0"
+                            className="w-full py-2 mt-1 rounded-xl border border-slate-200 dark:border-[#323842] bg-slate-50 hover:bg-slate-100 dark:bg-[#22262D] dark:hover:bg-[#2B3038] text-xs font-semibold text-[#4C9FE8] transition-colors cursor-pointer shrink-0 disabled:opacity-60"
                         >
-                            Load More ({Math.min(25, remainingCount)} of {remainingCount} remaining)
+                            {loadingMore
+                                ? "Loading more missions…"
+                                : `Load More (${Math.min(40, remainingCount)} of ${remainingCount} remaining)`}
                         </button>
                     )}
                 </>

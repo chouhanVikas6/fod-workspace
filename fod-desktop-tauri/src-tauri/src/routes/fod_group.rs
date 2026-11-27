@@ -116,12 +116,37 @@ async fn list_fod(method: Method,
         if let Some(first) = arr.first() {
             tracing::info!("incoming fod: {first}");
         }
-        result.extend(arr.iter().cloned());
-        // createFodBatch(incomingFods, missionId) — fire and forget in Node.
-        let state = s.clone();
-        tokio::spawn(async move {
-            svc::create_fod_batch(&state, arr, mission_id as i64).await;
-        });
+        // Persist incoming FODs + JPEGs before returning so every returned item has a ready local imagePath.
+        svc::create_fod_batch(&s, arr.clone(), mission_id as i64).await;
+        result.extend(arr);
+    }
+
+    for item in &mut result {
+        if let Some(obj) = item.as_object_mut() {
+            let has_path = obj
+                .get("imagePath")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if !has_path {
+                if let Some(fid) = obj.get("id").and_then(|v| v.as_str()) {
+                    let mid = obj
+                        .get("missionId")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(mission_id);
+                    let gid = obj
+                        .get("groupId")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(group_id as i64);
+                    let local_file = std::path::Path::new("fod-images/mission")
+                        .join(mid.to_string())
+                        .join(gid.to_string())
+                        .join(format!("{fid}.jpg"));
+                    let image_path = crate::resolve_local_raw_image_path(&local_file).await;
+                    obj.insert("imagePath".to_string(), json!(image_path));
+                }
+            }
+        }
     }
 
     // result.sort((a, b) => b.size - a.size)
